@@ -7,7 +7,14 @@
     "test": "node --test backend/tests/llm_provider.test.js",
     "test:portkey": "node backend/tests/portkey.test.js",
     "test:fallback": "node backend/tests/portkey_fallback.test.js",
-    "test:integration": "npm run test:portkey && npm run test:fallback"
+    "test:integration": "npm run test:portkey && npm run test:fallback",
+    "test:retry": "node backend/tests/portkey_retry.test.js",
+    "test:timeout": "node backend/tests/portkey_timeout.test.js",
+    "test:reliability": "node backend/tests/portkey_reliability.test.js",
+    "test:cache": "node backend/tests/portkey_cache.test.js",
+    "test:loadbalance": "node backend/tests/portkey_loadbalance.test.js",
+    "test:streaming": "node backend/tests/portkey_streaming.test.js",
+    "test:production": "node backend/tests/portkey_production.test.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
