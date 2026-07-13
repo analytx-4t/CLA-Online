@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CLA Online Legal Chatbot</title>
+  <link rel="stylesheet" href="../CSS/chatbot_interface.css">
+</head>
+
+<body>
+  <div class="app">
+    <header class="navbar">
+      <div class="navbar-brand">
+        <img src="../assets/Images/logo.png" alt="CLA Corporate Law Adviser" class="navbar-logo">
+        <span class="navbar-title">Corporate Law Adviser</span>
+      </div>
+      <div class="chat-header">
+        <div class="chat-header-title chat-page-title">CLA Legal Chatbot</div>
+      </div>
+      <nav class="navbar-nav" aria-label="Primary navigation">
+
+        <a href="chatbot_interface.html" class="nav-link active" aria-current="page">AI CHATBOT</a>
+      </nav>
+    </header>
+
+    <div class="workspace">
+      <aside class="chat-panel" id="chatPanel">
+        <div class="chat-panel-header">
+          <div>
+            <div class="sidebar-title">Chat Sessions</div>
+            <div class="sidebar-subtitle">Your CLA conversation history</div>
+          </div>
+          <button id="newChatButton" type="button" class="new-chat">New Chat</button>
+        </div>
+
+        <div class="chat-search">
+          <input id="sessionSearchInput" type="search" placeholder="Search chat sessions"
+            aria-label="Search chat sessions">
+        </div>
+
+        <div class="chat-list-wrapper session-list-scroll-container">
+          <div class="chat-list" id="chatList"></div>
+        </div>
+
+        <div class="session-footer">
+          <div class="sidebar-actions">
+            <button id="themeToggle" type="button" class="icon-btn" aria-label="Toggle theme">
+              <span class="icon icon-sun" aria-hidden="true">☀</span>
+            </button>
+            <button id="notificationsBtn" type="button" class="icon-btn" aria-label="Notifications">
+              <img src="../assets/Images/notification.png" alt="Notifications" class="control-icon notification-icon">
+            </button>
+          </div>
+          <div class="profile-panel">
+            <div class="profile-avatar">JD</div>
+            <div class="profile-info">
+              <div class="profile-name">JD</div>
+              <div class="profile-role">Corporate user</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="chat-main">
+        <div class="chat-background-image" aria-hidden="true"></div>
+        <div class="chat-background-tint" aria-hidden="true"></div>
+        <div class="chat-content">
+
+
+          <div class="welcome-card" id="welcomeCard">
+            <div class="welcome-title">Ask Legal AI</div>
+            <div class="welcome-subtitle">Your corporate legal assistant. Ask about company law, case law, circulars,
+              articles and more.</div>
+            <div class="suggestions">
+              <button class="suggestion-btn">Our company supplied goods worth ₹15,00,000... How do we recover?</button>
+              <button class="suggestion-btn">A debtor claims insolvency. Can we file before the tribunal?</button>
+              <button class="suggestion-btn">Our vendor agreement was breached by non-payment. What laws apply?</button>
+              <button class="suggestion-btn">A cheque bounced and demand notices were ignored. What are our
+                options?</button>
+            </div>
+          </div>
+
+          <div class="chat-body">
+            <div class="chat-window-shell">
+              <div class="chat-window" id="chatWindow"></div>
+            </div>
+          </div>
+
+          <div class="input-card">
+            <div id="attachmentPreview" class="attachment-preview" style="display:none"></div>
+            <div class="input-box">
+              <button id="uploadBtn" type="button" class="upload-btn" aria-label="Upload file">
+                <img src="../assets/Images/attach-file.png" alt="Attach file" class="control-icon attachment-icon">
+              </button>
+              <input type="file" id="fileUpload" hidden multiple>
+              <textarea id="messageInput" rows="1"
+                placeholder="Ask about company law, case law, circulars, FEMA, SEBI..."></textarea>
+              <button id="sendBtn" type="button" class="send-btn" aria-label="Send message">Send</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="deleteDialogOverlay" class="dialog-overlay" hidden>
+    <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="deleteDialogTitle">
+      <div id="deleteDialogTitle" class="dialog-title">Delete chat?</div>
+      <div id="deleteDialogDescription" class="dialog-description">This chat will be permanently deleted from your chat
+        history.</div>
+      <div id="deleteErrorText" class="dialog-error" aria-live="polite"></div>
+      <div class="dialog-actions">
+        <button id="cancelDeleteBtn" type="button" class="dialog-btn secondary">Cancel</button>
+        <button id="confirmDeleteBtn" type="button" class="dialog-btn danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../javascript/chatbot_interface.js"></script>
+</body>
+
+</html>

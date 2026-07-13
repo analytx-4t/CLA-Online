@@ -1,0 +1,105 @@
+# ==============================
+# ENVIRONMENT VARIABLES / SECRETS
+# ==============================
+
+.env
+.env.*
+!.env.example
+
+
+# ==============================
+# NODE / FRONTEND
+# ==============================
+
+node_modules/
+
+dist/
+build/
+out/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+
+# ==============================
+# PYTHON
+# ==============================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.coverage
+htmlcov/
+
+
+# ==============================
+# IDE / EDITORS
+# ==============================
+
+.vscode/
+.idea/
+
+*.swp
+*.swo
+*~
+
+
+# ==============================
+# OPERATING SYSTEM
+# ==============================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+# ==============================
+# LOGS
+# ==============================
+
+logs/
+*.log
+
+
+# ==============================
+# TEMPORARY FILES
+# ==============================
+
+tmp/
+temp/
+
+*.tmp
+*.temp
+
+
+# ==============================
+# CACHE
+# ==============================
+
+.cache/
+.cache
+
+
+# ==============================
+# LOCAL DATABASE FILES
+# ==============================
+
+*.db
+*.sqlite
+*.sqlite3
