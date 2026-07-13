@@ -1,38 +1,63 @@
-const { BaseLLMProvider, LLMConfigurationError, LLMAuthenticationError, LLMProviderUnavailableError } = require('../base');
+const {
+  BaseLLMProvider,
+  LLMConfigurationError,
+  LLMAuthenticationError,
+  LLMProviderUnavailableError,
+} = require('../base');
+
 const { settings, getProviderConfig } = require('../../config');
+const { createChatCompletion } = require('../portkey');
 
 class GroqProvider extends BaseLLMProvider {
   constructor({ model } = {}) {
-    super({ providerName: 'groq', defaultModel: model || settings.DEFAULT_LLM_MODEL || '' });
+    super({
+      providerName: 'groq',
+      defaultModel: model || settings.DEFAULT_LLM_MODEL || '',
+    });
+
     this.config = getProviderConfig('groq');
     this.model = model || this.defaultModel;
   }
 
   async generate(request = {}) {
-    if (!this.config.apiKey) {
-      throw new LLMConfigurationError('Groq API key is not configured.');
-    }
+    const {
+      messages = [],
+      systemPrompt = '',
+      temperature = 0.2,
+      maxTokens = 512,
+      modelOverride,
+      family = 'llama',
+      metadata = {},
+      traceId,
+    } = request;
 
-    const { messages = [], systemPrompt = '', temperature = 0.2, maxTokens = 512, modelOverride, family = 'llama' } = request;
-    const model = modelOverride || (family === 'mistral' ? this.config.mistralModel : this.config.llamaModel) || this.model;
+    const model =
+      modelOverride ||
+      (family === 'mistral'
+        ? this.config.mistralModel
+        : this.config.llamaModel) ||
+      this.model;
 
     if (!model) {
-      throw new LLMConfigurationError('Groq model is not configured. Set GROQ_LLAMA_MODEL or GROQ_MISTRAL_MODEL in the backend environment.');
+      throw new LLMConfigurationError(
+        'Groq model is not configured.'
+      );
     }
 
     try {
-      const { default: Groq } = require('groq-sdk');
-      const client = new Groq({ apiKey: this.config.apiKey });
-      const response = await client.chat.completions.create({
+      const response = await createChatCompletion({
+        provider: 'groq',
         model,
-        messages: [{ role: 'system', content: systemPrompt }, ...messages].filter(Boolean),
+        messages,
+        systemPrompt,
         temperature,
-        max_tokens: maxTokens,
+        maxTokens,
+        metadata,
+        traceId,
       });
 
-      const outputText = response.choices?.[0]?.message?.content || '';
       return {
-        content: outputText,
+        content: response.choices?.[0]?.message?.content || '',
         provider: 'groq',
         model,
         usage: {
@@ -43,12 +68,21 @@ class GroqProvider extends BaseLLMProvider {
       };
     } catch (error) {
       if (error?.status === 401) {
-        throw new LLMAuthenticationError('Groq authentication failed.');
+        throw new LLMAuthenticationError(
+          'Portkey or Groq authentication failed.'
+        );
       }
+
       if (error?.status === 429) {
-        throw new LLMProviderUnavailableError('Groq rate limit reached.');
+        throw new LLMProviderUnavailableError(
+          'Groq rate limit reached.'
+        );
       }
-      throw new LLMProviderUnavailableError('Groq request failed.', { cause: error.message });
+
+      throw new LLMProviderUnavailableError(
+        'Groq request through Portkey failed.',
+        { cause: error.message }
+      );
     }
   }
 }

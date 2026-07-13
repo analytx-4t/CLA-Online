@@ -1,51 +1,81 @@
-const { BaseLLMProvider, LLMConfigurationError, LLMAuthenticationError, LLMProviderUnavailableError } = require('../base');
-const { settings, getProviderConfig } = require('../../config');
+const {
+  BaseLLMProvider,
+  LLMConfigurationError,
+  LLMAuthenticationError,
+  LLMProviderUnavailableError,
+} = require('../base');
+
+const { settings } = require('../../config');
+const { createChatCompletion } = require('../portkey');
 
 class OpenAIProvider extends BaseLLMProvider {
   constructor({ model } = {}) {
-    super({ providerName: 'openai', defaultModel: model || settings.OPENAI_MODEL || 'gpt-4.1-mini' });
-    this.config = getProviderConfig('openai');
+    super({
+      providerName: 'openai',
+      defaultModel: model || settings.OPENAI_MODEL || 'gpt-4.1-mini',
+    });
+
     this.model = model || this.defaultModel;
   }
 
   async generate(request = {}) {
-    if (!this.config.apiKey) {
-      throw new LLMConfigurationError('OpenAI API key is not configured.');
-    }
+    const {
+      messages = [],
+      systemPrompt = '',
+      temperature = 0.2,
+      maxTokens = 512,
+      modelOverride,
+      metadata = {},
+      traceId,
+    } = request;
 
-    const { messages = [], systemPrompt = '', temperature = 0.2, maxTokens = 512, modelOverride } = request;
     const model = modelOverride || this.model;
 
+    if (!model) {
+      throw new LLMConfigurationError(
+        'OpenAI model is not configured.'
+      );
+    }
+
     try {
-      const { OpenAI } = require('openai');
-      const client = new OpenAI({ apiKey: this.config.apiKey });
-      const response = await client.responses.create({
+      const response = await createChatCompletion({
+        provider: 'openai',
         model,
-        instructions: systemPrompt,
-        input: messages.map((m) => ({ role: m.role || 'user', content: m.content || '' })),
+        messages,
+        systemPrompt,
         temperature,
-        max_output_tokens: maxTokens,
+        maxTokens,
+        metadata,
+        traceId,
       });
 
-      const outputText = response.output_text || '';
       return {
-        content: outputText,
+        content: response.choices?.[0]?.message?.content || '',
         provider: 'openai',
         model,
         usage: {
-          input_tokens: response.usage?.input_tokens ?? null,
-          output_tokens: response.usage?.output_tokens ?? null,
+          input_tokens: response.usage?.prompt_tokens ?? null,
+          output_tokens: response.usage?.completion_tokens ?? null,
           total_tokens: response.usage?.total_tokens ?? null,
         },
       };
     } catch (error) {
       if (error?.status === 401) {
-        throw new LLMAuthenticationError('OpenAI authentication failed.');
+        throw new LLMAuthenticationError(
+          'Portkey or OpenAI authentication failed.'
+        );
       }
+
       if (error?.status === 429) {
-        throw new LLMProviderUnavailableError('OpenAI rate limit reached.');
+        throw new LLMProviderUnavailableError(
+          'OpenAI quota or rate limit reached.'
+        );
       }
-      throw new LLMProviderUnavailableError('OpenAI request failed.', { cause: error.message });
+
+      throw new LLMProviderUnavailableError(
+        'OpenAI request through Portkey failed.',
+        { cause: error.message }
+      );
     }
   }
 }

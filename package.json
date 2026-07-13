@@ -4,13 +4,17 @@
   "main": "backend/index.js",
   "scripts": {
     "start": "node backend/index.js",
-    "test": "node --test backend/tests/*.test.js"
+    "test": "node --test backend/tests/llm_provider.test.js",
+    "test:portkey": "node backend/tests/portkey.test.js",
+    "test:fallback": "node backend/tests/portkey_fallback.test.js",
+    "test:integration": "npm run test:portkey && npm run test:fallback"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.21.0",
     "dotenv": "^16.3.1",
+    "groq-sdk": "^0.15.0",
     "mongodb": "^7.5.0",
     "openai": "^5.0.0",
-    "groq-sdk": "^0.15.0",
-    "@google/generative-ai": "^0.21.0"
+    "portkey-ai": "^3.1.0"
   }
 }
