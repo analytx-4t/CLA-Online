@@ -378,3 +378,42 @@ html[data-theme="dark"] .citation-details {
   color: var(--text);
   font-weight: 600;
 }
+
+/* Deep Link Citation Actions */
+.citation-actions {
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  padding-top: 10px;
+  margin-top: 4px;
+  display: flex;
+  justify-content: flex-start;
+}
+html[data-theme="dark"] .citation-actions {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.open-citation-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+.open-citation-btn:hover {
+  background-color: rgba(12, 135, 66, 0.08);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+html[data-theme="dark"] .open-citation-btn:hover {
+  background-color: rgba(16, 185, 129, 0.1);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+

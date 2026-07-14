@@ -156,6 +156,458 @@ function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
   });
 }
 
+function runPythonCitation(sourceTable, recordId, parentId = null) {
+  return new Promise((resolve, reject) => {
+    let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
+    if (!require('fs').existsSync(pythonPath)) {
+      pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
+    }
+    
+    const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
+    if (!require('fs').existsSync(scriptPath)) {
+      return reject(new Error(`search_documents.py not found at ${scriptPath}`));
+    }
+
+    const child = spawn(pythonPath, [scriptPath, '--json']);
+    
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('error', (err) => {
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(`Python process exited with code ${code}. Stderr: ${stderr}`));
+      }
+      try {
+        const result = JSON.parse(stdout);
+        if (result.error) {
+          return reject(new Error(result.error));
+        }
+        resolve(result);
+      } catch (err) {
+        reject(new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout}`));
+      }
+    });
+
+    const inputPayload = JSON.stringify({
+      action: "get_citation",
+      source_table: sourceTable,
+      record_id: parseInt(recordId, 10) || recordId,
+      parent_id: parentId ? (parseInt(parentId, 10) || parentId) : null
+    });
+    
+    child.stdin.write(inputPayload);
+    child.stdin.end();
+  });
+}
+
+function escapeHTML(str) {
+  if (!str) return '';
+  return str.toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function renderCitationHTML(data) {
+  const title = escapeHTML(data.title || 'Untitled Document');
+  const sourceTable = escapeHTML(data.source_table || '');
+  const recordId = escapeHTML(data.record_id || '');
+  
+  const child = data.child || {};
+  const parent = data.parent || {};
+  
+  const fileName = escapeHTML(child.FileName || parent.FileName || 'Unknown');
+  const category = escapeHTML(child.Category || parent.Category || 'Unknown');
+  const subject = escapeHTML(child.Subject || parent.Subject || 'Unknown');
+  const sections = escapeHTML(child.Sections || parent.Sections || 'Unknown');
+  const author = escapeHTML(parent.Author || 'Unknown');
+  const issueYear = escapeHTML(parent.IssueYear || '');
+  const issueMonth = escapeHTML(parent.IssueMonth || '');
+  const docDate = escapeHTML(parent.DocDate || child.DocDate || '');
+  
+  let formattedDate = 'Unknown';
+  if (docDate) {
+    try {
+      formattedDate = new Date(docDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+    } catch(e) {
+      formattedDate = docDate;
+    }
+  } else if (issueMonth || issueYear) {
+    formattedDate = `${issueMonth} ${issueYear}`.trim();
+  }
+
+  const docContent = data.html || '<p>No content available.</p>';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} | CLA Online Citation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --border: #e2e8f0;
+      --primary: #0c8742;
+      --primary-light: rgba(12, 135, 66, 0.08);
+      --font-sans: 'Inter', sans-serif;
+      --font-serif: 'Lora', Georgia, serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0f19;
+        --surface: #151e2e;
+        --text: #f1f5f9;
+        --muted: #94a3b8;
+        --border: #1e293b;
+        --primary: #10b981;
+        --primary-light: rgba(16, 185, 129, 0.1);
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
+      overflow: hidden;
+    }
+
+    .header-bar {
+      background: linear-gradient(135deg, var(--primary), #065f2c);
+      color: #ffffff;
+      padding: 30px 40px;
+      position: relative;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .header-bar {
+        background: linear-gradient(135deg, #064e3b, #022c22);
+      }
+    }
+
+    .badge-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      background-color: rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .badge.primary-badge {
+      background-color: #ffffff;
+      color: #065f2c;
+    }
+
+    .document-title {
+      font-size: 1.8rem;
+      font-weight: 800;
+      line-height: 1.3;
+      margin-bottom: 8px;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      padding: 24px 40px;
+      background-color: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .meta-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .meta-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .meta-value {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .content-body {
+      padding: 40px;
+      font-family: var(--font-serif);
+      font-size: 1.15rem;
+      line-height: 1.75;
+      color: var(--text);
+    }
+
+    .content-body p {
+      margin-bottom: 1.5em;
+    }
+
+    .content-body h1, .content-body h2, .content-body h3, .content-body h4 {
+      font-family: var(--font-sans);
+      color: var(--text);
+      font-weight: 700;
+      margin-top: 1.8em;
+      margin-bottom: 0.8em;
+      line-height: 1.25;
+    }
+
+    .content-body h1 { font-size: 1.8rem; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .content-body h2 { font-size: 1.5rem; }
+    .content-body h3 { font-size: 1.25rem; }
+
+    .content-body ul, .content-body ol {
+      margin-bottom: 1.5em;
+      padding-left: 24px;
+    }
+
+    .content-body li {
+      margin-bottom: 0.5em;
+    }
+
+    .content-body table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 2em 0;
+      font-family: var(--font-sans);
+      font-size: 0.95rem;
+    }
+
+    .content-body th, .content-body td {
+      border: 1px solid var(--border);
+      padding: 12px 16px;
+      text-align: left;
+    }
+
+    .content-body th {
+      background-color: var(--bg);
+      font-weight: 700;
+    }
+
+    .content-body blockquote {
+      border-left: 4px solid var(--primary);
+      padding-left: 20px;
+      font-style: italic;
+      color: var(--muted);
+      margin: 1.5em 0;
+    }
+
+    .content-body a {
+      color: var(--primary);
+      text-decoration: underline;
+    }
+
+    .footer-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 24px 40px;
+      background-color: var(--bg);
+      border-top: 1px solid var(--border);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      font-family: var(--font-sans);
+      border-radius: 8px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      border: none;
+    }
+
+    .btn-secondary {
+      background-color: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background-color: var(--border);
+    }
+
+    .btn-primary {
+      background-color: var(--primary);
+      color: #ffffff;
+    }
+
+    .btn-primary:hover {
+      opacity: 0.9;
+    }
+
+    .footer-note {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      body {
+        padding: 10px 5px;
+      }
+      .header-bar {
+        padding: 20px;
+      }
+      .meta-grid {
+        padding: 20px;
+      }
+      .content-body {
+        padding: 20px;
+        font-size: 1.05rem;
+      }
+      .footer-actions {
+        padding: 20px;
+        flex-direction: column;
+        gap: 16px;
+        align-items: stretch;
+        text-align: center;
+      }
+    }
+
+    @media print {
+      body {
+        background-color: #ffffff;
+        color: #000000;
+        padding: 0;
+      }
+      .container {
+        border: none;
+        box-shadow: none;
+        max-width: 100%;
+      }
+      .header-bar {
+        background: none;
+        color: #000000;
+        border-bottom: 2px solid #000000;
+        padding: 20px 0;
+      }
+      .badge {
+        color: #000000;
+        border: 1px solid #000000;
+      }
+      .meta-grid {
+        background: none;
+        padding: 20px 0;
+        border-bottom: 1px solid #000000;
+      }
+      .content-body {
+        padding: 20px 0;
+      }
+      .footer-actions {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-bar">
+      <div class="badge-row">
+        <span class="badge primary-badge">${sourceTable}</span>
+        <span class="badge">ID: ${recordId}</span>
+      </div>
+      <h1 class="document-title">${title}</h1>
+    </div>
+    
+    <div class="meta-grid">
+      <div class="meta-item">
+        <span class="meta-label">File Name</span>
+        <span class="meta-value">${fileName}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Category</span>
+        <span class="meta-value">${category}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Subject</span>
+        <span class="meta-value">${subject}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Sections</span>
+        <span class="meta-value">${sections}</span>
+      </div>
+      ${author !== 'Unknown' ? `
+      <div class="meta-item">
+        <span class="meta-label">Author</span>
+        <span class="meta-value">${author}</span>
+      </div>
+      ` : ''}
+      <div class="meta-item">
+        <span class="meta-label">Document Date</span>
+        <span class="meta-value">${formattedDate}</span>
+      </div>
+    </div>
+    
+    <div class="content-body">
+      ${docContent}
+    </div>
+    
+    <div class="footer-actions">
+      <button class="btn btn-secondary" onclick="window.close()">Close Tab</button>
+      <div class="footer-note">CLA Online - Verified Grounded Database Source</div>
+      <button class="btn btn-primary" onclick="window.print()">Print Document</button>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 async function startServer() {
   try {
     const db = await connectDB();
@@ -183,6 +635,38 @@ async function startServer() {
       if (path === '/health' && req.method === 'GET') {
         setJsonHeaders(res, 200);
         res.end(JSON.stringify({ status: 'ok' }));
+        return;
+      }
+
+      if (path === '/api/citation' && req.method === 'GET') {
+        try {
+          const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+          const sourceTable = urlParsed.searchParams.get('sourceTable');
+          const recordId = urlParsed.searchParams.get('recordId');
+          const parentId = urlParsed.searchParams.get('parentId');
+
+          if (!sourceTable || !recordId) {
+            res.writeHead(400, { 'Content-Type': 'text/html' });
+            res.end('<h1>400 Bad Request</h1><p>sourceTable and recordId parameters are required.</p>');
+            return;
+          }
+
+          const citationData = await runPythonCitation(sourceTable, recordId, parentId);
+
+          if (citationData.error) {
+            res.writeHead(404, { 'Content-Type': 'text/html' });
+            res.end(`<h1>404 Citation Not Found</h1><p>${escapeHTML(citationData.error)}</p>`);
+            return;
+          }
+
+          const htmlResponse = renderCitationHTML(citationData);
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(htmlResponse);
+        } catch (error) {
+          console.error('[Citation Endpoint] Error:', error);
+          res.writeHead(500, { 'Content-Type': 'text/html' });
+          res.end(`<h1>500 Internal Server Error</h1><p>${escapeHTML(error.message)}</p>`);
+        }
         return;
       }
 
@@ -318,6 +802,9 @@ Keep your answer clear, precise, and professional.`;
               uniqueSources.push({
                 title,
                 filename: fileName,
+                source_table: r.source_table,
+                record_id: r.record_id,
+                parent_id: r.parent_id,
                 author: (r.original && r.original.parent && r.original.parent.Author) || null,
                 sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
                 category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
@@ -341,6 +828,9 @@ Keep your answer clear, precise, and professional.`;
             uniqueSources.push({
               title,
               filename: fileName,
+              source_table: r.source_table,
+              record_id: r.record_id,
+              parent_id: r.parent_id,
               author: (r.original && r.original.parent && r.original.parent.Author) || null,
               sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
               category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,

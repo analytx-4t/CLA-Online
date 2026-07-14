@@ -34,7 +34,7 @@ function getPortkeyModel(provider, model) {
   return `${providerSlug}/${model}`;
 }
 
-async function createChatCompletion({
+async function executeChatCompletionDirect({
   provider,
   model,
   messages = [],
@@ -65,6 +65,65 @@ async function createChatCompletion({
       metadata: buildPortkeyMetadata(metadata),
     }
   );
+}
+
+async function createChatCompletion({
+  provider,
+  model,
+  messages = [],
+  systemPrompt = '',
+  temperature = 0.2,
+  maxTokens = 512,
+  metadata = {},
+  traceId,
+}) {
+  try {
+    return await executeChatCompletionDirect({
+      provider,
+      model,
+      messages,
+      systemPrompt,
+      temperature,
+      maxTokens,
+      metadata,
+      traceId,
+    });
+  } catch (error) {
+    console.warn(`Primary provider ${provider} failed: ${error.message || error}. Initiating fallback chain...`);
+
+    const fallbackChain = [
+      { provider: 'groq', model: process.env.GROQ_LLAMA_MODEL || 'llama-3.3-70b-versatile' },
+      { provider: 'deepseek', model: process.env.DEEPSEEK_FLASH_MODEL || 'deepseek-v4-flash' },
+      { provider: 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' },
+    ];
+
+    const remainingFallbacks = fallbackChain.filter(f => f.provider !== provider);
+
+    for (const fallback of remainingFallbacks) {
+      if (!providerSlugs[fallback.provider]) {
+        continue;
+      }
+      try {
+        console.log(`Attempting fallback to ${fallback.provider} (${fallback.model})...`);
+        const response = await executeChatCompletionDirect({
+          provider: fallback.provider,
+          model: fallback.model,
+          messages,
+          systemPrompt,
+          temperature,
+          maxTokens,
+          metadata,
+          traceId,
+        });
+        console.log(`Fallback to ${fallback.provider} successful.`);
+        return response;
+      } catch (fallbackError) {
+        console.warn(`Fallback to ${fallback.provider} failed: ${fallbackError.message || fallbackError}`);
+      }
+    }
+
+    throw error;
+  }
 }
 
 async function createFallbackChatCompletion({

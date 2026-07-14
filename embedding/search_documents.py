@@ -404,19 +404,97 @@ def search(query_text, top_k=5, hybrid=True, source_filter=None, with_original_c
     return results
 
 
+def get_citation(source_table, record_id, parent_id=None):
+    """Retrieve full citation HTML and metadata for a given child record ID."""
+    mapping = _SOURCE_TABLE_MAP.get(source_table)
+    if not mapping:
+        return {"error": f"Invalid source table: {source_table}"}
+
+    cnx = pyodbc.connect(SQL_CONN_STR)
+    cur = cnx.cursor()
+    try:
+        # Fetch the child row
+        cur.execute(f"SELECT * FROM dbo.{mapping['child']} WITH (NOLOCK) WHERE {mapping['child_pk']} = ?", record_id)
+        child_row = cur.fetchone()
+        if not child_row:
+            return {"error": f"Child row not found for record_id {record_id} in {mapping['child']}"}
+
+        child_dict = _row_to_dict(cur, child_row)
+
+        # Guess parent_id column in child_dict if it is not provided
+        if parent_id is None and mapping["parent"]:
+            possible_keys = [
+                "Article_ID", "CaseLawID", "Notification_ID", "Legislation_ID",
+                "Query_ID", "commentary_ActID", "parent_id"
+            ]
+            for key in possible_keys:
+                if key in child_dict:
+                    parent_id = child_dict[key]
+                    break
+
+        # Fetch parent row if applicable
+        parent_dict = None
+        if mapping["parent"] and parent_id is not None:
+            cur.execute(f"SELECT * FROM dbo.{mapping['parent']} WITH (NOLOCK) WHERE {mapping['parent_pk']} = ?", parent_id)
+            parent_row = cur.fetchone()
+            if parent_row:
+                parent_dict = _row_to_dict(cur, parent_row)
+
+        # Resolve Title
+        title = "Untitled Document"
+        if parent_dict:
+            title = parent_dict.get("Title") or parent_dict.get("Versus") or parent_dict.get("Legislation") or "Untitled Document"
+        else:
+            title = child_dict.get("FileName") or child_dict.get("Heading") or "Untitled Document"
+
+        # Resolve HTML/Text content
+        html_content = ""
+        content_keys = ["Filetext", "Commentary_Details", "Procedure", "filehtml", "FileHtml", "RawText"]
+        for key in content_keys:
+            if key in child_dict and child_dict[key]:
+                html_content = child_dict[key]
+                break
+
+        if not html_content:
+            html_content = "<p>No content available for this document.</p>"
+
+        return {
+            "title": title,
+            "source_table": source_table,
+            "record_id": record_id,
+            "parent_id": parent_id,
+            "html": html_content,
+            "child": child_dict,
+            "parent": parent_dict
+        }
+    finally:
+        cur.close()
+        cnx.close()
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--json":
         try:
             input_data = json.load(sys.stdin)
-            query = input_data.get("query", "")
-            top_k = input_data.get("top_k", 5)
-            hybrid = input_data.get("hybrid", True)
-            source_filter = input_data.get("source_filter", None)
+            action = input_data.get("action", "search")
             
-            results = search(query, top_k=top_k, hybrid=hybrid, source_filter=source_filter)
-            print(json.dumps({"results": results}))
+            if action == "get_citation":
+                source_table = input_data.get("source_table")
+                record_id = input_data.get("record_id")
+                parent_id = input_data.get("parent_id")
+                
+                result = get_citation(source_table, record_id, parent_id)
+                print(json.dumps(result))
+            else:
+                query = input_data.get("query", "")
+                top_k = input_data.get("top_k", 5)
+                hybrid = input_data.get("hybrid", True)
+                source_filter = input_data.get("source_filter", None)
+                
+                results = search(query, top_k=top_k, hybrid=hybrid, source_filter=source_filter)
+                print(json.dumps({"results": results}))
         except Exception as e:
-            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            print(json.dumps({"error": str(e)}))
         return
 
     query = input("Ask a legal question: ").strip()
@@ -438,3 +516,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

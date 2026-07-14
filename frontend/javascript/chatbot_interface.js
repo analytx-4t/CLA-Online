@@ -357,12 +357,29 @@ function renderMessages(){
           }
           if (s.vol) detailsHtml += `<span><strong>Vol:</strong> ${escapeHTML(s.vol)}</span>`;
           
+          let openLinkHtml = '';
+          if (s.source_table && s.record_id) {
+            const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
+            openLinkHtml = `
+              <div class="citation-actions">
+                <a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(s.record_id)}${parentParam}" 
+                   target="_blank" class="open-citation-btn">
+                  <svg class="open-icon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                    <path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+                  </svg>
+                  Open Citation Document
+                </a>
+              </div>
+            `;
+          }
+
           card.innerHTML = `
             <div class="citation-header">
-              <span class="citation-badge">Article</span>
+              <span class="citation-badge">${escapeHTML(s.source_table || 'Article')}</span>
               <div class="citation-title">${escapeHTML(s.title || 'Untitled')}</div>
             </div>
             ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
+            ${openLinkHtml}
           `;
           citationsContainer.appendChild(card);
         });
