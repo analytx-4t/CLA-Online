@@ -193,7 +193,7 @@ html[data-theme="dark"] .chat-body::-webkit-scrollbar-thumb{
 .chat-window::-webkit-scrollbar-track{background:transparent}
 .chat-window::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.12);border-radius:999px}
 .msg-title{font-weight:700;color:var(--primary);margin-bottom:12px}
-.assistant-msg,.user-msg{display:inline-block;width:auto;max-width:85%;padding:12px 14px;border-radius:16px;border:1px solid var(--border);line-height:1.5}
+.assistant-msg,.user-msg{display:inline-block;width:auto;max-width:85%;padding:12px 14px;border-radius:16px;border:1px solid var(--border);line-height:1.5;white-space:pre-wrap}
 .assistant-msg{background:var(--message-assistant-bg);align-self:flex-start;color:var(--message-assistant-text);border-color:var(--message-assistant-border)}
 .user-msg{background:var(--message-user-bg);align-self:flex-end;color:var(--message-user-text);border-color:var(--message-user-border);max-width:75%}
 #attachmentPreview{margin-bottom:10px}
@@ -252,3 +252,52 @@ html[data-theme="dark"] .session-more-icon{
 .dialog-btn.secondary{background:transparent;border:1px solid var(--session-sidebar-border);color:var(--text)}
 .dialog-btn.danger{background:#d64545;color:#fff}
 .dialog-btn:disabled{opacity:0.7;cursor:not-allowed}
+
+.message-follow-ups {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.follow-up-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.follow-up-btn {
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--welcome-card-border);
+  background: var(--suggestion-bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+}
+.follow-up-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(12,135,66,0.04);
+}
+
+.assistant-msg strong {
+  color: var(--primary);
+  font-weight: 700;
+}
+.assistant-msg code {
+  font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+[data-theme="dark"] .assistant-msg code {
+  background: rgba(255, 255, 255, 0.1);
+}

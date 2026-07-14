@@ -25,6 +25,9 @@ let isDeletingSession = false;
 let sessionMenuPortal = null;
 
 function getApiBaseUrl(){
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'http://localhost:3000';
+  }
   return window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'http://localhost:3000';
 }
 
@@ -127,6 +130,18 @@ themeToggle?.addEventListener('click', ()=>{
 
 function escapeHTML(value){
   return value.replace(/[&<>"]+/g, match => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[match]));
+}
+
+function formatMarkdown(text) {
+  if (!text) return '';
+  let html = escapeHTML(text);
+  // Bold: **text**
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // Italic: *text*
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  // Inline code: `text`
+  html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+  return html;
 }
 
 function highlightMatch(text, query){
@@ -264,7 +279,34 @@ function renderMessages(){
     const div = document.createElement('div');
     div.className = message.role === 'user' ? 'user-msg' : 'assistant-msg';
     if(message.role === 'assistant'){
-      div.innerHTML = `<div class="msg-title">CLA Online Legal Chatbot</div><p>${escapeHTML(message.content)}</p>`;
+      const safeContent = formatMarkdown(message.content || '');
+      div.innerHTML = `<div class="msg-title">CLA Online Legal Chatbot</div><p>${safeContent}</p>`;
+      
+      const followUps = message.metadata && message.metadata.follow_up_questions ? message.metadata.follow_up_questions : [];
+      if(followUps.length){
+        const followUpContainer = document.createElement('div');
+        followUpContainer.className = 'message-follow-ups';
+        
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'follow-up-title';
+        titleDiv.textContent = 'Suggested follow-up questions:';
+        followUpContainer.appendChild(titleDiv);
+        
+        followUps.forEach(q => {
+          const btn = document.createElement('button');
+          btn.className = 'follow-up-btn';
+          btn.textContent = q;
+          btn.addEventListener('click', () => {
+            if(!messageInput) return;
+            messageInput.value = q;
+            resizeTextArea();
+            messageInput.focus();
+            handleUserSend();
+          });
+          followUpContainer.appendChild(btn);
+        });
+        div.appendChild(followUpContainer);
+      }
     } else {
       // preserve message bubble styling; inject attachments if present
       const safeContent = escapeHTML(message.content || '');
@@ -347,10 +389,18 @@ async function createNewSession(){
   updateWelcomeCard();
 }
 
-function selectSession(sessionId){
+async function selectSession(sessionId){
   setCurrentSession(sessionId);
   activeSessionMenuId = null;
   renderSessions();
+  
+  try {
+    const msgs = await fetchSessionMessages(sessionId);
+    messagesBySession[sessionId] = msgs;
+  } catch (error) {
+    console.error('Failed to load session messages:', error);
+  }
+  
   renderMessages();
   updateWelcomeCard();
 }
@@ -367,11 +417,13 @@ function closeSessionMenu(){
   }
 }
 
-function handleUserSend(){
-  if(!messageInput) return;
+async function handleUserSend(){
+  if(!messageInput || isSendingMessage) return;
   const text = messageInput.value.trim();
   if(!text && selectedFiles.length === 0) return;
+  
   isSendingMessage = true;
+  
   // prepare attachments metadata
   const attachmentsMeta = selectedFiles.length ? selectedFiles.map(f => ({
     name: f.name,
@@ -381,16 +433,83 @@ function handleUserSend(){
     key: `${f.name}-${f.size}-${f.lastModified}`
   })) : [];
 
-  addMessage('user', text || '', { attachments: attachmentsMeta });
-
+  // Add the user message locally first
+  const userMsg = addMessage('user', text || '', { attachments: attachmentsMeta });
+  
+  // Clear input fields immediately
   messageInput.value = '';
   resizeTextArea();
-  addAssistantMessage();
-  // Clear attachments after sending
   selectedFiles = [];
   if(fileUpload) fileUpload.value = '';
   renderAttachmentPreview();
-  isSendingMessage = false;
+
+  // Add a temporary thinking message to show loading state
+  const thinkingMessageId = 'thinking-' + Date.now();
+  const sessionId = currentSessionId;
+  const thinkingMsg = {
+    message_id: thinkingMessageId,
+    session_id: sessionId,
+    role: 'assistant',
+    content: 'CLA is analyzing your query and searching resources...',
+    created_at: nowISO(),
+    metadata: { isThinking: true }
+  };
+  
+  if (!messagesBySession[sessionId]) {
+    messagesBySession[sessionId] = [];
+  }
+  messagesBySession[sessionId].push(thinkingMsg);
+  renderMessages();
+  updateWelcomeCard();
+
+  try {
+    const payload = {
+      content: text || '',
+      metadata: { attachments: attachmentsMeta }
+    };
+    
+    // Call the backend API to generate response using the agent flow
+    const result = await sendMessageToSession(sessionId, payload);
+    
+    // Remove the thinking message
+    messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
+    
+    // Push the finalized messages from backend
+    if (result.userMessage) {
+      messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== userMsg.message_id);
+      messagesBySession[sessionId].push(result.userMessage);
+    }
+    if (result.assistantMessage) {
+      messagesBySession[sessionId].push(result.assistantMessage);
+    }
+    
+    // Update session info from database
+    const session = getCurrentSession();
+    if (session) {
+      session.message_count = messagesBySession[sessionId].length;
+      session.updated_at = nowISO();
+      if (result.assistantMessage && (!session.title || session.title === 'New chat')) {
+        session.title = truncateTitle(text);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to send message:', error);
+    // Replace thinking message with error description
+    messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
+    messagesBySession[sessionId].push({
+      message_id: 'error-' + Date.now(),
+      session_id: sessionId,
+      role: 'assistant',
+      content: 'I apologize, but I encountered an error while processing your request. Please try again. Error: ' + error.message,
+      created_at: nowISO(),
+      metadata: { isError: true }
+    });
+  } finally {
+    isSendingMessage = false;
+    renderSessions();
+    renderMessages();
+    updateWelcomeCard();
+  }
 }
 
 function debounceSearch(){
@@ -666,9 +785,22 @@ function createSessionFromBackend(sessionData){
 }
 
 async function fetchChatSessions(){
-  // TODO: replace with API call to GET /api/chat/sessions
   isLoadingSessions = true;
   try {
+    const response = await fetch(`${getApiBaseUrl()}/api/chat/sessions`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': getCurrentUserId(),
+      }
+    });
+    if (!response.ok) {
+      throw new Error('Failed to fetch sessions');
+    }
+    const data = await response.json();
+    return data.sessions || [];
+  } catch (err) {
+    console.error('fetchChatSessions error:', err);
     return [];
   } finally {
     isLoadingSessions = false;
@@ -676,9 +808,22 @@ async function fetchChatSessions(){
 }
 
 async function fetchSessionMessages(sessionId){
-  // TODO: replace with API call to GET /api/chat/sessions/:sessionId
   isLoadingMessages = true;
   try {
+    const response = await fetch(`${getApiBaseUrl()}/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': getCurrentUserId(),
+      }
+    });
+    if (!response.ok) {
+      throw new Error('Failed to fetch messages');
+    }
+    const data = await response.json();
+    return data.messages || [];
+  } catch (err) {
+    console.error('fetchSessionMessages error:', err);
     return messagesBySession[sessionId] || [];
   } finally {
     isLoadingMessages = false;
@@ -690,47 +835,61 @@ async function searchChatSessions(query){
   return [];
 }
 
+async function sendMessageToSession(sessionId, messagePayload){
+  const response = await fetch(`${getApiBaseUrl()}/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-user-id': getCurrentUserId(),
+    },
+    body: JSON.stringify(messagePayload),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to send message');
+  }
+  return await response.json();
+}
+
 async function createChatSession(sessionPayload){
   const response = await fetch(`${getApiBaseUrl()}/api/chat/sessions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-user-id': getCurrentUserId()
+      'x-user-id': getCurrentUserId(),
     },
-    body: JSON.stringify({
-      session_id: getSessionIdentifier(sessionPayload),
-      user_id: getSessionOwnerId(sessionPayload) || getCurrentUserId(),
-      title: sessionPayload.title || 'New chat',
-      status: sessionPayload.status || SESSION_STATUS.ACTIVE,
-    })
+    body: JSON.stringify(sessionPayload),
   });
-  let payload = {};
-  try { payload = await response.json(); } catch (error) { payload = {}; }
-  if(!response.ok){
-    throw new Error(payload.error || 'Unable to create chat session right now.');
+  if (!response.ok) {
+    throw new Error('Failed to create session');
   }
-  return payload.session || payload;
-}
-
-async function sendMessageToSession(sessionId, messagePayload){
-  // TODO: replace with API call to POST /api/chat/sessions/:sessionId/messages
-  return messagePayload;
+  return await response.json();
 }
 
 async function initSession(){
-  const session = createSession();
   try {
-    const persistedSession = await createChatSession(session);
-    const resolvedSession = {
-      ...session,
-      ...persistedSession,
-      session_id: getSessionIdentifier(persistedSession) || session.session_id,
-      user_id: getSessionOwnerId(persistedSession) || session.user_id,
-    };
-    sessions = [resolvedSession];
-    messagesBySession[resolvedSession.session_id] = [];
-    setCurrentSession(resolvedSession.session_id);
+    const fetched = await fetchChatSessions();
+    if (fetched && fetched.length > 0) {
+      sessions = fetched.map(s => createSessionFromBackend(s));
+      const firstSessionId = sessions[0].session_id;
+      setCurrentSession(firstSessionId);
+      const msgs = await fetchSessionMessages(firstSessionId);
+      messagesBySession[firstSessionId] = msgs;
+    } else {
+      const session = createSession();
+      const persistedSession = await createChatSession(session);
+      const resolvedSession = {
+        ...session,
+        ...persistedSession,
+        session_id: getSessionIdentifier(persistedSession) || session.session_id,
+        user_id: getSessionOwnerId(persistedSession) || session.user_id,
+      };
+      sessions = [resolvedSession];
+      messagesBySession[resolvedSession.session_id] = [];
+      setCurrentSession(resolvedSession.session_id);
+    }
   } catch (error) {
+    console.error('initSession error:', error);
+    const session = createSession();
     sessions = [session];
     messagesBySession[session.session_id] = [];
     setCurrentSession(session.session_id);

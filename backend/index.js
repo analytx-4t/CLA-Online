@@ -63,6 +63,18 @@ async function startServer() {
     await connectDB();
 
     const server = http.createServer(async (req, res) => {
+      // Set CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-user-id, x-auth-user-id');
+
+      // Handle preflight OPTIONS request
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
       const path = getRequestPath(req.url || '/');
 
       if (path === '/health' && req.method === 'GET') {
@@ -174,6 +186,136 @@ async function startServer() {
           console.error('Delete session failed', error);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Unable to delete chat session.' }));
+        }
+        return;
+      }
+
+      // GET /api/chat/sessions
+      if (path === '/api/chat/sessions' && req.method === 'GET') {
+        try {
+          const userId = getAuthenticatedUserId(req);
+          const db = await connectDB();
+          const sessionsCollection = db.collection('chat_sessions');
+          const sessionsList = await sessionsCollection.find({ user_id: userId })
+            .sort({ updated_at: -1 })
+            .toArray();
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ sessions: sessionsList }));
+        } catch (error) {
+          console.error('List sessions failed', error);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unable to retrieve chat sessions.' }));
+        }
+        return;
+      }
+
+      // POST /api/chat/sessions/:sessionId/messages
+      if (path.startsWith('/api/chat/sessions/') && path.endsWith('/messages') && req.method === 'POST') {
+        const parts = path.split('/');
+        const sessionId = parts[parts.length - 2];
+        const userId = getAuthenticatedUserId(req);
+
+        try {
+          const payload = await getRequestBody(req);
+          const content = payload.content;
+
+          const db = await connectDB();
+          const sessionsCollection = db.collection('chat_sessions');
+          const messagesCollection = db.collection('chat_messages');
+
+          const ownedSession = await findOwnedSession(sessionsCollection, sessionId, userId);
+          if (!ownedSession) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Chat session not found.' }));
+            return;
+          }
+
+          const now = new Date().toISOString();
+          const userMsgDoc = {
+            message_id: randomUUID(),
+            session_id: sessionId,
+            user_id: userId,
+            role: 'user',
+            content: content || '',
+            created_at: now,
+            metadata: payload.metadata || {}
+          };
+          await messagesCollection.insertOne(userMsgDoc);
+
+          const previousMessages = await messagesCollection.find({ session_id: sessionId })
+            .sort({ created_at: 1 })
+            .toArray();
+
+          const { runAgentFlow } = require('./agentSystem');
+          const agentResult = await runAgentFlow(content, { history: previousMessages });
+
+          const assistantMsgDoc = {
+            message_id: randomUUID(),
+            session_id: sessionId,
+            user_id: userId,
+            role: 'assistant',
+            content: agentResult.content,
+            created_at: new Date().toISOString(),
+            metadata: {
+              route: agentResult.route,
+              follow_up_questions: agentResult.follow_up_questions
+            }
+          };
+          await messagesCollection.insertOne(assistantMsgDoc);
+
+          const messageCount = await messagesCollection.countDocuments({ session_id: sessionId });
+          await sessionsCollection.updateOne(
+            { _id: ownedSession._id },
+            {
+              $set: {
+                updated_at: new Date().toISOString(),
+                message_count: messageCount
+              }
+            }
+          );
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            userMessage: userMsgDoc,
+            assistantMessage: assistantMsgDoc
+          }));
+        } catch (error) {
+          console.error('Send message failed', error);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unable to process message.' }));
+        }
+        return;
+      }
+
+      // GET /api/chat/sessions/:sessionId/messages
+      if (path.startsWith('/api/chat/sessions/') && path.endsWith('/messages') && req.method === 'GET') {
+        const parts = path.split('/');
+        const sessionId = parts[parts.length - 2];
+        const userId = getAuthenticatedUserId(req);
+
+        try {
+          const db = await connectDB();
+          const sessionsCollection = db.collection('chat_sessions');
+          const messagesCollection = db.collection('chat_messages');
+
+          const ownedSession = await findOwnedSession(sessionsCollection, sessionId, userId);
+          if (!ownedSession) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Chat session not found.' }));
+            return;
+          }
+
+          const messages = await messagesCollection.find({ session_id: sessionId })
+            .sort({ created_at: 1 })
+            .toArray();
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ messages }));
+        } catch (error) {
+          console.error('Fetch messages failed', error);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unable to fetch chat messages.' }));
         }
         return;
       }
