@@ -301,3 +301,80 @@ html[data-theme="dark"] .session-more-icon{
 [data-theme="dark"] .assistant-msg code {
   background: rgba(255, 255, 255, 0.1);
 }
+
+/* RAG Search Citations Styling */
+.citations-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+  width: 100%;
+}
+.citations-header-title {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+.citation-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.citation-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 6px 16px rgba(12,135,66,0.12);
+  transform: translateY(-2px);
+}
+.citation-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.citation-badge {
+  background: rgba(12,135,66,0.1);
+  color: var(--primary);
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.citation-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.4;
+}
+.citation-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 6px 12px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px solid rgba(0,0,0,0.03);
+  padding-top: 8px;
+}
+html[data-theme="dark"] .citation-details {
+  border-top: 1px solid rgba(255,255,255,0.03);
+}
+.citation-details span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.citation-details strong {
+  color: var(--text);
+  font-weight: 600;
+}

@@ -24,6 +24,9 @@ let pendingDeleteSessionId = null;
 let isDeletingSession = false;
 let sessionMenuPortal = null;
 
+let activeMode = 'chat'; // 'chat' or 'rag'
+let ragMessages = [];
+
 function getApiBaseUrl(){
   const configuredBaseUrl = (window.__CLA_API_BASE_URL__ || '').toString().trim();
   if (configuredBaseUrl) {
@@ -290,8 +293,20 @@ function renderSessions(){
 
 function updateWelcomeCard(){
   if(!welcomeCard) return;
+
+  const welcomeTitleEl = welcomeCard.querySelector('.welcome-title');
+  const welcomeSubtitleEl = welcomeCard.querySelector('.welcome-subtitle');
+
+  if (activeMode === 'rag') {
+    if (welcomeTitleEl) welcomeTitleEl.textContent = 'Ask Legal RAG AI';
+    if (welcomeSubtitleEl) welcomeSubtitleEl.textContent = 'Search the legal database with hybrid vector & keyword retrieval. Answers are strictly grounded in Articles with source citations.';
+  } else {
+    if (welcomeTitleEl) welcomeTitleEl.textContent = 'Ask Legal AI';
+    if (welcomeSubtitleEl) welcomeSubtitleEl.textContent = 'Your corporate legal assistant. Ask about company law, case law, circulars, articles and more.';
+  }
+
   const session = getCurrentSession();
-  const messages = session ? getMessagesForSession(session.session_id) : [];
+  const messages = activeMode === 'rag' ? ragMessages : (session ? getMessagesForSession(session.session_id) : []);
   const chatShell = document.querySelector('.chat-window-shell');
 
   const showWelcome = messages.length === 0;
@@ -307,14 +322,52 @@ function updateWelcomeCard(){
 function renderMessages(){
   if(!chatWindow) return;
   const session = getCurrentSession();
-  const messages = session ? getMessagesForSession(session.session_id) : [];
+  const messages = activeMode === 'rag' ? ragMessages : (session ? getMessagesForSession(session.session_id) : []);
   chatWindow.innerHTML = '';
   messages.forEach(message => {
     const div = document.createElement('div');
     div.className = message.role === 'user' ? 'user-msg' : 'assistant-msg';
     if(message.role === 'assistant'){
       const safeContent = formatMarkdown(message.content || '');
-      div.innerHTML = `<div class="msg-title">CLA Online Legal Chatbot</div><p>${safeContent}</p>`;
+      const titleText = activeMode === 'rag' ? 'CLA Legal RAG Search' : 'CLA Online Legal Chatbot';
+      div.innerHTML = `<div class="msg-title">${titleText}</div><p>${safeContent}</p>`;
+      
+      // Render RAG sources/citations if present
+      const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
+      if (sources.length > 0) {
+        const citationsContainer = document.createElement('div');
+        citationsContainer.className = 'citations-container';
+        citationsContainer.innerHTML = `<div class="citations-header-title">Source Citations (${sources.length})</div>`;
+        
+        sources.forEach(s => {
+          const card = document.createElement('div');
+          card.className = 'citation-card';
+          
+          let detailsHtml = '';
+          if (s.author) detailsHtml += `<span><strong>Author:</strong> ${escapeHTML(s.author)}</span>`;
+          if (s.filename) detailsHtml += `<span><strong>File:</strong> ${escapeHTML(s.filename)}</span>`;
+          if (s.subject) detailsHtml += `<span><strong>Subject:</strong> ${escapeHTML(s.subject)}</span>`;
+          if (s.doc_date) {
+            try {
+              const formattedDate = new Date(s.doc_date).toLocaleDateString();
+              detailsHtml += `<span><strong>Date:</strong> ${formattedDate}</span>`;
+            } catch (e) {
+              detailsHtml += `<span><strong>Date:</strong> ${escapeHTML(s.doc_date)}</span>`;
+            }
+          }
+          if (s.vol) detailsHtml += `<span><strong>Vol:</strong> ${escapeHTML(s.vol)}</span>`;
+          
+          card.innerHTML = `
+            <div class="citation-header">
+              <span class="citation-badge">Article</span>
+              <div class="citation-title">${escapeHTML(s.title || 'Untitled')}</div>
+            </div>
+            ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
+          `;
+          citationsContainer.appendChild(card);
+        });
+        div.appendChild(citationsContainer);
+      }
       
       const followUps = message.metadata && message.metadata.follow_up_questions ? message.metadata.follow_up_questions : [];
       if(followUps.length){
@@ -494,6 +547,77 @@ async function handleUserSend(){
     key: `${f.name}-${f.size}-${f.lastModified}`
   })) : [];
 
+  if (activeMode === 'rag') {
+    // RAG Mode stateless execution
+    const userMsg = {
+      message_id: 'user-' + Date.now(),
+      role: 'user',
+      content: text,
+      created_at: nowISO(),
+      metadata: { attachments: attachmentsMeta }
+    };
+    ragMessages.push(userMsg);
+
+    // Clear input fields immediately
+    messageInput.value = '';
+    resizeTextArea();
+    selectedFiles = [];
+    if(fileUpload) fileUpload.value = '';
+    renderAttachmentPreview();
+
+    const thinkingMessageId = 'thinking-' + Date.now();
+    const thinkingMsg = {
+      message_id: thinkingMessageId,
+      role: 'assistant',
+      content: 'CLA is searching legal database and generating grounded answer...',
+      created_at: nowISO(),
+      metadata: { isThinking: true }
+    };
+    ragMessages.push(thinkingMsg);
+    renderMessages();
+    updateWelcomeCard();
+
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/ask`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ question: text })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      ragMessages = ragMessages.filter(m => m.message_id !== thinkingMessageId);
+      ragMessages.push({
+        message_id: 'assistant-' + Date.now(),
+        role: 'assistant',
+        content: data.answer || '',
+        created_at: nowISO(),
+        metadata: { sources: data.sources || [] }
+      });
+    } catch (error) {
+      console.error('RAG request failed:', error);
+      ragMessages = ragMessages.filter(m => m.message_id !== thinkingMessageId);
+      ragMessages.push({
+        message_id: 'error-' + Date.now(),
+        role: 'assistant',
+        content: 'I apologize, but I encountered an error while retrieving documents and generating answer. Please try again. Error: ' + error.message,
+        created_at: nowISO(),
+        metadata: { isError: true }
+      });
+    } finally {
+      isSendingMessage = false;
+      renderMessages();
+      updateWelcomeCard();
+    }
+    return;
+  }
+
   // Add the user message locally first
   const userMsg = addMessage('user', text || '', { attachments: attachmentsMeta });
   
@@ -632,6 +756,47 @@ newChatButton?.addEventListener('click', ()=>{
 
 uploadBtn?.addEventListener('click', ()=>{
   fileUpload?.click();
+});
+
+const chatModeTab = document.getElementById('chatModeTab');
+const ragModeTab = document.getElementById('ragModeTab');
+
+chatModeTab?.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (activeMode === 'chat') return;
+  activeMode = 'chat';
+  chatModeTab.classList.add('active');
+  ragModeTab.classList.remove('active');
+  
+  // Set title back
+  const pageTitle = document.querySelector('.chat-page-title');
+  if (pageTitle) pageTitle.textContent = 'CLA Legal Chatbot';
+  
+  // Show sidebar
+  const chatPanel = document.getElementById('chatPanel');
+  if (chatPanel) chatPanel.style.display = '';
+  
+  renderMessages();
+  updateWelcomeCard();
+});
+
+ragModeTab?.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (activeMode === 'rag') return;
+  activeMode = 'rag';
+  ragModeTab.classList.add('active');
+  chatModeTab.classList.remove('active');
+  
+  // Set title to RAG
+  const pageTitle = document.querySelector('.chat-page-title');
+  if (pageTitle) pageTitle.textContent = 'CLA Legal RAG Search';
+  
+  // Hide sidebar
+  const chatPanel = document.getElementById('chatPanel');
+  if (chatPanel) chatPanel.style.display = 'none';
+  
+  renderMessages();
+  updateWelcomeCard();
 });
 
 function getFileKey(file){
