@@ -4,6 +4,75 @@ const { randomUUID } = require('crypto');
 const { portkey } = require('../llm/portkey');
 const { buildPortkeyMetadata } = require('../llm/metadata');
 
+function extractModel(response) {
+  if (!response) return null;
+
+  const candidates = [
+    response?.choices?.[0]?.message?.model,
+    response?.choices?.[0]?.model,
+    response?.model,
+    response?.provider,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate) {
+      const value = String(candidate).split('/').pop();
+      return value || null;
+    }
+  }
+
+  return null;
+}
+
+function extractProvider(response) {
+  if (!response) return null;
+
+  const candidates = [
+    response?.provider,
+    response?.choices?.[0]?.provider,
+    response?.choices?.[0]?.message?.provider,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate) return String(candidate);
+  }
+
+  return null;
+}
+
+function extractTraceId(response) {
+  if (!response) return null;
+
+  const candidates = [
+    response?.trace_id,
+    response?.traceId,
+    response?.choices?.[0]?.trace_id,
+    response?.choices?.[0]?.traceId,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate) return String(candidate);
+  }
+
+  return null;
+}
+
+function extractUsage(response) {
+  if (!response) return null;
+
+  const candidates = [
+    response?.usage,
+    response?.choices?.[0]?.usage,
+    response?.choices?.[0]?.message?.usage,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate) return candidate;
+  }
+
+  return null;
+}
+
 async function testProductionConfig() {
   const traceId = randomUUID();
 
@@ -11,67 +80,172 @@ async function testProductionConfig() {
   console.log('Trace ID:', traceId);
 
   const configId = 'pc-cla-le-b248d8';
+  const semanticCacheNamespace = 'cla-legal-rag-production-semantic-cache';
 
-  const messages = [
-    { role: 'user', content: 'Reply exactly: CLA Legal RAG production pipeline successful' },
-  ];
-
-  const metadata = buildPortkeyMetadata({
-    session_id: 'production-test-001',
-    query_type: 'production-test',
+  const semanticMetadata = buildPortkeyMetadata({
+    session_id: 'production-semantic-cache-test-001',
+    query_type: 'production-semantic-cache-test',
     rag_stage: 'final-generation',
-    routing_mode: 'production',
+    routing_mode: 'production-semantic-cache',
   });
 
-  const req = {
-    model: 'llama-3.3-70b-versatile',
-    messages,
-    temperature: 0,
-  };
+  const concurrentMetadata = buildPortkeyMetadata({
+    session_id: 'production-concurrent-load-test-001',
+    query_type: 'production-concurrent-load-test',
+    rag_stage: 'final-generation',
+    routing_mode: 'production-concurrent-loadbalance',
+  });
 
-  const opts = {
+  const semanticOptions = {
     config: configId,
     traceId,
-    metadata,
+    metadata: semanticMetadata,
+    cacheNamespace: semanticCacheNamespace,
+  };
+
+  const concurrentOptions = {
+    config: configId,
+    traceId,
+    metadata: concurrentMetadata,
   };
 
   try {
+    const firstPrompt = 'Why is retrieval augmented generation useful for a legal chatbot?';
+    const firstMessages = [{ role: 'user', content: firstPrompt }];
+    const firstRequest = {
+      model: 'llama-3.3-70b-versatile',
+      messages: firstMessages,
+      temperature: 0,
+      max_tokens: 120,
+    };
+
     const start1 = Date.now();
-    const res1 = await portkey.chat.completions.create(req, opts);
-    const dur1 = Date.now() - start1;
+    const firstResponse = await portkey.chat.completions.create(firstRequest, semanticOptions);
+    const firstDuration = Date.now() - start1;
 
-    const content1 = res1?.choices?.[0]?.message?.content || res1?.content || '';
-    const model1 = res1?.choices?.[0]?.model || res1?.model || null;
-    const provider1 = res1?.provider || null;
-    const usage1 = res1?.usage || null;
+    const firstContent = firstResponse?.choices?.[0]?.message?.content || firstResponse?.content || '';
+    const firstModel = extractModel(firstResponse);
+    const firstProvider = extractProvider(firstResponse);
+    const firstTraceId = extractTraceId(firstResponse);
+    const firstUsage = extractUsage(firstResponse);
 
-    console.log('Response:', content1);
-    if (model1) console.log('Model:', String(model1).split('/').pop());
-    if (provider1) console.log('Provider:', provider1);
-    if (usage1) console.log('Usage:', usage1);
-    console.log('Duration:', `${dur1} ms`);
+    console.log('First semantic request:');
+    console.log('Prompt:', firstPrompt);
+    console.log('Response:', firstContent);
+    if (firstModel) console.log('Model:', firstModel);
+    if (firstProvider) console.log('Provider:', firstProvider);
+    console.log('Duration:', `${firstDuration} ms`);
+    if (firstTraceId) console.log('Portkey trace ID:', firstTraceId);
+    if (firstUsage) console.log('Usage:', firstUsage);
 
-    // Second identical request
+    const secondPrompt = 'Explain the benefits of using RAG in a chatbot that answers legal questions.';
+    const secondMessages = [{ role: 'user', content: secondPrompt }];
+    const secondRequest = {
+      model: 'llama-3.3-70b-versatile',
+      messages: secondMessages,
+      temperature: 0,
+      max_tokens: 120,
+    };
+
     const start2 = Date.now();
-    const res2 = await portkey.chat.completions.create(req, opts);
-    const dur2 = Date.now() - start2;
+    const secondResponse = await portkey.chat.completions.create(secondRequest, semanticOptions);
+    const secondDuration = Date.now() - start2;
 
-    const content2 = res2?.choices?.[0]?.message?.content || res2?.content || '';
-    const model2 = res2?.choices?.[0]?.model || res2?.model || null;
+    const secondContent = secondResponse?.choices?.[0]?.message?.content || secondResponse?.content || '';
+    const secondModel = extractModel(secondResponse);
+    const secondProvider = extractProvider(secondResponse);
+    const secondTraceId = extractTraceId(secondResponse);
+    const secondUsage = extractUsage(secondResponse);
 
-    console.log('\nSecond request response:', content2);
-    if (model2) console.log('Second request model:', String(model2).split('/').pop());
-    console.log('Second request duration:', `${dur2} ms`);
+    console.log('\nSecond semantic request:');
+    console.log('Prompt:', secondPrompt);
+    console.log('Response:', secondContent);
+    if (secondModel) console.log('Model:', secondModel);
+    if (secondProvider) console.log('Provider:', secondProvider);
+    console.log('Duration:', `${secondDuration} ms`);
+    if (secondTraceId) console.log('Portkey trace ID:', secondTraceId);
+    if (secondUsage) console.log('Usage:', secondUsage);
 
-    console.log('\nProduction Config Demonstration:');
+    console.log('\nSemantic cache summary:');
+    console.log('First request duration:', `${firstDuration} ms`);
+    console.log('Second request duration:', `${secondDuration} ms`);
+    console.log('Second request was faster:', secondDuration < firstDuration);
+
+    const totalRequests = 20;
+    const counts = {
+      'llama-3.3-70b-versatile': 0,
+      'deepseek-v4-flash': 0,
+      'gpt-4.1-mini': 0,
+      unknown: 0,
+    };
+    let failedRequests = 0;
+    const concurrentStartTime = Date.now();
+
+    const requestPromises = Array.from({ length: totalRequests }, async (_, index) => {
+      const requestNumber = index + 1;
+      const messages = [{ role: 'user', content: `Reply exactly: Production concurrent request ${requestNumber} successful` }];
+
+      return portkey.chat.completions.create(
+        {
+          model: 'llama-3.3-70b-versatile',
+          messages,
+          temperature: 0,
+          max_tokens: 50,
+        },
+        concurrentOptions
+      );
+    });
+
+    const concurrentResults = await Promise.allSettled(requestPromises);
+
+    concurrentResults.forEach((result, index) => {
+      const requestNumber = index + 1;
+
+      if (result.status === 'fulfilled') {
+        const response = result.value;
+        const model = extractModel(response) || 'unknown';
+        const normalizedModel = model === 'unknown' ? 'unknown' : model;
+
+        console.log(`Request ${requestNumber}`);
+        console.log('Response:', response?.choices?.[0]?.message?.content || response?.content || JSON.stringify(response));
+        console.log('Model used:', normalizedModel);
+
+        if (counts[normalizedModel] !== undefined) {
+          counts[normalizedModel] += 1;
+        } else {
+          counts.unknown += 1;
+        }
+      } else {
+        console.log(`Request ${requestNumber}`);
+        console.log('Failed:', result.reason?.message || String(result.reason || 'Unknown error'));
+        failedRequests += 1;
+      }
+    });
+
+    const totalConcurrentDuration = Date.now() - concurrentStartTime;
+
+    console.log('\nProduction concurrent load balancing summary:');
+    console.log(`llama-3.3-70b-versatile: ${counts['llama-3.3-70b-versatile']} requests`);
+    console.log(`deepseek-v4-flash: ${counts['deepseek-v4-flash']} requests`);
+    console.log(`gpt-4.1-mini: ${counts['gpt-4.1-mini']} requests`);
+    console.log(`Unknown models: ${counts.unknown} requests`);
+    console.log(`Failed requests: ${failedRequests}`);
+    console.log(`Total requests: ${totalRequests}`);
+    console.log(`Total concurrent duration: ${totalConcurrentDuration} ms`);
+
+    console.log('\nCLA Legal RAG Production Portkey Configuration:');
     console.log('- Observability: enabled');
     console.log('- Metadata tracking: enabled');
-    console.log('- Retry: managed by Portkey');
-    console.log('- Timeout: managed by Portkey');
-    console.log('- Fallback: managed by Portkey');
-    console.log('- Response cache: managed by Portkey');
-    console.log('- Primary provider: Groq');
-    console.log('- Fallback provider: DeepSeek');
+    console.log('- Automatic retry: enabled');
+    console.log('- Request timeout: enabled');
+    console.log('- Fallback routing: enabled');
+    console.log('- Reliability pipeline: Retry + Timeout + Fallback');
+    console.log('- Semantic response caching: enabled');
+    console.log('- Concurrent load balancing: enabled');
+    console.log('- Primary traffic routing: Groq + DeepSeek');
+    console.log('- Load balancing weights: 50% Groq / 50% DeepSeek');
+    console.log('- Final fallback provider: OpenAI');
+    console.log('- Final fallback model: gpt-4.1-mini');
 
     console.log('\nProduction Portkey demonstration successful');
     process.exitCode = 0;

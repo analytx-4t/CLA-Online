@@ -6,18 +6,16 @@ const { buildPortkeyMetadata } = require('../llm/metadata');
 
 async function runLoadBalanceDemo() {
   const traceId = randomUUID();
-  console.log('Testing Portkey Retry + Load Balancing...');
+  console.log('Testing Portkey concurrent load balancing...');
   console.log('Trace ID:', traceId);
 
   const configId = 'pc-cla-le-e42e61';
 
-  const message = [{ role: 'user', content: 'Reply exactly: Load balancing request successful' }];
-
   const metadata = buildPortkeyMetadata({
-    session_id: 'loadbalance-test-001',
-    query_type: 'loadbalance-test',
+    session_id: 'concurrent-loadbalance-test-001',
+    query_type: 'concurrent-loadbalance-test',
     rag_stage: 'final-generation',
-    routing_mode: 'loadbalance',
+    routing_mode: 'concurrent-loadbalance',
   });
 
   const options = {
@@ -26,14 +24,13 @@ async function runLoadBalanceDemo() {
     metadata,
   };
 
-  const counts = {};
-  let total = 0;
-
-  function recordModel(modelStr) {
-    const name = modelStr ? String(modelStr).split('/').pop() : 'unknown';
-    counts[name] = (counts[name] || 0) + 1;
-    total += 1;
-  }
+  const counts = {
+    'llama-3.3-70b-versatile': 0,
+    'deepseek-v4-flash': 0,
+  };
+  let failedRequests = 0;
+  const totalRequests = 20;
+  const startTime = Date.now();
 
   function extractModel(resp) {
     if (!resp) return null;
@@ -43,37 +40,63 @@ async function runLoadBalanceDemo() {
     return null;
   }
 
-  for (let i = 1; i <= 20; i++) {
-    try {
-      console.log(`Request ${i}`);
+  function recordModel(modelStr) {
+    const name = modelStr ? String(modelStr).split('/').pop() : 'unknown';
+    if (counts[name] !== undefined) {
+      counts[name] += 1;
+    }
+  }
 
-      const resp = await portkey.chat.completions.create(
-        {
-          model: 'llama-3.3-70b-versatile',
-          messages: message,
-          temperature: 0,
-        },
-        options
-      );
+  const requestPromises = Array.from({ length: totalRequests }, async (_, index) => {
+    const requestNumber = index + 1;
+    const messages = [{ role: 'user', content: `Reply exactly: Concurrent load balancing request ${requestNumber} successful` }];
 
+    return portkey.chat.completions.create(
+      {
+        model: 'llama-3.3-70b-versatile',
+        messages,
+        temperature: 0,
+        max_tokens: 50,
+      },
+      options
+    );
+  });
+
+  const results = await Promise.allSettled(requestPromises);
+
+  results.forEach((result, index) => {
+    const requestNumber = index + 1;
+
+    if (result.status === 'fulfilled') {
+      const resp = result.value;
       const content = resp?.choices?.[0]?.message?.content || resp?.content || JSON.stringify(resp);
       const model = extractModel(resp) || 'unknown';
 
+      console.log(`Request ${requestNumber}`);
       console.log('Response:', content);
       console.log('Model:', model);
 
       recordModel(model);
-    } catch (err) {
-      console.error(`Request ${i} failed:`, err?.message || err);
-      recordModel('failed');
+    } else {
+      const errorMessage = result.reason?.message || String(result.reason || 'Unknown error');
+      console.log(`Request ${requestNumber}`);
+      console.log('Failed:', errorMessage);
+      failedRequests += 1;
     }
-  }
-
-  console.log('\nLoad balancing summary:');
-  Object.keys(counts).forEach((k) => {
-    console.log(`${k}: ${counts[k]} requests`);
   });
-  console.log('Total requests:', total);
+
+  console.log('\nConcurrent load balancing summary:');
+  console.log(`llama-3.3-70b-versatile: ${counts['llama-3.3-70b-versatile']} requests`);
+  console.log(`deepseek-v4-flash: ${counts['deepseek-v4-flash']} requests`);
+  console.log(`Failed requests: ${failedRequests}`);
+  console.log(`Total requests: ${totalRequests}`);
+  console.log(`Total concurrent duration: ${Date.now() - startTime} ms`);
+
+  if (counts['llama-3.3-70b-versatile'] > 0 && counts['deepseek-v4-flash'] > 0) {
+    console.log('Concurrent load balancing demonstration successful');
+  } else {
+    console.log('Concurrent test completed but both load balancing targets were not observed. Run the test again.');
+  }
 }
 
 runLoadBalanceDemo();
