@@ -25,7 +25,6 @@ let isDeletingSession = false;
 let sessionMenuPortal = null;
 
 let activeMode = 'chat'; // 'chat' or 'rag'
-let ragMessages = [];
 
 function getApiBaseUrl(){
   const configuredBaseUrl = (window.__CLA_API_BASE_URL__ || '').toString().trim();
@@ -40,7 +39,12 @@ function getApiBaseUrl(){
 }
 
 function getCurrentUserId(){
-  return localStorage.getItem('cla-user-id') || 'unknown-user';
+  let userId = localStorage.getItem('cla-user-id');
+  if (!userId) {
+    userId = 'user-' + generateId();
+    localStorage.setItem('cla-user-id', userId);
+  }
+  return userId;
 }
 
 function getSessionIdentifier(session){
@@ -84,13 +88,23 @@ function nowISO(){
   return new Date().toISOString();
 }
 
-function createSession({ title = 'New chat', user_id = getCurrentUserId(), status = SESSION_STATUS.ACTIVE } = {}){
+let activeTypingIntervals = [];
+let messagesToAnimate = new Set();
+
+function clearTypingIntervals() {
+  activeTypingIntervals.forEach(clearInterval);
+  activeTypingIntervals = [];
+}
+
+function createSession({ title, user_id = getCurrentUserId(), status = SESSION_STATUS.ACTIVE } = {}){
   const sessionId = generateSessionId();
   const timestamp = nowISO();
+  const defaultTitle = activeMode === 'rag' ? 'New RAG Search' : 'New chat';
   return {
     session_id: sessionId,
     user_id,
-    title,
+    title: title || defaultTitle,
+    mode: activeMode,
     created_at: timestamp,
     updated_at: timestamp,
     last_message_at: timestamp,
@@ -171,14 +185,104 @@ function escapeHTML(value){
 
 function formatMarkdown(text) {
   if (!text) return '';
+  
+  // Normalize carriage returns to standard newlines
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  
+  // Escape HTML first to prevent injection
   let html = escapeHTML(text);
-  // Bold: **text**
+  
+  // Parse tables
+  const lines = html.split('\n');
+  let inTable = false;
+  let tableRows = [];
+  let processedLines = [];
+  
+  for (let line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      if (!inTable) {
+        inTable = true;
+        tableRows = [];
+      }
+      tableRows.push(trimmed);
+    } else {
+      if (inTable) {
+        processedLines.push(buildHTMLTable(tableRows));
+        inTable = false;
+      }
+      processedLines.push(line);
+    }
+  }
+  if (inTable) {
+    processedLines.push(buildHTMLTable(tableRows));
+  }
+  
+  html = processedLines.join('\n');
+  
+  // Parse headings (from h6 down to h1)
+  html = html.replace(/^\s*###### (.*?)$/gm, '<h6>$1</h6>');
+  html = html.replace(/^\s*##### (.*?)$/gm, '<h5>$1</h5>');
+  html = html.replace(/^\s*#### (.*?)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^\s*### (.*?)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^\s*## (.*?)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^\s*# (.*?)$/gm, '<h1>$1</h1>');
+  
+  // Parse lists (unordered)
+  html = html.replace(/^\s*[\-\*]\s+(.*?)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*?<\/li>)/gs, '<ul>$1</ul>');
+  html = html.replace(/<\/ul>\s*<ul>/g, '');
+  
+  // Parse lists (ordered)
+  html = html.replace(/^\s*\d+\.\s+(.*?)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*?<\/li>)/gs, '<ol>$1</ol>');
+  html = html.replace(/<\/ol>\s*<ol>/g, '');
+  
+  // Parse bold, italic, code
   html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  // Italic: *text*
   html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-  // Inline code: `text`
   html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+  
+  // Parse citation tags: [1] -> superscript link
+  html = html.replace(/\[([1-9])\]/g, '<a href="#citation-$1" class="citation-ref-link" data-citation-index="$1">[$1]</a>');
+  
+  // Handle carriage returns
+  html = html.replace(/\n\n/g, '<p></p>');
+  html = html.replace(/\n/g, '<br>');
+  
   return html;
+}
+
+function buildHTMLTable(rows) {
+  if (rows.length < 2) return rows.join('\n');
+  
+  const parseCells = (row) => row.split('|').slice(1, -1).map(c => c.trim());
+  const headerCells = parseCells(rows[0]);
+  const separatorCells = parseCells(rows[1]);
+  
+  const hasHeaders = separatorCells.every(c => c.startsWith('-') || c.endsWith('-'));
+  let startIdx = 1;
+  let headers = [];
+  
+  if (hasHeaders) {
+    headers = headerCells;
+    startIdx = 2;
+  } else {
+    headers = headerCells.map(() => '');
+    startIdx = 0;
+  }
+  
+  let tableHtml = '<div class="table-container"><table>';
+  if (hasHeaders) {
+    tableHtml += '<thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead>';
+  }
+  tableHtml += '<tbody>';
+  for (let i = startIdx; i < rows.length; i++) {
+    const cells = parseCells(rows[i]);
+    tableHtml += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+  }
+  tableHtml += '</tbody></table></div>';
+  return tableHtml;
 }
 
 function highlightMatch(text, query){
@@ -306,116 +410,260 @@ function updateWelcomeCard(){
   }
 
   const session = getCurrentSession();
-  const messages = activeMode === 'rag' ? ragMessages : (session ? getMessagesForSession(session.session_id) : []);
+  const messages = session ? getMessagesForSession(session.session_id) : [];
   const chatShell = document.querySelector('.chat-window-shell');
 
   const showWelcome = messages.length === 0;
   welcomeCard.style.display = showWelcome ? 'block' : 'none';
 
-  // When there are no messages, do not render the empty chat shell visually.
-  // Use conditional rendering via DOM styles instead of CSS hacks like opacity.
   if(chatShell){
     chatShell.style.display = showWelcome ? 'none' : '';
   }
 }
 
+function renderCitationsAndActions(container, message) {
+  if (container.querySelector('.citations-breadcrumbs') || container.querySelector('.message-actions')) {
+    return;
+  }
+  
+  const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
+  
+  // Render breadcrumbs and citation cards
+  if (sources.length > 0) {
+    const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
+    
+    // Render breadcrumb chain only if multiple sources exist
+    if (sources.length > 1) {
+      const breadcrumbsRow = document.createElement('div');
+      breadcrumbsRow.className = 'citations-breadcrumbs';
+      
+      sources.forEach((s, idx) => {
+        if (idx > 0) {
+          const separator = document.createElement('span');
+          separator.className = 'citation-breadcrumb-separator';
+          separator.innerHTML = ' &gt; ';
+          breadcrumbsRow.appendChild(separator);
+        }
+
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'citation-breadcrumb-item-chain';
+        pill.innerHTML = `source ${idx + 1}`;
+        pill.title = s.title || 'Untitled Source';
+        
+        pill.addEventListener('click', () => {
+          const cardEl = container.querySelector(`#citation-card-${message.message_id}-${idx}`);
+          if (cardEl) {
+            cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            cardEl.classList.remove('highlight');
+            void cardEl.offsetWidth; // trigger reflow
+            cardEl.classList.add('highlight');
+          }
+        });
+        breadcrumbsRow.appendChild(pill);
+      });
+      container.appendChild(breadcrumbsRow);
+    }
+
+    const citationsContainer = document.createElement('div');
+    citationsContainer.className = 'citations-container';
+    citationsContainer.innerHTML = `<div class="citations-header-title">Source Citations (${sources.length})</div>`;
+    
+    sources.forEach((s, idx) => {
+      const sourceNum = idx + 1;
+      
+      // Citation Card
+      const card = document.createElement('div');
+      card.className = 'citation-card';
+      card.id = `citation-card-${message.message_id}-${idx}`;
+      
+      let detailsHtml = '';
+      if (s.author) detailsHtml += `<span><strong>Author:</strong> ${escapeHTML(s.author)}</span>`;
+      if (s.filename) detailsHtml += `<span><strong>File:</strong> ${escapeHTML(s.filename)}</span>`;
+      if (s.sections) detailsHtml += `<span><strong>Sections:</strong> ${escapeHTML(s.sections)}</span>`;
+      if (s.subject) detailsHtml += `<span><strong>Subject:</strong> ${escapeHTML(s.subject)}</span>`;
+      if (s.doc_date) {
+        try {
+          const formattedDate = new Date(s.doc_date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+          detailsHtml += `<span><strong>Date:</strong> ${formattedDate}</span>`;
+        } catch (e) {
+          detailsHtml += `<span><strong>Date:</strong> ${escapeHTML(s.doc_date)}</span>`;
+        }
+      }
+      
+      let openLinkHtml = '';
+      if (s.source_table && s.record_id) {
+        const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
+        openLinkHtml = `<a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(s.record_id)}${parentParam}&theme=${activeTheme}" target="_blank" class="open-citation-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="vertical-align: middle; margin-right: 3px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Citation</a>`;
+      }
+      
+      card.innerHTML = `
+        <div class="citation-card-top-row">
+          <span class="citation-badge">Source [${sourceNum}] - ${escapeHTML(s.source_table || 'Article')}</span>
+          ${openLinkHtml}
+        </div>
+        <div class="citation-title">${escapeHTML(s.title || 'Untitled Document')}</div>
+        ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
+      `;
+      
+      citationsContainer.appendChild(card);
+    });
+    
+    container.appendChild(citationsContainer);
+  }
+  
+  // Feedback Action Buttons (Copy, Helpful, Not Helpful)
+  const actionsRow = document.createElement('div');
+  actionsRow.className = 'message-actions';
+  
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'action-btn';
+  copyBtn.setAttribute('data-tooltip', 'Copy text');
+  copyBtn.innerHTML = `
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+    </svg>
+  `;
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(message.content || '').then(() => {
+      copyBtn.setAttribute('data-tooltip', 'Copied!');
+      copyBtn.classList.add('active');
+      setTimeout(() => {
+        copyBtn.setAttribute('data-tooltip', 'Copy text');
+        copyBtn.classList.remove('active');
+      }, 2000);
+    });
+  });
+  
+  const thumbsUpBtn = document.createElement('button');
+  thumbsUpBtn.type = 'button';
+  thumbsUpBtn.className = 'action-btn';
+  if (message.feedback === 'up') {
+    thumbsUpBtn.classList.add('active');
+  }
+  thumbsUpBtn.setAttribute('data-tooltip', 'Helpful');
+  thumbsUpBtn.innerHTML = `
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path>
+    </svg>
+  `;
+  
+  const thumbsDownBtn = document.createElement('button');
+  thumbsDownBtn.type = 'button';
+  thumbsDownBtn.className = 'action-btn thumbs-down';
+  if (message.feedback === 'down') {
+    thumbsDownBtn.classList.add('active');
+  }
+  thumbsDownBtn.setAttribute('data-tooltip', 'Not helpful');
+  thumbsDownBtn.innerHTML = `
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path>
+    </svg>
+  `;
+  
+  thumbsUpBtn.addEventListener('click', () => {
+    const isActive = thumbsUpBtn.classList.toggle('active');
+    thumbsDownBtn.classList.remove('active');
+    sendFeedback(message.session_id, message.message_id, isActive ? 'up' : 'none');
+    message.feedback = isActive ? 'up' : 'none';
+  });
+  
+  thumbsDownBtn.addEventListener('click', () => {
+    const isActive = thumbsDownBtn.classList.toggle('active');
+    thumbsUpBtn.classList.remove('active');
+    sendFeedback(message.session_id, message.message_id, isActive ? 'down' : 'none');
+    message.feedback = isActive ? 'down' : 'none';
+  });
+  
+  actionsRow.appendChild(copyBtn);
+  actionsRow.appendChild(thumbsUpBtn);
+  actionsRow.appendChild(thumbsDownBtn);
+  
+  container.appendChild(actionsRow);
+
+  // Setup click listeners for inline superscript citation links in the text
+  container.querySelectorAll('.citation-ref-link').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const index = parseInt(link.getAttribute('data-citation-index'), 10) - 1;
+      const cardEl = container.querySelector(`#citation-card-${message.message_id}-${index}`);
+      if (cardEl) {
+        cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        cardEl.classList.remove('highlight');
+        void cardEl.offsetWidth; // trigger reflow
+        cardEl.classList.add('highlight');
+      }
+    });
+  });
+}
+
 function renderMessages(){
   if(!chatWindow) return;
+  clearTypingIntervals();
+  
   const session = getCurrentSession();
-  const messages = activeMode === 'rag' ? ragMessages : (session ? getMessagesForSession(session.session_id) : []);
+  const messages = session ? getMessagesForSession(session.session_id) : [];
   chatWindow.innerHTML = '';
+  
   messages.forEach(message => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'message-bubble-wrapper';
+
     const div = document.createElement('div');
     div.className = message.role === 'user' ? 'user-msg' : 'assistant-msg';
-    if(message.role === 'assistant'){
-      const safeContent = formatMarkdown(message.content || '');
-      const titleText = activeMode === 'rag' ? 'CLA Legal RAG Search' : 'CLA Online Legal Chatbot';
-      div.innerHTML = `<div class="msg-title">${titleText}</div><p>${safeContent}</p>`;
-      
-      // Render RAG sources/citations if present
-      const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
-      if (sources.length > 0) {
-        const citationsContainer = document.createElement('div');
-        citationsContainer.className = 'citations-container';
-        citationsContainer.innerHTML = `<div class="citations-header-title">Source Citations (${sources.length})</div>`;
-        
-        sources.forEach(s => {
-          const card = document.createElement('div');
-          card.className = 'citation-card';
-          
-          let detailsHtml = '';
-          if (s.author) detailsHtml += `<span><strong>Author:</strong> ${escapeHTML(s.author)}</span>`;
-          if (s.filename) detailsHtml += `<span><strong>File:</strong> ${escapeHTML(s.filename)}</span>`;
-          if (s.subject) detailsHtml += `<span><strong>Subject:</strong> ${escapeHTML(s.subject)}</span>`;
-          if (s.doc_date) {
-            try {
-              const formattedDate = new Date(s.doc_date).toLocaleDateString();
-              detailsHtml += `<span><strong>Date:</strong> ${formattedDate}</span>`;
-            } catch (e) {
-              detailsHtml += `<span><strong>Date:</strong> ${escapeHTML(s.doc_date)}</span>`;
-            }
-          }
-          if (s.vol) detailsHtml += `<span><strong>Vol:</strong> ${escapeHTML(s.vol)}</span>`;
-          
-          let openLinkHtml = '';
-          if (s.source_table && s.record_id) {
-            const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
-            openLinkHtml = `
-              <div class="citation-actions">
-                <a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(s.record_id)}${parentParam}" 
-                   target="_blank" class="open-citation-btn">
-                  <svg class="open-icon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
-                    <path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
-                  </svg>
-                  Open Citation Document
-                </a>
-              </div>
-            `;
-          }
+    wrapper.appendChild(div);
 
-          card.innerHTML = `
-            <div class="citation-header">
-              <span class="citation-badge">${escapeHTML(s.source_table || 'Article')}</span>
-              <div class="citation-title">${escapeHTML(s.title || 'Untitled')}</div>
-            </div>
-            ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
-            ${openLinkHtml}
-          `;
-          citationsContainer.appendChild(card);
-        });
-        div.appendChild(citationsContainer);
-      }
-      
-      const followUps = message.metadata && message.metadata.follow_up_questions ? message.metadata.follow_up_questions : [];
-      if(followUps.length){
-        const followUpContainer = document.createElement('div');
-        followUpContainer.className = 'message-follow-ups';
+    if(message.role === 'assistant'){
+      const titleText = activeMode === 'rag' ? 'CLA Legal RAG Search' : 'CLA Online Legal Chatbot';
+      const titleDiv = document.createElement('div');
+      titleDiv.className = 'msg-title';
+      titleDiv.textContent = titleText;
+      div.appendChild(titleDiv);
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'assistant-text-content';
+      div.appendChild(contentDiv);
+
+      // Check if we need to animate/stream this message
+      if (messagesToAnimate.has(message.message_id)) {
+        messagesToAnimate.delete(message.message_id); // prevent re-animation
+        contentDiv.classList.add('streaming-cursor');
         
-        const titleDiv = document.createElement('div');
-        titleDiv.className = 'follow-up-title';
-        titleDiv.textContent = 'Suggested follow-up questions:';
-        followUpContainer.appendChild(titleDiv);
+        const rawText = message.content || '';
+        let currentLen = 0;
+        const typingSpeed = 15; // ms per char
         
-        followUps.forEach(q => {
-          const btn = document.createElement('button');
-          btn.className = 'follow-up-btn';
-          btn.textContent = q;
-          btn.addEventListener('click', () => {
-            if(!messageInput) return;
-            messageInput.value = q;
-            resizeTextArea();
-            messageInput.focus();
-            handleUserSend();
-          });
-          followUpContainer.appendChild(btn);
-        });
-        div.appendChild(followUpContainer);
+        const interval = setInterval(() => {
+          currentLen += 3; // type 3 chars at a time for responsive speed
+          if (currentLen >= rawText.length) {
+            contentDiv.innerHTML = formatMarkdown(rawText);
+            contentDiv.classList.remove('streaming-cursor');
+            clearInterval(interval);
+            
+            renderCitationsAndActions(div, message);
+            
+            // Render suggested follow-ups after typing finishes
+            renderSuggestedFollowUps(div, message);
+            scrollToBottom();
+          } else {
+            contentDiv.innerHTML = formatMarkdown(rawText.slice(0, currentLen));
+            scrollToBottom();
+          }
+        }, typingSpeed);
+        
+        activeTypingIntervals.push(interval);
+      } else {
+        // Display immediately
+        contentDiv.innerHTML = formatMarkdown(message.content || '');
+        renderCitationsAndActions(div, message);
+        renderSuggestedFollowUps(div, message);
       }
     } else {
-      // preserve message bubble styling; inject attachments if present
       const safeContent = escapeHTML(message.content || '');
-      const html = `<div class="user-message-text">${safeContent}</div>`;
-      div.innerHTML = html;
+      div.innerHTML = `<div class="user-message-text">${safeContent}</div>`;
+      
       const attachments = message.metadata && message.metadata.attachments ? message.metadata.attachments : [];
       if(attachments.length){
         const attachContainer = document.createElement('div');
@@ -429,9 +677,37 @@ function renderMessages(){
         div.appendChild(attachContainer);
       }
     }
-    chatWindow.appendChild(div);
+    chatWindow.appendChild(wrapper);
   });
   scrollToBottom();
+}
+
+function renderSuggestedFollowUps(container, message) {
+  const followUps = message.metadata && message.metadata.follow_up_questions ? message.metadata.follow_up_questions : [];
+  if(followUps.length){
+    const followUpContainer = document.createElement('div');
+    followUpContainer.className = 'message-follow-ups';
+    
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'follow-up-title';
+    titleDiv.textContent = 'Suggested follow-up questions:';
+    followUpContainer.appendChild(titleDiv);
+    
+    followUps.forEach(q => {
+      const btn = document.createElement('button');
+      btn.className = 'follow-up-btn';
+      btn.textContent = q;
+      btn.addEventListener('click', () => {
+        if(!messageInput) return;
+        messageInput.value = q;
+        resizeTextArea();
+        messageInput.focus();
+        handleUserSend();
+      });
+      followUpContainer.appendChild(btn);
+    });
+    container.appendChild(followUpContainer);
+  }
 }
 
 function updateSessionCounters(session){
@@ -516,21 +792,12 @@ async function selectSession(sessionId){
 
   try {
     const messages = await fetchSessionMessages(sessionId);
-
     messagesBySession[sessionId] = messages;
   } catch(error) {
     console.error('Unable to load session messages', error);
   }
 
   renderSessions();
-  
-  try {
-    const msgs = await fetchSessionMessages(sessionId);
-    messagesBySession[sessionId] = msgs;
-  } catch (error) {
-    console.error('Failed to load session messages:', error);
-  }
-  
   renderMessages();
   updateWelcomeCard();
 }
@@ -564,77 +831,6 @@ async function handleUserSend(){
     key: `${f.name}-${f.size}-${f.lastModified}`
   })) : [];
 
-  if (activeMode === 'rag') {
-    // RAG Mode stateless execution
-    const userMsg = {
-      message_id: 'user-' + Date.now(),
-      role: 'user',
-      content: text,
-      created_at: nowISO(),
-      metadata: { attachments: attachmentsMeta }
-    };
-    ragMessages.push(userMsg);
-
-    // Clear input fields immediately
-    messageInput.value = '';
-    resizeTextArea();
-    selectedFiles = [];
-    if(fileUpload) fileUpload.value = '';
-    renderAttachmentPreview();
-
-    const thinkingMessageId = 'thinking-' + Date.now();
-    const thinkingMsg = {
-      message_id: thinkingMessageId,
-      role: 'assistant',
-      content: 'CLA is searching legal database and generating grounded answer...',
-      created_at: nowISO(),
-      metadata: { isThinking: true }
-    };
-    ragMessages.push(thinkingMsg);
-    renderMessages();
-    updateWelcomeCard();
-
-    try {
-      const response = await fetch(`${getApiBaseUrl()}/api/ask`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ question: text })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      ragMessages = ragMessages.filter(m => m.message_id !== thinkingMessageId);
-      ragMessages.push({
-        message_id: 'assistant-' + Date.now(),
-        role: 'assistant',
-        content: data.answer || '',
-        created_at: nowISO(),
-        metadata: { sources: data.sources || [] }
-      });
-    } catch (error) {
-      console.error('RAG request failed:', error);
-      ragMessages = ragMessages.filter(m => m.message_id !== thinkingMessageId);
-      ragMessages.push({
-        message_id: 'error-' + Date.now(),
-        role: 'assistant',
-        content: 'I apologize, but I encountered an error while retrieving documents and generating answer. Please try again. Error: ' + error.message,
-        created_at: nowISO(),
-        metadata: { isError: true }
-      });
-    } finally {
-      isSendingMessage = false;
-      renderMessages();
-      updateWelcomeCard();
-    }
-    return;
-  }
-
   // Add the user message locally first
   const userMsg = addMessage('user', text || '', { attachments: attachmentsMeta });
   
@@ -648,11 +844,15 @@ async function handleUserSend(){
   // Add a temporary thinking message to show loading state
   const thinkingMessageId = 'thinking-' + Date.now();
   const sessionId = currentSessionId;
+  const thinkingText = activeMode === 'rag' 
+    ? 'CLA is searching the legal database and generating a grounded answer...'
+    : 'CLA is analyzing your query and generating a response...';
+
   const thinkingMsg = {
     message_id: thinkingMessageId,
     session_id: sessionId,
     role: 'assistant',
-    content: 'CLA is analyzing your query and searching resources...',
+    content: thinkingText,
     created_at: nowISO(),
     metadata: { isThinking: true }
   };
@@ -683,6 +883,8 @@ async function handleUserSend(){
     }
     if (result.assistantMessage) {
       messagesBySession[sessionId].push(result.assistantMessage);
+      // Mark assistant response to animate/type it out
+      messagesToAnimate.add(result.assistantMessage.message_id);
     }
     
     // Update session info from database
@@ -690,7 +892,8 @@ async function handleUserSend(){
     if (session) {
       session.message_count = messagesBySession[sessionId].length;
       session.updated_at = nowISO();
-      if (result.assistantMessage && (!session.title || session.title === 'New chat')) {
+      const defaultTitle = activeMode === 'rag' ? 'New RAG Search' : 'New chat';
+      if (result.assistantMessage && (!session.title || session.title === defaultTitle || session.title === 'New chat')) {
         session.title = truncateTitle(text);
       }
     }
@@ -789,12 +992,8 @@ chatModeTab?.addEventListener('click', (e) => {
   const pageTitle = document.querySelector('.chat-page-title');
   if (pageTitle) pageTitle.textContent = 'CLA Legal Chatbot';
   
-  // Show sidebar
-  const chatPanel = document.getElementById('chatPanel');
-  if (chatPanel) chatPanel.style.display = '';
-  
-  renderMessages();
-  updateWelcomeCard();
+  // Reload sessions for chat mode
+  initSession();
 });
 
 ragModeTab?.addEventListener('click', (e) => {
@@ -808,12 +1007,8 @@ ragModeTab?.addEventListener('click', (e) => {
   const pageTitle = document.querySelector('.chat-page-title');
   if (pageTitle) pageTitle.textContent = 'CLA Legal RAG Search';
   
-  // Hide sidebar
-  const chatPanel = document.getElementById('chatPanel');
-  if (chatPanel) chatPanel.style.display = 'none';
-  
-  renderMessages();
-  updateWelcomeCard();
+  // Reload sessions for RAG mode
+  initSession();
 });
 
 function getFileKey(file){
@@ -1023,7 +1218,8 @@ function createSessionFromBackend(sessionData){
   return {
     session_id: sessionData.session_id || generateId(),
     user_id: sessionData.user_id || getCurrentUserId(),
-    title: sessionData.title || 'New chat',
+    title: sessionData.title || (sessionData.mode === 'rag' ? 'New RAG Search' : 'New chat'),
+    mode: sessionData.mode || 'chat',
     created_at: sessionData.created_at || nowISO(),
     updated_at: sessionData.updated_at || nowISO(),
     last_message_at: sessionData.last_message_at || nowISO(),
@@ -1037,7 +1233,7 @@ async function fetchChatSessions(){
 
   try {
     const response = await fetch(
-      `${getApiBaseUrl()}/api/chat/sessions`,
+      `${getApiBaseUrl()}/api/chat/sessions?mode=${activeMode}`,
       {
         method: 'GET',
         headers: {
@@ -1097,6 +1293,28 @@ async function fetchSessionMessages(sessionId){
 async function searchChatSessions(query){
   // TODO: replace with API call to GET /api/chat/sessions/search?q=
   return [];
+}
+
+async function sendFeedback(sessionId, messageId, feedbackType) {
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/api/chat/feedback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': getCurrentUserId()
+      },
+      body: JSON.stringify({
+        session_id: sessionId,
+        message_id: messageId,
+        feedback: feedbackType
+      })
+    });
+    if (!response.ok) {
+      console.error('Failed to save feedback');
+    }
+  } catch (err) {
+    console.error('sendFeedback error:', err);
+  }
 }
 
 async function sendMessageToSession(sessionId, messagePayload){

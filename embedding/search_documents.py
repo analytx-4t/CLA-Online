@@ -449,7 +449,7 @@ def get_citation(source_table, record_id, parent_id=None):
 
         # Resolve HTML/Text content
         html_content = ""
-        content_keys = ["Filetext", "Commentary_Details", "Procedure", "filehtml", "FileHtml", "RawText"]
+        content_keys = ["FileHTML", "filehtml", "FileHtml", "Filetext", "Commentary_Details", "Procedure", "RawText"]
         for key in content_keys:
             if key in child_dict and child_dict[key]:
                 html_content = child_dict[key]

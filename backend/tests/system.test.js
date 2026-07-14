@@ -239,6 +239,32 @@ test.describe('CLAOnline Enterprise Integration System Tests', () => {
         return;
       }
 
+      if (path === '/api/chat/feedback' && req.method === 'POST') {
+        try {
+          const payload = await getRequestBody(req);
+          const { session_id, message_id, feedback } = payload;
+          const db = await connectDB();
+          const messagesCollection = db.collection('chat_messages');
+          const result = await messagesCollection.updateOne(
+            { session_id, message_id, user_id: userId },
+            { $set: { feedback } }
+          );
+
+          if (result.matchedCount === 0) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Message not found.' }));
+            return;
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+        return;
+      }
+
       if (path.startsWith('/api/chat/sessions/') && req.method === 'DELETE') {
         const sessionId = path.split('/').pop();
 
@@ -327,12 +353,23 @@ test.describe('CLAOnline Enterprise Integration System Tests', () => {
     assert.ok(msgRes.body.assistantMessage, 'Should return assistant response');
     assert.strictEqual(msgRes.body.assistantMessage.metadata.route, 'DIALOG');
 
-    // 4. Fetch all messages (verify correct sequence)
+    // 3.5. Post sentiment feedback to the assistant message
+    const assistantMsgId = msgRes.body.assistantMessage.message_id;
+    const feedbackRes = await makeRequest('POST', '/api/chat/feedback', {
+      session_id: sessionId,
+      message_id: assistantMsgId,
+      feedback: 'up'
+    });
+    assert.strictEqual(feedbackRes.status, 200);
+    assert.strictEqual(feedbackRes.body.success, true);
+
+    // 4. Fetch all messages (verify correct sequence and feedback)
     const messagesRes = await makeRequest('GET', `/api/chat/sessions/${sessionId}/messages`);
     assert.strictEqual(messagesRes.status, 200);
     assert.strictEqual(messagesRes.body.messages.length, 2);
     assert.strictEqual(messagesRes.body.messages[0].role, 'user');
     assert.strictEqual(messagesRes.body.messages[1].role, 'assistant');
+    assert.strictEqual(messagesRes.body.messages[1].feedback, 'up');
 
     // 5. Delete session
     const deleteRes = await makeRequest('DELETE', `/api/chat/sessions/${sessionId}`);

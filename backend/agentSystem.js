@@ -10,11 +10,26 @@ function loadAgentPrompts() {
     const content = fs.readFileSync(filePath, 'utf8');
     
     const sections = {};
-    const sectionRegex = /##\s+([^\r\n]+)\r?\n\r?\n```\r?\n([\s\S]*?)\r?\n```/g;
-    let match;
-    while ((match = sectionRegex.exec(content)) !== null) {
-      const title = match[1].trim();
-      const codeContent = match[2].trim();
+    const parts = content.split(/\r?\n##\s+/);
+    
+    for (const part of parts) {
+      const lines = part.split(/\r?\n/);
+      if (lines.length === 0) continue;
+      const title = lines[0].trim();
+      if (!title || title.startsWith('#')) continue;
+      
+      const body = lines.slice(1).join('\n');
+      const codeBlockRegex = /```\r?\n([\s\S]*?)\r?\n```/g;
+      let match;
+      const codeBlocks = [];
+      while ((match = codeBlockRegex.exec(body)) !== null) {
+        const blockText = match[1].trim();
+        if (blockText) {
+          codeBlocks.push(blockText);
+        }
+      }
+      
+      const finalContent = codeBlocks.join('\n\n').trim();
       
       let key;
       if (title.includes('SHARED LEGAL CONTEXT')) {
@@ -24,7 +39,7 @@ function loadAgentPrompts() {
       } else {
         key = title.split(/[(\s]+/)[0].trim();
       }
-      sections[key] = codeContent;
+      sections[key] = finalContent;
     }
     return sections;
   } catch (error) {
@@ -318,39 +333,67 @@ async function runAgentFlow(userMessage, options = {}) {
     agentFindingsContext += `=== ${result.agentName} ===\n${result.content}\n\n`;
   }
 
-  const summarizerPrompt = assemblePrompt(prompts.Content_Summarizer_Agent, prompts);
-  const summarizerResponse = await generateWithRetry(defaultProvider, {
-    messages: [
-      { 
-        role: 'user', 
-        content: `User Query: ${userMessage}\n\nAgent Findings:\n${agentFindingsContext}` 
-      }
-    ],
-    systemPrompt: summarizerPrompt,
-    temperature: 0.3
+  console.log('--- Summarizer input agent findings context ---');
+  console.log(agentFindingsContext);
+  console.log('-----------------------------------------------');
+
+  // Detect if all source agents returned negative findings or if findings context is effectively empty
+  const hasValidFindings = agentResults.some(r => {
+    const contentText = (r.content || '').trim();
+    if (!contentText) return false;
+    const upperContent = contentText.toUpperCase();
+    if (upperContent.includes('FOUND: YES')) return true;
+    if (upperContent.includes('FOUND: NO') && contentText.length < 50) return false;
+    return true; 
   });
 
-  const finalAnswer = summarizerResponse.content;
-  console.log('Summarizer Output obtained.');
+  let finalAnswer;
+  let followUpQuestions = [];
 
-  // Step 5: Follow Up Question Agent
-  console.log('Running Follow_Up_Question_Agent...');
-  const followUpPrompt = assemblePrompt(prompts.Follow_Up_Question_Agent, prompts);
-  const followUpResponse = await generateWithRetry(defaultProvider, {
-    messages: [
-      { 
-        role: 'user', 
-        content: `Final Answer:\n${finalAnswer}` 
-      }
-    ],
-    systemPrompt: followUpPrompt,
-    temperature: 0.5
-  });
+  if (!hasValidFindings) {
+    console.log('No valid agent findings detected. Returning predefined "no authority found" response.');
+    finalAnswer = "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question.";
+    followUpQuestions = [
+      "What is the general procedure for debt recovery under Indian law?",
+      "How does the Insolvency and Bankruptcy Code (IBC) apply to corporate debtors?",
+      "What are the consequences of breaching a commercial vendor agreement?"
+    ];
+  } else {
+    const summarizerPrompt = assemblePrompt(prompts.Content_Summarizer_Agent, prompts);
+    const summarizerResponse = await generateWithRetry(defaultProvider, {
+      messages: [
+        { 
+          role: 'user', 
+          content: `User Query: ${userMessage}\n\nAgent Findings:\n${agentFindingsContext}` 
+        }
+      ],
+      systemPrompt: summarizerPrompt,
+      temperature: 0.3
+    });
 
-  const followUpText = followUpResponse.content;
-  const followUpQuestions = followUpText.split('\n')
-    .map(line => line.replace(/^-\s*/, '').replace(/^\d+\.\s*/, '').trim())
-    .filter(line => line.length > 0 && line.toLowerCase() !== 'none');
+    finalAnswer = summarizerResponse.content;
+    console.log('Summarizer Output obtained:', JSON.stringify(finalAnswer));
+
+    // Step 5: Follow Up Question Agent
+    console.log('Running Follow_Up_Question_Agent...');
+    const followUpPrompt = assemblePrompt(prompts.Follow_Up_Question_Agent, prompts);
+    const followUpResponse = await generateWithRetry(defaultProvider, {
+      messages: [
+        { 
+          role: 'user', 
+          content: `Final Answer:\n${finalAnswer}` 
+        }
+      ],
+      systemPrompt: followUpPrompt,
+      temperature: 0.5
+    });
+
+    const followUpText = followUpResponse.content;
+    console.log('Follow up output obtained:', JSON.stringify(followUpText));
+    followUpQuestions = followUpText.split('\n')
+      .map(line => line.replace(/^-\s*/, '').replace(/^\d+\.\s*/, '').trim())
+      .filter(line => line.length > 0 && line.toLowerCase() !== 'none');
+  }
 
   console.log(`Generated ${followUpQuestions.length} follow-up questions.`);
   console.log('--- Agent Flow Completed ---');

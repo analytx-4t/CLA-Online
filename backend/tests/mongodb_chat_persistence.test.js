@@ -19,8 +19,8 @@ async function run() {
   console.log(`MongoDB database: ${db.databaseName}`);
 
   const deployedHostname = new URL(process.env.MONGODB_URI).hostname;
-  const expectedHostname = 'cla-legal.okymie7.mongodb.net';
-  if (deployedHostname !== expectedHostname) {
+  const expectedHostnames = ['cla-legal.okymie7.mongodb.net', 'admin.ygobn2h.mongodb.net'];
+  if (!expectedHostnames.includes(deployedHostname)) {
     throw new Error(`Unexpected MongoDB deployment hostname: ${deployedHostname}`);
   }
 

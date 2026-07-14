@@ -222,7 +222,141 @@ function escapeHTML(str) {
     .replace(/'/g, '&#039;');
 }
 
-function renderCitationHTML(data) {
+function formatDocumentContent(rawText) {
+  if (!rawText) return '<p>No content available.</p>';
+  
+  const trimmed = rawText.trim();
+  const hasHTML = /<[a-z][\s\S]*>/i.test(trimmed) && (
+    trimmed.includes('</') || 
+    trimmed.includes('/>') || 
+    trimmed.toLowerCase().includes('<br>') || 
+    trimmed.toLowerCase().includes('<p>')
+  );
+  
+  if (hasHTML) {
+    let bodyContent = rawText;
+    const bodyMatch = rawText.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    if (bodyMatch) {
+      bodyContent = bodyMatch[1];
+    } else {
+      bodyContent = bodyContent.replace(/<head[^>]*>[\s\S]*?<\/head>/i, '');
+    }
+    bodyContent = bodyContent
+      .replace(/<html[^>]*>/gi, '')
+      .replace(/<\/html>/gi, '')
+      .replace(/<!doctype[^>]*>/gi, '')
+      .replace(/<link[^>]*>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+      
+    return bodyContent.trim();
+  }
+
+  // Pre-process to separate glued paragraph boundaries
+  const preProcessed = rawText
+    .replace(/([.!?])([A-Z])/g, '$1\n$2')
+    .replace(/([.!?])(\d+(?:\.\d+)?\s+[A-Z])/g, '$1\n$2');
+
+  const lines = preProcessed.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  let htmlResult = '';
+  
+  let inFootnotes = false;
+  let inList = false;
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    let line = lines[idx].trim();
+    if (!line) continue;
+
+    // Detect Footnotes/References section at the end of document
+    const isFootnote = line.startsWith('*') || /^\d+\s+[a-zA-Z\[]/.test(line) || /^\d+\s+See\s+/.test(line);
+    
+    if (isFootnote && idx > lines.length * 0.6) {
+      if (!inFootnotes) {
+        if (inList) {
+          htmlResult += '</ul>';
+          inList = false;
+        }
+        htmlResult += '<div class="footnotes-section" style="margin-top: 40px; padding-top: 20px; border-top: 1px dashed var(--border);">';
+        htmlResult += '<h4 style="font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px;">References / Footnotes</h4>';
+        inFootnotes = true;
+      }
+      
+      htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
+      continue;
+    }
+
+    if (inFootnotes) {
+      htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
+      continue;
+    }
+
+    const isBulletMarker = line.startsWith('-') || line.startsWith('•') || line.startsWith('*') || 
+                           /^[a-z0-9]\)\s+/i.test(line) || /^\([a-z0-9]\)\s+/i.test(line);
+                           
+    let shouldBeListItem = isBulletMarker;
+    if (!shouldBeListItem && idx > 0) {
+      const prevLine = lines[idx - 1].trim();
+      if (prevLine.endsWith(':') && line.length < 150) {
+        shouldBeListItem = true;
+      } else if (inList && line.length < 150 && !/^\d+\.\s+/.test(line)) {
+        shouldBeListItem = true;
+      }
+    }
+
+    if (shouldBeListItem) {
+      if (!inList) {
+        htmlResult += '<ul style="margin-bottom: 1.6em; padding-left: 24px;">';
+        inList = true;
+      }
+      const cleaned = line
+        .replace(/^[-•*]\s*/, '')
+        .replace(/^[a-z0-9]\)\s+/i, '')
+        .replace(/^\([a-z0-9]\)\s+/i, '');
+      htmlResult += `<li style="margin-bottom: 0.5em; font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.7; color: var(--text);">${escapeHTML(cleaned)}</li>`;
+      continue;
+    }
+
+    if (inList) {
+      htmlResult += '</ul>';
+      inList = false;
+    }
+
+    const isAllUpper = line.length < 150 && line === line.toUpperCase() && /[A-Z]/.test(line);
+    const isNumberHeader = line.length < 120 && (/^\d+\.\s+[A-Z]/i.test(line) || /^[IVXLCDM]+\.\s+[A-Z]/i.test(line));
+    const isShortNoPeriod = line.length < 100 && !line.endsWith('.');
+    const isDocHeaderLine = idx < 3 && line.length < 120;
+
+    if (isAllUpper || isNumberHeader || isShortNoPeriod || isDocHeaderLine) {
+      let level = 3;
+      if (idx === 0) {
+        level = 2;
+      } else if (isAllUpper && line.length < 60) {
+        level = 2;
+      }
+      
+      htmlResult += `<h${level} style="font-family: var(--font-sans); font-weight: 700; color: var(--text); margin-top: 1.6em; margin-bottom: 0.6em; line-height: 1.3;">${escapeHTML(line)}</h${level}>`;
+    } else {
+      let formattedLine = escapeHTML(line);
+      formattedLine = formattedLine.replace(/^(\d+(?:\.\d+)?\s+)/, '<strong>$1</strong>');
+      
+      if ((line.startsWith('“') && line.endsWith('”')) || (line.startsWith('"') && line.endsWith('"')) || (line.startsWith('‘') && line.endsWith('’')) || (line.startsWith("'") && line.endsWith("'"))) {
+        htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em; font-style: italic; padding-left: 20px; border-left: 3px solid var(--primary-light);">${formattedLine}</p>`;
+      } else {
+        htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em;">${formattedLine}</p>`;
+      }
+    }
+  }
+
+  if (inList) {
+    htmlResult += '</ul>';
+  }
+  if (inFootnotes) {
+    htmlResult += '</div>';
+  }
+
+  return htmlResult;
+}
+
+function renderCitationHTML(data, theme = 'light') {
   const title = escapeHTML(data.title || 'Untitled Document');
   const sourceTable = escapeHTML(data.source_table || '');
   const recordId = escapeHTML(data.record_id || '');
@@ -250,7 +384,8 @@ function renderCitationHTML(data) {
     formattedDate = `${issueMonth} ${issueYear}`.trim();
   }
 
-  const docContent = data.html || '<p>No content available.</p>';
+  const docContent = formatDocumentContent(data.html);
+  const isDark = theme === 'dark';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -263,27 +398,15 @@ function renderCitationHTML(data) {
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #f8fafc;
-      --surface: #ffffff;
-      --text: #0f172a;
-      --muted: #475569;
-      --border: #e2e8f0;
-      --primary: #0c8742;
-      --primary-light: rgba(12, 135, 66, 0.08);
+      --bg: ${isDark ? '#111111' : '#f7f7f7'};
+      --surface: ${isDark ? '#151515' : '#ffffff'};
+      --text: ${isDark ? '#fdfdfd' : '#111111'};
+      --muted: ${isDark ? '#A3A3A3' : '#6e6e6e'};
+      --border: ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)'};
+      --primary: #0C8742;
+      --primary-light: ${isDark ? 'rgba(12, 135, 66, 0.06)' : 'rgba(12, 135, 66, 0.08)'};
       --font-sans: 'Inter', sans-serif;
       --font-serif: 'Lora', Georgia, serif;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0b0f19;
-        --surface: #151e2e;
-        --text: #f1f5f9;
-        --muted: #94a3b8;
-        --border: #1e293b;
-        --primary: #10b981;
-        --primary-light: rgba(16, 185, 129, 0.1);
-      }
     }
 
     * {
@@ -297,156 +420,221 @@ function renderCitationHTML(data) {
       color: var(--text);
       font-family: var(--font-sans);
       line-height: 1.6;
-      padding: 40px 20px;
+      padding: 0;
+      margin: 0;
+      position: relative;
+      min-height: 100vh;
     }
 
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
+    /* Courthouse Background Image & Tint */
+    .chat-background-image {
+      position: fixed;
+      inset: 0;
+      background-image: url("/assets/Images/chatbackground_image.png");
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: cover;
+      pointer-events: none;
+      z-index: 0;
+      opacity: ${isDark ? '0.12' : '0.4'};
+    }
+
+    .chat-background-tint {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 1;
+      background: ${isDark ? 'rgba(0, 0, 0, 0.72)' : 'transparent'};
+    }
+
+    /* Premium Top Header */
+    .top-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+      padding: 0 40px;
+      background-color: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      color: var(--primary);
+      font-size: 1.1rem;
+      letter-spacing: 0.04em;
+    }
+
+    .nav-brand img {
+      height: 28px;
+      width: auto;
+      object-fit: contain;
+    }
+
+    .main-container {
+      position: relative;
+      z-index: 2;
+      max-width: 1000px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    .document-card {
       background-color: var(--surface);
       border: 1px solid var(--border);
+      border-top: 4px solid var(--primary);
       border-radius: 16px;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
       overflow: hidden;
     }
 
     .header-bar {
-      background: linear-gradient(135deg, var(--primary), #065f2c);
-      color: #ffffff;
-      padding: 30px 40px;
-      position: relative;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .header-bar {
-        background: linear-gradient(135deg, #064e3b, #022c22);
-      }
+      padding: 40px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(to bottom right, var(--surface), var(--bg));
     }
 
     .badge-row {
       display: flex;
-      gap: 10px;
-      margin-bottom: 12px;
+      gap: 8px;
+      margin-bottom: 16px;
       flex-wrap: wrap;
     }
 
     .badge {
-      background-color: rgba(255, 255, 255, 0.15);
-      color: #ffffff;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.06em;
       padding: 4px 10px;
       border-radius: 6px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      background-color: var(--surface);
     }
 
     .badge.primary-badge {
-      background-color: #ffffff;
-      color: #065f2c;
+      background-color: var(--primary-light);
+      color: var(--primary);
+      border-color: rgba(12, 135, 66, 0.15);
     }
 
     .document-title {
-      font-size: 1.8rem;
+      font-size: 2rem;
       font-weight: 800;
       line-height: 1.3;
-      margin-bottom: 8px;
+      color: var(--text);
     }
 
     .meta-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      padding: 24px 40px;
-      background-color: var(--bg);
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+      padding: 30px 40px;
+      background-color: var(--surface);
       border-bottom: 1px solid var(--border);
     }
 
     .meta-item {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
 
     .meta-label {
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.08em;
       color: var(--muted);
     }
 
     .meta-value {
-      font-size: 0.9rem;
+      font-size: 0.92rem;
       font-weight: 600;
       color: var(--text);
     }
 
     .content-body {
-      padding: 40px;
-      font-family: var(--font-serif);
-      font-size: 1.15rem;
-      line-height: 1.75;
-      color: var(--text);
+      padding: 40px 50px;
+      font-family: var(--font-serif) !important;
+      font-size: 1.15rem !important;
+      line-height: 1.8 !important;
+      color: var(--text) !important;
     }
 
-    .content-body p {
-      margin-bottom: 1.5em;
+    .content-body p, .content-body P {
+      font-family: var(--font-serif) !important;
+      margin-bottom: 1.6em !important;
+      color: var(--text) !important;
+      font-size: 1.15rem !important;
+      line-height: 1.8 !important;
     }
 
-    .content-body h1, .content-body h2, .content-body h3, .content-body h4 {
-      font-family: var(--font-sans);
-      color: var(--text);
-      font-weight: 700;
-      margin-top: 1.8em;
-      margin-bottom: 0.8em;
-      line-height: 1.25;
+    .content-body h1, .content-body h2, .content-body h3, .content-body h4,
+    .content-body H1, .content-body H2, .content-body H3, .content-body H4 {
+      font-family: var(--font-sans) !important;
+      color: var(--text) !important;
+      font-weight: 700 !important;
+      margin-top: 1.8em !important;
+      margin-bottom: 0.8em !important;
+      line-height: 1.3 !important;
+      display: block !important;
     }
 
-    .content-body h1 { font-size: 1.8rem; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
-    .content-body h2 { font-size: 1.5rem; }
-    .content-body h3 { font-size: 1.25rem; }
+    .content-body h1, .content-body H1 { font-size: 1.8rem !important; border-bottom: 1px solid var(--border) !important; padding-bottom: 8px !important; }
+    .content-body h2, .content-body H2 { font-size: 1.5rem !important; }
+    .content-body h3, .content-body H3 { font-size: 1.25rem !important; }
+    .content-body h4, .content-body H4 { font-size: 1.1rem !important; }
 
-    .content-body ul, .content-body ol {
-      margin-bottom: 1.5em;
-      padding-left: 24px;
+    .content-body ul, .content-body ol, .content-body UL, .content-body OL {
+      margin-bottom: 1.6em !important;
+      padding-left: 28px !important;
     }
 
-    .content-body li {
-      margin-bottom: 0.5em;
+    .content-body li, .content-body LI {
+      margin-bottom: 0.6em !important;
+      font-family: var(--font-serif) !important;
+      font-size: 1.15rem !important;
     }
 
-    .content-body table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 2em 0;
-      font-family: var(--font-sans);
-      font-size: 0.95rem;
+    .content-body table, .content-body TABLE {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      margin: 2.5em 0 !important;
+      font-family: var(--font-sans) !important;
+      font-size: 0.95rem !important;
     }
 
-    .content-body th, .content-body td {
-      border: 1px solid var(--border);
-      padding: 12px 16px;
-      text-align: left;
+    .content-body th, .content-body td, .content-body TH, .content-body TD {
+      border: 1px solid var(--border) !important;
+      padding: 12px 18px !important;
+      text-align: left !important;
     }
 
-    .content-body th {
-      background-color: var(--bg);
-      font-weight: 700;
+    .content-body th, .content-body TH {
+      background-color: var(--bg) !important;
+      font-weight: 700 !important;
+      color: var(--text) !important;
     }
 
-    .content-body blockquote {
-      border-left: 4px solid var(--primary);
-      padding-left: 20px;
-      font-style: italic;
-      color: var(--muted);
-      margin: 1.5em 0;
+    .content-body blockquote, .content-body BLOCKQUOTE {
+      border-left: 4px solid var(--primary) !important;
+      padding-left: 20px !important;
+      font-style: italic !important;
+      color: var(--muted) !important;
+      margin: 1.6em 0 !important;
     }
 
-    .content-body a {
-      color: var(--primary);
-      text-decoration: underline;
+    .content-body a, .content-body A {
+      color: var(--primary) !important;
+      text-decoration: underline !important;
     }
 
     .footer-actions {
@@ -462,7 +650,7 @@ function renderCitationHTML(data) {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 18px;
+      padding: 10px 20px;
       font-size: 0.9rem;
       font-weight: 600;
       font-family: var(--font-sans);
@@ -498,21 +686,25 @@ function renderCitationHTML(data) {
     }
 
     @media (max-width: 600px) {
-      body {
-        padding: 10px 5px;
+      .top-nav {
+        padding: 0 20px;
+      }
+      .main-container {
+        margin: 20px auto;
       }
       .header-bar {
-        padding: 20px;
+        padding: 24px;
       }
       .meta-grid {
-        padding: 20px;
+        padding: 24px;
+        grid-template-columns: 1fr;
       }
       .content-body {
-        padding: 20px;
+        padding: 24px;
         font-size: 1.05rem;
       }
       .footer-actions {
-        padding: 20px;
+        padding: 24px;
         flex-direction: column;
         gap: 16px;
         align-items: stretch;
@@ -526,10 +718,12 @@ function renderCitationHTML(data) {
         color: #000000;
         padding: 0;
       }
-      .container {
+      .top-nav {
+        display: none;
+      }
+      .document-card {
         border: none;
         box-shadow: none;
-        max-width: 100%;
       }
       .header-bar {
         background: none;
@@ -556,52 +750,62 @@ function renderCitationHTML(data) {
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header-bar">
-      <div class="badge-row">
-        <span class="badge primary-badge">${sourceTable}</span>
-        <span class="badge">ID: ${recordId}</span>
-      </div>
-      <h1 class="document-title">${title}</h1>
+  <div class="chat-background-image" aria-hidden="true"></div>
+  <div class="chat-background-tint" aria-hidden="true"></div>
+
+  <header class="top-nav">
+    <div class="nav-brand">
+      <img src="/assets/Images/logo.png" alt="CLA Corporate Law Adviser">
+      <span>CLA Online Legal Database</span>
     </div>
-    
-    <div class="meta-grid">
-      <div class="meta-item">
-        <span class="meta-label">File Name</span>
-        <span class="meta-value">${fileName}</span>
+  </header>
+
+  <div class="main-container">
+    <div class="document-card">
+      <div class="header-bar">
+        <div class="badge-row">
+          <span class="badge primary-badge">${sourceTable}</span>
+        </div>
+        <h1 class="document-title">${title}</h1>
       </div>
-      <div class="meta-item">
-        <span class="meta-label">Category</span>
-        <span class="meta-value">${category}</span>
+      
+      <div class="meta-grid">
+        <div class="meta-item">
+          <span class="meta-label">File Name</span>
+          <span class="meta-value">${fileName}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Category</span>
+          <span class="meta-value">${category}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Subject</span>
+          <span class="meta-value">${subject}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Sections</span>
+          <span class="meta-value">${sections}</span>
+        </div>
+        ${author !== 'Unknown' ? `
+        <div class="meta-item">
+          <span class="meta-label">Author</span>
+          <span class="meta-value">${author}</span>
+        </div>
+        ` : ''}
+        <div class="meta-item">
+          <span class="meta-label">Document Date</span>
+          <span class="meta-value">${formattedDate}</span>
+        </div>
       </div>
-      <div class="meta-item">
-        <span class="meta-label">Subject</span>
-        <span class="meta-value">${subject}</span>
+      
+      <div class="content-body">
+        ${docContent}
       </div>
-      <div class="meta-item">
-        <span class="meta-label">Sections</span>
-        <span class="meta-value">${sections}</span>
+      
+      <div class="footer-actions">
+        <button class="btn btn-secondary" onclick="window.close()">Close Tab</button>
+        <div class="footer-note">CLA Online - Verified Grounded Database Source</div>
       </div>
-      ${author !== 'Unknown' ? `
-      <div class="meta-item">
-        <span class="meta-label">Author</span>
-        <span class="meta-value">${author}</span>
-      </div>
-      ` : ''}
-      <div class="meta-item">
-        <span class="meta-label">Document Date</span>
-        <span class="meta-value">${formattedDate}</span>
-      </div>
-    </div>
-    
-    <div class="content-body">
-      ${docContent}
-    </div>
-    
-    <div class="footer-actions">
-      <button class="btn btn-secondary" onclick="window.close()">Close Tab</button>
-      <div class="footer-note">CLA Online - Verified Grounded Database Source</div>
-      <button class="btn btn-primary" onclick="window.print()">Print Document</button>
     </div>
   </div>
 </body>
@@ -632,6 +836,37 @@ async function startServer() {
         return;
       }
 
+      // Serve static files from frontend directory
+      if (req.method === 'GET' && (path.startsWith('/assets/') || path.startsWith('/CSS/') || path.startsWith('/javascript/') || path.startsWith('/HTML/'))) {
+        const fs = require('fs');
+        const pathModule = require('path');
+        const filePath = pathModule.join(__dirname, '..', 'frontend', path);
+        fs.stat(filePath, (err, stats) => {
+          if (err || !stats.isFile()) {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('404 Not Found');
+            return;
+          }
+          const ext = pathModule.extname(filePath).toLowerCase();
+          let contentType = 'application/octet-stream';
+          if (ext === '.html') contentType = 'text/html';
+          else if (ext === '.css') contentType = 'text/css';
+          else if (ext === '.js') contentType = 'application/javascript';
+          else if (ext === '.png') contentType = 'image/png';
+          else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+          else if (ext === '.svg') contentType = 'image/svg+xml';
+          else if (ext === '.ico') contentType = 'image/x-icon';
+
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Content-Length': stats.size,
+            'Access-Control-Allow-Origin': '*'
+          });
+          fs.createReadStream(filePath).pipe(res);
+        });
+        return;
+      }
+
       if (path === '/health' && req.method === 'GET') {
         setJsonHeaders(res, 200);
         res.end(JSON.stringify({ status: 'ok' }));
@@ -644,6 +879,7 @@ async function startServer() {
           const sourceTable = urlParsed.searchParams.get('sourceTable');
           const recordId = urlParsed.searchParams.get('recordId');
           const parentId = urlParsed.searchParams.get('parentId');
+          const theme = urlParsed.searchParams.get('theme') || 'light';
 
           if (!sourceTable || !recordId) {
             res.writeHead(400, { 'Content-Type': 'text/html' });
@@ -659,7 +895,7 @@ async function startServer() {
             return;
           }
 
-          const htmlResponse = renderCitationHTML(citationData);
+          const htmlResponse = renderCitationHTML(citationData, theme);
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(htmlResponse);
         } catch (error) {
@@ -750,16 +986,20 @@ async function startServer() {
 You must answer the user's question grounding your answer strictly and ONLY in the provided search context.
 Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."
 
-Citing Sources:
-For every fact or statement you make, you must cite which source(s) it came from.
-Use the exact citation format: [Title (FileName)], where:
-- Title is the DocTitle/Title of the document (e.g., THE NITTY-GRITTY OF COMPANY LAW...)
-- FileName is the FileName of the source file (e.g., CompanyLaw_A.pdf or similar)
-These details are specified at the start of each source section in the context as: Title: "..." | File: ...
+Style and Tone Requirements:
+- Write in a natural, cohesive, humanized legal advisory tone. Do not just copy-paste blocks from the database.
+- Present a clear, structured legal explanation.
+- Use Markdown formatting for structure: headings (e.g., "### Heading"), bullet points, numbered lists, tables (where data can be formatted in columns), and bold text for key legal terms or sections.
+- Avoid printing raw file names or titles inline in the text.
+- Use numerical citation tags like [1], [2], [3] to cite which source(s) the information came from. The citation number must correspond to the Source number provided in the context (e.g. use [1] for [Source 1], [2] for [Source 2]).
+- Ensure the output is clean and complete.
 
-Example citation: ...managing directors must be in the employment of the company [THE NITTY-GRITTY OF COMPANY LAW (CompanyLaw_Article.pdf)].
-
-Keep your answer clear, precise, and professional.`;
+At the end of your response, add the tag '---SUGGESTIONS---' followed by 3 relevant follow-up questions the user might ask next, one per line.
+Example:
+---SUGGESTIONS---
+What are the requirements for board resolutions under Section 135?
+Are private companies exempt from these regulations?
+What is the penalty for violating this provision?`;
 
           const provider = settings.DEFAULT_LLM_PROVIDER;
           const model = settings.DEFAULT_LLM_MODEL;
@@ -771,6 +1011,7 @@ Keep your answer clear, precise, and professional.`;
               systemPrompt: systemPrompt,
               messages: [{ role: 'user', content: `Question: ${question}\n\nSearch Context:\n${contextBlock}` }],
               temperature: 0.1,
+              maxTokens: 2048
             });
           } catch (llmErr) {
             console.error('[RAG Endpoint] LLM generation failed:', llmErr);
@@ -779,25 +1020,55 @@ Keep your answer clear, precise, and professional.`;
             return;
           }
 
-          const answerText = llmResponse.content || '';
+          let answerText = llmResponse.content || '';
+          let suggestions = [];
           console.log('[RAG Endpoint] Answer generated successfully.');
 
-          // Parse and extract the unique sources actually cited in the generated answer
+          // Extract suggestions
+          const sugIndex = answerText.indexOf('---SUGGESTIONS---');
+          if (sugIndex !== -1) {
+            const sugPart = answerText.slice(sugIndex + '---SUGGESTIONS---'.length);
+            answerText = answerText.slice(0, sugIndex).trim();
+            suggestions = sugPart
+              .split('\n')
+              .map(line => line.trim().replace(/^-\s*/, '').replace(/^\d+\.\s*/, ''))
+              .filter(line => line.length > 0 && !line.includes('---'));
+          }
+
+          // Find all bracketed citation numbers, e.g., [1], [2]
+          const citationRegex = /\[([1-9])\]/g;
+          let match;
+          const citedIndices = new Set();
+          while ((match = citationRegex.exec(answerText)) !== null) {
+            const idx = parseInt(match[1], 10) - 1;
+            if (idx >= 0 && idx < results.length) {
+              citedIndices.add(idx);
+            }
+          }
+
+          // Fallback to title/filename matching if no numerical citations found
+          if (citedIndices.size === 0) {
+            for (let i = 0; i < results.length; i++) {
+              const r = results[i];
+              const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+              const fileName = (r.original && r.original.child && r.original.child.FileName) || 
+                               (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+              if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) || 
+                  answerText.toLowerCase().includes(fileName.toLowerCase())) {
+                citedIndices.add(i);
+              }
+            }
+          }
+
           const uniqueSources = [];
           const seenSources = new Set();
-
-          for (const r of results) {
+          citedIndices.forEach(idx => {
+            const r = results[idx];
             const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
             const fileName = (r.original && r.original.child && r.original.child.FileName) || 
                              (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-            
             const sourceKey = `${title}:::${fileName}`;
-            if (seenSources.has(sourceKey)) continue;
-            
-            const isCited = answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) || 
-                            answerText.toLowerCase().includes(fileName.toLowerCase());
-            
-            if (isCited) {
+            if (!seenSources.has(sourceKey)) {
               seenSources.add(sourceKey);
               uniqueSources.push({
                 title,
@@ -815,7 +1086,7 @@ Keep your answer clear, precise, and professional.`;
                 issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
               });
             }
-          }
+          });
 
           // Fallback to top result's source if no explicit citation found in answer (and answer isn't no-match)
           if (uniqueSources.length === 0 && results.length > 0 && 
@@ -880,7 +1151,8 @@ Keep your answer clear, precise, and professional.`;
           const sessionDocument = {
             session_id: sessionId,
             user_id: userId,
-            title: payload.title || 'New chat',
+            title: payload.title || (payload.mode === 'rag' ? 'New RAG Search' : 'New chat'),
+            mode: payload.mode || 'chat',
             created_at: payload.created_at || now,
             updated_at: payload.updated_at || now,
             last_message_at: payload.last_message_at || now,
@@ -909,11 +1181,20 @@ Keep your answer clear, precise, and professional.`;
       if (path === '/api/chat/sessions' && req.method === 'GET') {
         try {
           const userId = getAuthenticatedUserId(req);
+          const urlParsed = new URL(req.url, 'http://localhost');
+          const mode = urlParsed.searchParams.get('mode') || 'chat';
           const sessionsCollection = db.collection('chat_sessions');
-          console.log(`[MongoDB] Loading sessions for user: ${userId}`);
+          console.log(`[MongoDB] Loading sessions for user: ${userId}, mode: ${mode}`);
+
+          const query = { user_id: userId };
+          if (mode === 'rag') {
+            query.mode = 'rag';
+          } else {
+            query.$or = [{ mode: 'chat' }, { mode: { $exists: false } }];
+          }
 
           const sessions = await sessionsCollection
-            .find({ user_id: userId })
+            .find(query)
             .sort({ last_message_at: -1, updated_at: -1 })
             .toArray();
 
@@ -996,25 +1277,198 @@ Keep your answer clear, precise, and professional.`;
             .sort({ sequence_number: 1, created_at: 1 })
             .toArray();
 
-          const { runAgentFlow } = require('./agentSystem');
-          const agentResult = await runAgentFlow(payload.content || '', { history: previousMessages });
+          let assistantMsgDoc;
 
-          const assistantMsgDoc = {
-            message_id: randomUUID(),
-            session_id: session.session_id,
-            user_id: userId,
-            role: 'assistant',
-            content: agentResult.content,
-            created_at: new Date().toISOString(),
-            sequence_number: session.message_count + 2,
-            metadata: {
-              route: agentResult.route,
-              follow_up_questions: agentResult.follow_up_questions,
-              sources: agentResult.sources || [],
-              citations: agentResult.citations || [],
-              model: agentResult.model || null
+          if (session.mode === 'rag') {
+            console.log(`[RAG Session Flow] Executing search for question: "${payload.content}"`);
+            let results = [];
+            try {
+              results = await runPythonSearch(payload.content, 5, true);
+            } catch (searchErr) {
+              console.error('[RAG Session Flow] Search execution failed:', searchErr);
+              setJsonHeaders(res, 500);
+              res.end(JSON.stringify({ error: 'Failed to search legal documents database.' }));
+              return;
             }
-          };
+
+            let answerText = 'I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question.';
+            let uniqueSources = [];
+            let suggestions = [];
+
+            if (results && results.length > 0) {
+              const contextBlock = results.map((r, idx) => {
+                const sourceIndex = idx + 1;
+                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+                const fileName = (r.original && r.original.child && r.original.child.FileName) || 
+                                 (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                const category = r.category || 'Unknown';
+                const subject = r.subject || 'Unknown';
+                const sections = r.sections || 'Unknown';
+                
+                return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
+              }).join('\n\n---\n\n');
+
+              const systemPrompt = `You are a professional legal research assistant for Indian corporate and commercial law.
+You must answer the user's question grounding your answer strictly and ONLY in the provided search context.
+Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."
+
+Style and Tone Requirements:
+- Write in a natural, cohesive, humanized legal advisory tone. Do not just copy-paste blocks from the database.
+- Present a clear, structured legal explanation.
+- Use Markdown formatting for structure: headings (e.g., "### Heading"), bullet points, numbered lists, tables (where data can be formatted in columns), and bold text for key legal terms or sections.
+- Avoid printing raw file names or titles inline in the text.
+- Use numerical citation tags like [1], [2], [3] to cite which source(s) the information came from. The citation number must correspond to the Source number provided in the context (e.g. use [1] for [Source 1], [2] for [Source 2]).
+- Ensure the output is clean and complete.
+
+At the end of your response, add the tag '---SUGGESTIONS---' followed by 3 relevant follow-up questions the user might ask next, one per line.
+Example:
+---SUGGESTIONS---
+What are the requirements for board resolutions under Section 135?
+Are private companies exempt from these regulations?
+What is the penalty for violating this provision?`;
+
+              const provider = settings.DEFAULT_LLM_PROVIDER;
+              const model = settings.DEFAULT_LLM_MODEL;
+              const llm = getLLMProvider(provider, model);
+
+              let llmResponse;
+              try {
+                llmResponse = await llm.generate({
+                  systemPrompt: systemPrompt,
+                  messages: [{ role: 'user', content: `Question: ${payload.content}\n\nSearch Context:\n${contextBlock}` }],
+                  temperature: 0.1,
+                  maxTokens: 2048
+                });
+                answerText = llmResponse.content || '';
+              } catch (llmErr) {
+                console.error('[RAG Session Flow] LLM generation failed:', llmErr);
+                setJsonHeaders(res, 500);
+                res.end(JSON.stringify({ error: 'LLM generation failed.' }));
+                return;
+              }
+
+              // Extract suggestions
+              const sugIndex = answerText.indexOf('---SUGGESTIONS---');
+              if (sugIndex !== -1) {
+                const sugPart = answerText.slice(sugIndex + '---SUGGESTIONS---'.length);
+                answerText = answerText.slice(0, sugIndex).trim();
+                suggestions = sugPart
+                  .split('\n')
+                  .map(line => line.trim().replace(/^-\s*/, '').replace(/^\d+\.\s*/, ''))
+                  .filter(line => line.length > 0 && !line.includes('---'));
+              }
+
+              // Find all bracketed citation numbers, e.g., [1], [2]
+              const citationRegex = /\[([1-9])\]/g;
+              let match;
+              const citedIndices = new Set();
+              while ((match = citationRegex.exec(answerText)) !== null) {
+                const idx = parseInt(match[1], 10) - 1;
+                if (idx >= 0 && idx < results.length) {
+                  citedIndices.add(idx);
+                }
+              }
+
+              // Fallback to title/filename matching if no numerical citations found
+              if (citedIndices.size === 0) {
+                for (let i = 0; i < results.length; i++) {
+                  const r = results[i];
+                  const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+                  const fileName = (r.original && r.original.child && r.original.child.FileName) || 
+                                   (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                  if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) || 
+                      answerText.toLowerCase().includes(fileName.toLowerCase())) {
+                    citedIndices.add(i);
+                  }
+                }
+              }
+
+              const seenSources = new Set();
+              citedIndices.forEach(idx => {
+                const r = results[idx];
+                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+                const fileName = (r.original && r.original.child && r.original.child.FileName) || 
+                                 (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                const sourceKey = `${title}:::${fileName}`;
+                if (!seenSources.has(sourceKey)) {
+                  seenSources.add(sourceKey);
+                  uniqueSources.push({
+                    title,
+                    filename: fileName,
+                    source_table: r.source_table,
+                    record_id: r.record_id,
+                    parent_id: r.parent_id,
+                    author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                    sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+                    category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+                    subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+                    doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+                    vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+                    issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+                    issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+                  });
+                }
+              });
+
+              if (uniqueSources.length === 0 && results.length > 0) {
+                const r = results[0];
+                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+                const fileName = (r.original && r.original.child && r.original.child.FileName) || 
+                                 (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                uniqueSources.push({
+                  title,
+                  filename: fileName,
+                  source_table: r.source_table,
+                  record_id: r.record_id,
+                  parent_id: r.parent_id,
+                  author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                  sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+                  category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+                  subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+                  doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+                  vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+                  issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+                  issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+                });
+              }
+            }
+
+            assistantMsgDoc = {
+              message_id: randomUUID(),
+              session_id: session.session_id,
+              user_id: userId,
+              role: 'assistant',
+              content: answerText,
+              created_at: new Date().toISOString(),
+              sequence_number: session.message_count + 2,
+              metadata: {
+                follow_up_questions: suggestions,
+                sources: uniqueSources,
+                model: settings.DEFAULT_LLM_MODEL
+              }
+            };
+          } else {
+            const { runAgentFlow } = require('./agentSystem');
+            const agentResult = await runAgentFlow(payload.content || '', { history: previousMessages });
+
+            assistantMsgDoc = {
+              message_id: randomUUID(),
+              session_id: session.session_id,
+              user_id: userId,
+              role: 'assistant',
+              content: agentResult.content,
+              created_at: new Date().toISOString(),
+              sequence_number: session.message_count + 2,
+              metadata: {
+                route: agentResult.route,
+                follow_up_questions: agentResult.follow_up_questions,
+                sources: agentResult.sources || [],
+                citations: agentResult.citations || [],
+                model: agentResult.model || null
+              }
+            };
+          }
+
           await messagesCollection.insertOne(assistantMsgDoc);
 
           const sessionUpdate = {
@@ -1023,7 +1477,7 @@ Keep your answer clear, precise, and professional.`;
             message_count: session.message_count + 2
           };
 
-          if (session.title === 'New chat' && payload.content) {
+          if ((session.title === 'New chat' || session.title === 'New RAG Search') && payload.content) {
             sessionUpdate.title = payload.content.trim().slice(0, 50);
           }
 
@@ -1041,6 +1495,46 @@ Keep your answer clear, precise, and professional.`;
           console.error('Send message failed', error);
           setJsonHeaders(res, 500);
           res.end(JSON.stringify({ error: 'Unable to process message.' }));
+        }
+        return;
+      }
+
+      if (path === '/api/chat/feedback' && req.method === 'POST') {
+        const userId = getAuthenticatedUserId(req);
+        if (!userId) {
+          setJsonHeaders(res, 401);
+          res.end(JSON.stringify({ error: 'Authentication required.' }));
+          return;
+        }
+
+        try {
+          const payload = await getRequestBody(req);
+          const { session_id, message_id, feedback } = payload;
+
+          if (!session_id || !message_id || !feedback) {
+            setJsonHeaders(res, 400);
+            res.end(JSON.stringify({ error: 'session_id, message_id, and feedback are required.' }));
+            return;
+          }
+
+          const messagesCollection = db.collection('chat_messages');
+          const result = await messagesCollection.updateOne(
+            { session_id, message_id, user_id: userId },
+            { $set: { feedback: feedback, updated_at: new Date().toISOString() } }
+          );
+
+          if (result.matchedCount === 0) {
+            setJsonHeaders(res, 404);
+            res.end(JSON.stringify({ error: 'Message not found.' }));
+            return;
+          }
+
+          setJsonHeaders(res, 200);
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          console.error('Submit feedback failed', error);
+          setJsonHeaders(res, 500);
+          res.end(JSON.stringify({ error: 'Unable to save feedback.' }));
         }
         return;
       }
