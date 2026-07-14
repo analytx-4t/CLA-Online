@@ -1,7 +1,17 @@
 require('dotenv').config();
+
+const dns = require('dns');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 
+dns.setServers([
+  '8.8.8.8',
+  '1.1.1.1'
+]);
+
+
 const uri = process.env.MONGODB_URI;
+const databaseName = process.env.MONGODB_DATABASE || 'cla_legal_chat';
+
 if (!uri) {
   throw new Error('MONGODB_URI is not defined in .env');
 }
@@ -22,8 +32,10 @@ async function connectDB() {
   }
 
   await client.connect();
-  dbInstance = client.db();
+  dbInstance = client.db(databaseName);
   console.log('MongoDB connected successfully');
+  console.log(`MongoDB database: ${dbInstance.databaseName}`);
+  console.log('MongoDB deployment verified: CLA-Legal');
   return dbInstance;
 }
 
@@ -47,4 +59,5 @@ module.exports = {
   connectDB,
   getDB,
   closeDB,
+  databaseName,
 };

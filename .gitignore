@@ -103,3 +103,4 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+session_code.txt

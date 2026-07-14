@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node backend/index.js",
     "test": "node --test backend/tests/llm_provider.test.js",
+    "test:mongodb": "node backend/tests/mongodb_chat_persistence.test.js",
     "test:portkey": "node backend/tests/portkey.test.js",
     "test:fallback": "node backend/tests/portkey_fallback.test.js",
     "test:integration": "npm run test:portkey && npm run test:fallback",
@@ -17,6 +18,7 @@
     "test:production": "node backend/tests/portkey_production.test.js"
   },
   "dependencies": {
+    "@google/genai": "^2.11.0",
     "@google/generative-ai": "^0.21.0",
     "dotenv": "^16.3.1",
     "groq-sdk": "^0.15.0",
