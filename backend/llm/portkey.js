@@ -1,5 +1,16 @@
+let logfire;
+
+async function getLogfire() {
+  if (!logfire) {
+    logfire = await import('@pydantic/logfire-node');
+  }
+
+  return logfire;
+}
+
 const Portkey = require('portkey-ai').default;
 const { buildPortkeyMetadata } = require('./metadata');
+const { tracePortkeyLLMCall } = require('../langsmith');
 
 if (!process.env.PORTKEY_API_KEY) {
   throw new Error('PORTKEY_API_KEY is not configured.');
@@ -44,6 +55,7 @@ async function createChatCompletion({
   metadata = {},
   traceId,
 }) {
+  const lf = await getLogfire();
   const portkeyModel = getPortkeyModel(provider, model);
 
   const finalMessages = [
@@ -53,16 +65,50 @@ async function createChatCompletion({
     ...messages,
   ];
 
-  return portkey.chat.completions.create(
+  return lf.span(
+    'Portkey completion',
     {
-      model: portkeyModel,
-      messages: finalMessages,
-      temperature,
+      provider,
+      model,
+      portkey_model: portkeyModel,
+      routing_mode: 'direct',
+      message_count: messages.length,
+      has_system_prompt: Boolean(systemPrompt),
       max_tokens: maxTokens,
     },
-    {
-      ...(traceId ? { traceId } : {}),
-      metadata: buildPortkeyMetadata(metadata),
+    {},
+    async () => {
+      const response = await tracePortkeyLLMCall({
+        provider,
+        model,
+        temperature,
+        maxTokens,
+
+        call: async () => {
+          return portkey.chat.completions.create(
+            {
+              model: portkeyModel,
+              messages: finalMessages,
+              temperature,
+              max_tokens: maxTokens,
+            },
+            {
+              ...(traceId ? { traceId } : {}),
+              metadata: buildPortkeyMetadata(metadata),
+            }
+          );
+        },
+      });
+
+      lf.info('Portkey completion succeeded', {
+        provider,
+        model,
+        input_tokens: response.usage?.prompt_tokens ?? 0,
+        output_tokens: response.usage?.completion_tokens ?? 0,
+        total_tokens: response.usage?.total_tokens ?? 0,
+      });
+
+      return response;
     }
   );
 }

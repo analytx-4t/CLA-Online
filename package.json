@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "backend/index.js",
   "scripts": {
-    "start": "node backend/index.js",
+    "start": "node backend/start.js",
     "test": "node --test backend/tests/llm_provider.test.js",
     "test:mongodb": "node backend/tests/mongodb_chat_persistence.test.js",
     "test:portkey": "node backend/tests/portkey.test.js",
@@ -20,8 +20,11 @@
   "dependencies": {
     "@google/genai": "^2.11.0",
     "@google/generative-ai": "^0.21.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.78.0",
+    "@pydantic/logfire-node": "^0.18.3",
     "dotenv": "^16.3.1",
     "groq-sdk": "^0.15.0",
+    "langsmith": "^0.8.1",
     "mongodb": "^7.5.0",
     "openai": "^5.0.0",
     "portkey-ai": "^3.1.0"

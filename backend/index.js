@@ -1,3 +1,5 @@
+
+
 require('dotenv').config();
 const http = require('http');
 const { randomUUID, randomBytes } = require('crypto');
@@ -5,6 +7,17 @@ const { ObjectId } = require('mongodb');
 const { connectDB, closeDB } = require('./mongoClient');
 const { getProviderHealth, settings } = require('./config');
 const { getLLMProvider } = require('./llm/factory');
+const { traceLLMGeneration } = require('./langsmith');
+
+let logfire;
+
+async function getLogfire() {
+  if (!logfire) {
+    logfire = await import('@pydantic/logfire-node');
+  }
+
+  return logfire;
+}
 
 const PORT = process.env.PORT || 3000;
 
@@ -123,23 +136,61 @@ async function startServer() {
       }
 
       if (path === '/api/llm/generate' && req.method === 'POST') {
+        const lf = await getLogfire();
+
         try {
           const payload = await getRequestBody(req);
           const provider = payload.provider || settings.DEFAULT_LLM_PROVIDER;
-          const llm = getLLMProvider(provider, payload.model);
-          const response = await llm.generate({
-            systemPrompt: payload.systemPrompt || '',
-            messages: payload.messages || [],
-            temperature: payload.temperature,
-            maxTokens: payload.maxTokens,
-            modelOverride: payload.modelOverride,
+          const model = payload.model || 'default';
+
+          const response = await lf.span(
+            'LLM generation request',
+            {
+              provider,
+              model,
+              message_count: payload.messages?.length || 0,
+            },
+            {},
+            async () => {
+              const llm = getLLMProvider(provider, payload.model);
+
+              return traceLLMGeneration({
+                provider,
+                model: payload.model || llm.defaultModel || 'default',
+                messageCount: payload.messages?.length || 0,
+
+                generate: async () => {
+                  return llm.generate({
+                    systemPrompt: payload.systemPrompt || '',
+                    messages: payload.messages || [],
+                    temperature: payload.temperature,
+                    maxTokens: payload.maxTokens,
+                    modelOverride: payload.modelOverride,
+                  });
+                },
+              });
+            }
+          );
+
+          lf.info('LLM generation completed', {
+            provider,
+            model,
           });
+
           setJsonHeaders(res, 200);
           res.end(JSON.stringify(response));
         } catch (error) {
+          lf.reportError(
+            'LLM generation failed',
+            error
+          );
+
           setJsonHeaders(res, 500);
-          res.end(JSON.stringify({ error: error.message || 'LLM request failed.' }));
+          res.end(JSON.stringify({
+            error: error.message || 'LLM request failed.'
+          }));
         }
+
         return;
       }
 
