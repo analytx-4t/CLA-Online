@@ -28,31 +28,44 @@ import re
 import struct
 import json
 import sys
+import urllib.request
 import numpy as np
 import pyodbc
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 
 load_dotenv()
 
 SQL_CONN_STR = os.environ["SQL_CONN_STR"]
 GEMINI_MODEL = "gemini-embedding-2"
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 # ---------- EMBEDDING THE USER'S QUERY ----------
 
 def embed_query(query_text):
-    """gemini-embedding-2 asymmetric-retrieval query format. Must match the
-    'title: ... | text: ...' document-side format used in embed_documents.py —
-    mismatched formatting between query and document embeddings measurably
-    hurts retrieval quality even though nothing errors out."""
+    """gemini-embedding-2 asymmetric-retrieval query format using built-in urllib.request."""
     formatted = f"task: search result | query: {query_text}"
-    result = client.models.embed_content(
-        model=GEMINI_MODEL,
-        contents=[types.Content(parts=[types.Part.from_text(text=formatted)])],
+    api_key = os.environ["GEMINI_API_KEY"]
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:embedContent?key={api_key}"
+    
+    payload = {
+        "model": f"models/{GEMINI_MODEL}",
+        "content": {
+            "parts": [
+                {"text": formatted}
+            ]
+        }
+    }
+    
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST"
     )
-    return np.array(result.embeddings[0].values, dtype=np.float32)
+    
+    with urllib.request.urlopen(req) as response:
+        res_data = json.loads(response.read().decode("utf-8"))
+        values = res_data["embedding"]["values"]
+        return np.array(values, dtype=np.float32)
 
 
 def _bytes_to_vector(b):
@@ -84,52 +97,99 @@ def _row_to_result(row, extra=None):
     return result
 
 
-def vector_search(query_text, top_k=5, source_filter=None):
-    """Cosine similarity over every stored embedding. At current scale
-    (hundreds to low thousands of chunks) fetching all rows and scoring in
-    Python is fine. This becomes the wrong approach past ~50k chunks — see
-    PROJECT_HANDOFF.md's original scale note — at which point either move to
-    a real vector DB or (cheaper first step) at minimum push the
-    Category/Subject/DocDate filters into the SQL WHERE clause so the Python
-    scoring loop runs over a smaller candidate set, not all rows."""
-    query_vec = embed_query(query_text)
+CACHE_FILE = os.path.join(os.path.dirname(__file__), "embeddings_cache.npz")
 
-    cnx = pyodbc.connect(SQL_CONN_STR)
-    try:
-        cur = cnx.cursor()
-        sql = f"SELECT {_SELECT_COLS} FROM dbo.DocumentEmbeddings WITH (NOLOCK)"
-        params = []
-        if source_filter:
-            sql += " WHERE SourceTable = ?"
-            params.append(source_filter)
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-    finally:
-        cnx.close()
 
-    scored = []
+def load_or_refresh_embeddings(cnx=None):
+    """Load embeddings from local cache if it exists, otherwise refresh cache from DB."""
+    if os.path.exists(CACHE_FILE):
+        try:
+            data = np.load(CACHE_FILE, allow_pickle=True)
+            if "vectors" in data and "metadata" in data:
+                return data["vectors"], data["metadata"]
+        except Exception as e:
+            sys.stderr.write(f"Cache read error: {e}. Re-fetching from database...\n")
+
+    if cnx is None:
+        raise ValueError("Embeddings cache file is missing/corrupted, and no DB connection was provided to rebuild it.")
+
+    # Fetch all embeddings and metadata from the database
+    sys.stderr.write("Cache missing or invalid. Rebuilding local embeddings cache...\n")
+    cur = cnx.cursor()
+    sql = f"SELECT {_SELECT_COLS} FROM dbo.DocumentEmbeddings WITH (NOLOCK)"
+    cur.execute(sql)
+    rows = cur.fetchall()
+    cur.close()
+
+    vectors = []
+    metadata = []
     for row in rows:
         emb_bytes = row[5]
         vec = _bytes_to_vector(emb_bytes)
-        score = _cosine_similarity(query_vec, vec)
-        extra = {
-            "category": row[6], "subject": row[7], "sections": row[8],
-            "doc_title": row[9], "law_title": row[10], "doc_date": str(row[11]) if row[11] else None,
-            "score": score,
-        }
-        scored.append(_row_to_result(row[:5], extra))
+        vectors.append(vec)
+        
+        metadata.append({
+            "embedding_id": row[0],
+            "source_table": row[1],
+            "record_id": row[2],
+            "parent_id": row[3],
+            "chunk_text": row[4],
+            "category": row[6],
+            "subject": row[7],
+            "sections": row[8],
+            "doc_title": row[9],
+            "law_title": row[10],
+            "doc_date": str(row[11]) if row[11] else None
+        })
+
+    vectors = np.array(vectors, dtype=np.float32)
+    metadata = np.array(metadata, dtype=object)
+
+    try:
+        np.savez_compressed(CACHE_FILE, vectors=vectors, metadata=metadata)
+    except Exception as e:
+        sys.stderr.write(f"Cache write error: {e}\n")
+
+    return vectors, metadata
+
+
+def vector_search(cnx, query_text, top_k=5, source_filter=None, query_vec=None, vectors=None, metadata=None):
+    """Cosine similarity over cached embeddings with fallback query count verification."""
+    if query_vec is None:
+        query_vec = embed_query(query_text)
+    
+    if vectors is None or metadata is None:
+        vectors, metadata = load_or_refresh_embeddings(cnx)
+        
+    if len(vectors) == 0:
+        return []
+
+    # Calculate cosine similarity in vectorized NumPy
+    norms = np.linalg.norm(vectors, axis=1)
+    query_norm = np.linalg.norm(query_vec)
+    denoms = norms * query_norm
+    denoms[denoms == 0] = 1.0 # Prevent division by zero
+    
+    scores = np.dot(vectors, query_vec) / denoms
+
+    scored = []
+    for idx, score in enumerate(scores):
+        meta = metadata[idx]
+        if source_filter and meta["source_table"] != source_filter:
+            continue
+        
+        res = dict(meta)
+        res["score"] = float(score)
+        scored.append(res)
 
     scored.sort(key=lambda r: r["score"], reverse=True)
     return scored[:top_k]
 
 # ---------- KEYWORD SEARCH ----------
 
-def keyword_search(query_text, top_k=5, source_filter=None):
+def keyword_search(cnx, query_text, top_k=5, source_filter=None):
     """Tries SQL Server full-text search (CONTAINSTABLE) first. Falls back
-    automatically to a simple LIKE-based match if the full-text catalog/index
-    hasn't been created yet (see schema_upgrade.sql / your handoff doc section 7) —
-    so this doesn't hard-fail just because that setup step wasn't run."""
-    cnx = pyodbc.connect(SQL_CONN_STR)
+    automatically to a simple LIKE-based match if full-text search fails."""
     try:
         cur = cnx.cursor()
         sql = f"""
@@ -147,6 +207,7 @@ def keyword_search(query_text, top_k=5, source_filter=None):
         sql += " ORDER BY ft.RANK DESC"
         cur.execute(sql, params)
         rows = cur.fetchall()
+        cur.close()
         return [
             _row_to_result(r[:5], {
                 "category": r[5], "subject": r[6], "sections": r[7],
@@ -155,34 +216,28 @@ def keyword_search(query_text, top_k=5, source_filter=None):
             for r in rows
         ]
     except pyodbc.Error:
-        return _keyword_search_fallback(query_text, top_k, source_filter)
-    finally:
-        cnx.close()
+        return _keyword_search_fallback(cnx, query_text, top_k, source_filter)
 
 
-def _keyword_search_fallback(query_text, top_k, source_filter):
+def _keyword_search_fallback(cnx, query_text, top_k, source_filter):
     terms = [t for t in re.findall(r"\w+", query_text) if len(t) > 2]
     if not terms:
         return []
 
-    cnx = pyodbc.connect(SQL_CONN_STR)
-    try:
-        cur = cnx.cursor()
-        like_clauses = " OR ".join(["ChunkText LIKE ?"] * len(terms))
-        sql = f"""
-            SELECT TOP (?) {_SELECT_COLS.replace('Embedding,', '')}
-            FROM dbo.DocumentEmbeddings WITH (NOLOCK)
-            WHERE ({like_clauses})
-        """
-        # fetch more than top_k since we re-rank by term-match count below
-        params = [top_k * 4] + [f"%{t}%" for t in terms]
-        if source_filter:
-            sql += " AND SourceTable = ?"
-            params.append(source_filter)
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-    finally:
-        cnx.close()
+    cur = cnx.cursor()
+    like_clauses = " OR ".join(["ChunkText LIKE ?"] * len(terms))
+    sql = f"""
+        SELECT TOP (?) {_SELECT_COLS.replace('Embedding,', '')}
+        FROM dbo.DocumentEmbeddings WITH (NOLOCK)
+        WHERE ({like_clauses})
+    """
+    params = [top_k * 4] + [f"%{t}%" for t in terms]
+    if source_filter:
+        sql += " AND SourceTable = ?"
+        params.append(source_filter)
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    cur.close()
 
     results = []
     for row in rows:
@@ -200,10 +255,7 @@ def _keyword_search_fallback(query_text, top_k, source_filter):
 # ---------- RECIPROCAL RANK FUSION ----------
 
 def reciprocal_rank_fusion(vector_results, keyword_results, k=60, top_k=5):
-    """Merge by rank position, not raw score — cosine similarity and full-text
-    RANK aren't on comparable scales, so combining them directly would be
-    meaningless. A strong keyword-only hit (exact 'Section 147' match) can
-    still win even if it scored low on pure semantic similarity, and vice versa."""
+    """Merge by rank position, not raw score."""
     scores = {}
     items = {}
     for rank, r in enumerate(vector_results):
@@ -244,7 +296,6 @@ def _row_to_dict(cur, row):
     if row is None:
         return None
     cols = [c[0] for c in cur.description]
-    # convert any non-serializable objects (like datetime or decimal)
     res = {}
     for col, val in zip(cols, row):
         if val is not None and not isinstance(val, (int, float, str, bool)):
@@ -254,54 +305,107 @@ def _row_to_dict(cur, row):
     return res
 
 
-def get_original_content(source_table, source_record_id, parent_id=None):
-    """Fetch the full, untouched child row (and parent row, if one exists for
-    this source) — every column, not just what was folded into ChunkText."""
-    mapping = _SOURCE_TABLE_MAP.get(source_table)
-    if not mapping:
-        raise ValueError(f"Unknown SourceTable: {source_table!r}")
+def get_original_content_bulk(cnx, results):
+    """Fetch the full untouched parent/child rows for all results in bulk to minimize roundtrips."""
+    # Group results by source_table
+    by_source = {}
+    for r in results:
+        by_source.setdefault(r["source_table"], []).append(r)
 
-    cnx = pyodbc.connect(SQL_CONN_STR)
-    try:
+    for source_table, items in by_source.items():
+        mapping = _SOURCE_TABLE_MAP.get(source_table)
+        if not mapping:
+            continue
+
+        # Get all child record IDs
+        child_ids = [it["record_id"] for it in items]
+        if not child_ids:
+            continue
+
         cur = cnx.cursor()
-        cur.execute(f"SELECT * FROM dbo.{mapping['child']} WITH (NOLOCK) WHERE {mapping['child_pk']} = ?",
-                    source_record_id)
-        child = _row_to_dict(cur, cur.fetchone())
+        # Fetch child rows in bulk
+        placeholders = ",".join(["?"] * len(child_ids))
+        cur.execute(f"SELECT * FROM dbo.{mapping['child']} WITH (NOLOCK) WHERE {mapping['child_pk']} IN ({placeholders})",
+                    child_ids)
+        child_rows = cur.fetchall()
+        
+        # Index children by ID
+        child_by_id = {}
+        for row in child_rows:
+            d = _row_to_dict(cur, row)
+            if d:
+                pk_val = d[mapping['child_pk']]
+                child_by_id[pk_val] = d
 
-        parent = None
-        if mapping["parent"] and parent_id is not None:
-            cur.execute(f"SELECT * FROM dbo.{mapping['parent']} WITH (NOLOCK) WHERE {mapping['parent_pk']} = ?",
-                        parent_id)
-            parent = _row_to_dict(cur, cur.fetchone())
-    finally:
-        cnx.close()
+        # Get all parent IDs
+        parent_ids = [it["parent_id"] for it in items if it.get("parent_id") is not None]
+        parent_by_id = {}
+        if mapping["parent"] and parent_ids:
+            parent_ids = list(set(parent_ids))
+            parent_placeholders = ",".join(["?"] * len(parent_ids))
+            cur.execute(f"SELECT * FROM dbo.{mapping['parent']} WITH (NOLOCK) WHERE {mapping['parent_pk']} IN ({parent_placeholders})",
+                        parent_ids)
+            parent_rows = cur.fetchall()
+            for row in parent_rows:
+                d = _row_to_dict(cur, row)
+                if d:
+                    pk_val = d[mapping['parent_pk']]
+                    parent_by_id[pk_val] = d
 
-    return {"child": child, "parent": parent}
+        cur.close()
+
+        # Assign back to items
+        for it in items:
+            it["original"] = {
+                "child": child_by_id.get(it["record_id"]),
+                "parent": parent_by_id.get(it["parent_id"]) if it.get("parent_id") is not None else None
+            }
 
 # ---------- MAIN ENTRY POINT ----------
 
 def search(query_text, top_k=5, hybrid=True, source_filter=None, with_original_content=True):
-    """Primary function a backend endpoint should call. Returns a list of
-    dicts, each with the chunk, its structured metadata, an RRF/vector score,
-    and (optionally) the full original parent+child rows for citation."""
-    vector_results = vector_search(query_text, top_k=top_k * 3, source_filter=source_filter)
+    """Primary function a backend endpoint should call. Reuse single database connection."""
+    from concurrent.futures import ThreadPoolExecutor
 
-    if hybrid:
-        keyword_results = keyword_search(query_text, top_k=top_k * 3, source_filter=source_filter)
-        results = reciprocal_rank_fusion(vector_results, keyword_results, top_k=top_k)
-    else:
-        results = vector_results[:top_k]
+    # Run database connection, query embedding, and cache loading in parallel to optimize latency
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_cnx = executor.submit(pyodbc.connect, SQL_CONN_STR)
+        future_embed = executor.submit(embed_query, query_text)
+        future_cache = executor.submit(load_or_refresh_embeddings, None)
 
-    if with_original_content:
-        for r in results:
-            r["original"] = get_original_content(r["source_table"], r["record_id"], r.get("parent_id"))
+        # Retrieve outputs of tasks
+        query_vec = future_embed.result()
+        
+        try:
+            vectors, metadata = future_cache.result()
+        except Exception as cache_err:
+            # If cache loading failed or was missing, connect to DB and refresh cache
+            sys.stderr.write(f"Cache load fail or missing: {cache_err}. Re-fetching...\n")
+            cnx = future_cnx.result()
+            vectors, metadata = load_or_refresh_embeddings(cnx)
+
+        cnx = future_cnx.result()
+
+    try:
+        vector_results = vector_search(cnx, query_text, top_k=top_k * 3, source_filter=source_filter,
+                                       query_vec=query_vec, vectors=vectors, metadata=metadata)
+
+        if hybrid:
+            keyword_results = keyword_search(cnx, query_text, top_k=top_k * 3, source_filter=source_filter)
+            results = reciprocal_rank_fusion(vector_results, keyword_results, top_k=top_k)
+        else:
+            results = vector_results[:top_k]
+
+        if with_original_content:
+            get_original_content_bulk(cnx, results)
+    finally:
+        cnx.close()
 
     return results
 
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--json":
-        # Read query from stdin
         try:
             input_data = json.load(sys.stdin)
             query = input_data.get("query", "")

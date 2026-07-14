@@ -240,7 +240,7 @@ async function startServer() {
             console.log('[RAG Endpoint] No documents matched the query.');
             setJsonHeaders(res, 200);
             res.end(JSON.stringify({
-              answer: 'nothing relevant found in the embedded Articles data',
+              answer: 'I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question.',
               sources: []
             }));
             return;
@@ -264,7 +264,7 @@ async function startServer() {
           // Build Grounded LLM Prompt
           const systemPrompt = `You are a professional legal research assistant for Indian corporate and commercial law.
 You must answer the user's question grounding your answer strictly and ONLY in the provided search context.
-Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "nothing relevant found in the embedded Articles data".
+Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."
 
 Citing Sources:
 For every fact or statement you make, you must cite which source(s) it came from.
@@ -331,7 +331,9 @@ Keep your answer clear, precise, and professional.`;
           }
 
           // Fallback to top result's source if no explicit citation found in answer (and answer isn't no-match)
-          if (uniqueSources.length === 0 && results.length > 0 && !answerText.toLowerCase().includes("nothing relevant found")) {
+          if (uniqueSources.length === 0 && results.length > 0 && 
+              !answerText.toLowerCase().includes("nothing relevant found") && 
+              !answerText.toLowerCase().includes("could not find authority")) {
             const r = results[0];
             const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
             const fileName = (r.original && r.original.child && r.original.child.FileName) || 
