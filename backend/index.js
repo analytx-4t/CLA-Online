@@ -1,5 +1,7 @@
 require('dotenv').config();
 const http = require('http');
+const path = require('path');
+const { spawn } = require('child_process');
 const { randomUUID, randomBytes } = require('crypto');
 const { ObjectId } = require('mongodb');
 const { connectDB, closeDB } = require('./mongoClient');
@@ -98,6 +100,62 @@ async function ensureIndexes(db) {
   ]);
 }
 
+function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
+  return new Promise((resolve, reject) => {
+    let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
+    if (!require('fs').existsSync(pythonPath)) {
+      pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
+    }
+    
+    const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
+    if (!require('fs').existsSync(scriptPath)) {
+      return reject(new Error(`search_documents.py not found at ${scriptPath}`));
+    }
+
+    const child = spawn(pythonPath, [scriptPath, '--json']);
+    
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('error', (err) => {
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(`Python process exited with code ${code}. Stderr: ${stderr}`));
+      }
+      try {
+        const result = JSON.parse(stdout);
+        if (result.error) {
+          return reject(new Error(result.error));
+        }
+        resolve(result.results || []);
+      } catch (err) {
+        reject(new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout}`));
+      }
+    });
+
+    const inputPayload = JSON.stringify({
+      query: query,
+      top_k: topK,
+      hybrid: hybrid,
+      source_filter: sourceFilter
+    });
+    
+    child.stdin.write(inputPayload);
+    child.stdin.end();
+  });
+}
+
 async function startServer() {
   try {
     const db = await connectDB();
@@ -151,6 +209,170 @@ async function startServer() {
         } catch (error) {
           setJsonHeaders(res, 500);
           res.end(JSON.stringify({ error: error.message || 'LLM request failed.' }));
+        }
+        return;
+      }
+
+      if (path === '/api/ask' && req.method === 'POST') {
+        try {
+          const payload = await getRequestBody(req);
+          const question = payload.question;
+
+          if (!question || typeof question !== 'string' || !question.trim()) {
+            setJsonHeaders(res, 400);
+            res.end(JSON.stringify({ error: 'Question parameter is required and cannot be empty.' }));
+            return;
+          }
+
+          console.log(`[RAG Endpoint] Received question: "${question.trim()}"`);
+
+          let results;
+          try {
+            results = await runPythonSearch(question, 5, true);
+          } catch (searchErr) {
+            console.error('[RAG Endpoint] Search execution failed:', searchErr);
+            setJsonHeaders(res, 500);
+            res.end(JSON.stringify({ error: 'Failed to search legal documents database.' }));
+            return;
+          }
+
+          if (!results || results.length === 0) {
+            console.log('[RAG Endpoint] No documents matched the query.');
+            setJsonHeaders(res, 200);
+            res.end(JSON.stringify({
+              answer: 'nothing relevant found in the embedded Articles data',
+              sources: []
+            }));
+            return;
+          }
+
+          console.log(`[RAG Endpoint] Found ${results.length} matching document chunks. Generating answer...`);
+
+          // Format search context
+          const contextBlock = results.map((r, idx) => {
+            const sourceIndex = idx + 1;
+            const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+            const fileName = (r.original && r.original.child && r.original.child.FileName) || 
+                             (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+            const category = r.category || 'Unknown';
+            const subject = r.subject || 'Unknown';
+            const sections = r.sections || 'Unknown';
+            
+            return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
+          }).join('\n\n---\n\n');
+
+          // Build Grounded LLM Prompt
+          const systemPrompt = `You are a professional legal research assistant for Indian corporate and commercial law.
+You must answer the user's question grounding your answer strictly and ONLY in the provided search context.
+Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "nothing relevant found in the embedded Articles data".
+
+Citing Sources:
+For every fact or statement you make, you must cite which source(s) it came from.
+Use the exact citation format: [Title (FileName)], where:
+- Title is the DocTitle/Title of the document (e.g., THE NITTY-GRITTY OF COMPANY LAW...)
+- FileName is the FileName of the source file (e.g., CompanyLaw_A.pdf or similar)
+These details are specified at the start of each source section in the context as: Title: "..." | File: ...
+
+Example citation: ...managing directors must be in the employment of the company [THE NITTY-GRITTY OF COMPANY LAW (CompanyLaw_Article.pdf)].
+
+Keep your answer clear, precise, and professional.`;
+
+          const provider = settings.DEFAULT_LLM_PROVIDER;
+          const model = settings.DEFAULT_LLM_MODEL;
+          const llm = getLLMProvider(provider, model);
+
+          let llmResponse;
+          try {
+            llmResponse = await llm.generate({
+              systemPrompt: systemPrompt,
+              messages: [{ role: 'user', content: `Question: ${question}\n\nSearch Context:\n${contextBlock}` }],
+              temperature: 0.1,
+            });
+          } catch (llmErr) {
+            console.error('[RAG Endpoint] LLM generation failed:', llmErr);
+            setJsonHeaders(res, 500);
+            res.end(JSON.stringify({ error: 'LLM generation failed.' }));
+            return;
+          }
+
+          const answerText = llmResponse.content || '';
+          console.log('[RAG Endpoint] Answer generated successfully.');
+
+          // Parse and extract the unique sources actually cited in the generated answer
+          const uniqueSources = [];
+          const seenSources = new Set();
+
+          for (const r of results) {
+            const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+            const fileName = (r.original && r.original.child && r.original.child.FileName) || 
+                             (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+            
+            const sourceKey = `${title}:::${fileName}`;
+            if (seenSources.has(sourceKey)) continue;
+            
+            const isCited = answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) || 
+                            answerText.toLowerCase().includes(fileName.toLowerCase());
+            
+            if (isCited) {
+              seenSources.add(sourceKey);
+              uniqueSources.push({
+                title,
+                filename: fileName,
+                author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+                category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+                subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+                doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+                vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+                issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+                issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+              });
+            }
+          }
+
+          // Fallback to top result's source if no explicit citation found in answer (and answer isn't no-match)
+          if (uniqueSources.length === 0 && results.length > 0 && !answerText.toLowerCase().includes("nothing relevant found")) {
+            const r = results[0];
+            const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+            const fileName = (r.original && r.original.child && r.original.child.FileName) || 
+                             (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+            uniqueSources.push({
+              title,
+              filename: fileName,
+              author: (r.original && r.original.parent && r.original.parent.Author) || null,
+              sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+              category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+              subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+              doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+              vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+              issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+              issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+            });
+          }
+
+          setJsonHeaders(res, 200);
+          res.end(JSON.stringify({
+            answer: answerText,
+            sources: uniqueSources,
+            searchResults: results.map(r => ({
+              embedding_id: r.embedding_id,
+              source_table: r.source_table,
+              record_id: r.record_id,
+              parent_id: r.parent_id,
+              chunk_text: r.chunk_text,
+              category: r.category,
+              subject: r.subject,
+              sections: r.sections,
+              doc_title: r.doc_title,
+              law_title: r.law_title,
+              doc_date: r.doc_date,
+              score: r.score || r.rrf_score
+            }))
+          }));
+        } catch (err) {
+          console.error('[RAG Endpoint] Request handler failed:', err);
+          setJsonHeaders(res, 500);
+          res.end(JSON.stringify({ error: 'Internal server error.' }));
         }
         return;
       }
