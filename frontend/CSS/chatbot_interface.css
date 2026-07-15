@@ -193,7 +193,7 @@ html[data-theme="dark"] .chat-body::-webkit-scrollbar-thumb{
 .chat-window::-webkit-scrollbar-track{background:transparent}
 .chat-window::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.12);border-radius:999px}
 .msg-title{font-weight:700;color:var(--primary);margin-bottom:12px}
-.assistant-msg,.user-msg{display:inline-block;width:auto;max-width:85%;padding:12px 14px;border-radius:16px;border:1px solid var(--border);line-height:1.5}
+.assistant-msg,.user-msg{display:inline-block;width:auto;max-width:85%;padding:12px 14px;border-radius:16px;border:1px solid var(--border);line-height:1.5;white-space:pre-wrap}
 .assistant-msg{background:var(--message-assistant-bg);align-self:flex-start;color:var(--message-assistant-text);border-color:var(--message-assistant-border)}
 .user-msg{background:var(--message-user-bg);align-self:flex-end;color:var(--message-user-text);border-color:var(--message-user-border);max-width:75%}
 #attachmentPreview{margin-bottom:10px}
@@ -252,3 +252,278 @@ html[data-theme="dark"] .session-more-icon{
 .dialog-btn.secondary{background:transparent;border:1px solid var(--session-sidebar-border);color:var(--text)}
 .dialog-btn.danger{background:#d64545;color:#fff}
 .dialog-btn:disabled{opacity:0.7;cursor:not-allowed}
+
+.message-follow-ups {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.follow-up-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.follow-up-btn {
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--welcome-card-border);
+  background: var(--suggestion-bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+}
+.follow-up-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(12,135,66,0.04);
+}
+
+.assistant-msg strong {
+  color: var(--primary);
+  font-weight: 700;
+}
+.assistant-msg code {
+  font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+[data-theme="dark"] .assistant-msg code {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* RAG Search Citations Styling */
+.citations-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+  width: 100%;
+}
+.citations-header-title {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+.citation-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.citation-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 6px 16px rgba(12,135,66,0.12);
+  transform: translateY(-2px);
+}
+.citation-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.citation-badge {
+  background: rgba(12,135,66,0.1);
+  color: var(--primary);
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.citation-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.4;
+}
+.citation-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 6px 12px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px solid rgba(0,0,0,0.03);
+  padding-top: 8px;
+}
+html[data-theme="dark"] .citation-details {
+  border-top: 1px solid rgba(255,255,255,0.03);
+}
+.citation-details span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.citation-details strong {
+  color: var(--text);
+  font-weight: 600;
+}
+/* ========================================
+   Compact RAGAS Evaluation
+======================================== */
+
+.ragas-evaluation-container {
+  width: 100%;
+  box-sizing: border-box;
+
+  margin-top: 10px;
+  padding: 8px 10px;
+
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.04);
+
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  flex: none !important;
+}
+
+/* Header: similar to a compact ChatGPT Sources row */
+.ragas-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  margin: 0 0 7px 0;
+  padding: 0 2px;
+
+  height: 24px !important;
+  min-height: 24px !important;
+
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* Small status badge */
+.ragas-status {
+  display: inline-flex;
+  align-items: center;
+
+  padding: 3px 7px;
+
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.12);
+
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+
+  text-transform: capitalize;
+}
+
+/* All metrics in one compact row */
+.ragas-metrics-grid {
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+
+  gap: 5px;
+
+  height: auto !important;
+  min-height: 0 !important;
+  align-items: center;
+}
+
+/* Thin individual metric cards */
+.ragas-metric {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 6px;
+
+  padding: 6px 8px;
+
+  height: 30px !important;
+  min-height: 30px !important;
+  box-sizing: border-box;
+
+  border: 1px solid rgba(128, 128, 128, 0.15);
+  border-radius: 7px;
+
+  background: rgba(128, 128, 128, 0.06);
+}
+
+/* Overall score should NOT take the full row */
+.ragas-overall-metric {
+  grid-column: auto !important;
+}
+
+/* Metric name */
+.ragas-metric-label {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+
+  opacity: 0.75;
+
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Metric score */
+.ragas-metric-value {
+  flex-shrink: 0;
+
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Score colors */
+.metric-good {
+  color: #22c55e;
+}
+
+.metric-medium {
+  color: #f59e0b;
+}
+
+.metric-poor {
+  color: #ef4444;
+}
+
+.metric-unavailable {
+  opacity: 0.45;
+}
+
+/* Medium screens: 3 + 2 layout */
+@media (max-width: 1000px) {
+  .ragas-metrics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Mobile: stack compact rows */
+@media (max-width: 600px) {
+  .ragas-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ragas-metric {
+    height: 32px !important;
+    min-height: 32px !important;
+  }
+}

@@ -24,31 +24,32 @@ let pendingDeleteSessionId = null;
 let isDeletingSession = false;
 let sessionMenuPortal = null;
 
-function getApiBaseUrl(){
+let activeMode = 'chat'; // 'chat' or 'rag'
+let ragMessages = [];
+
+function getApiBaseUrl() {
   const configuredBaseUrl = (window.__CLA_API_BASE_URL__ || '').toString().trim();
   if (configuredBaseUrl) {
     return configuredBaseUrl.replace(/\/$/, '');
   }
 
-  const host = window.location.hostname;
-  if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return 'http://localhost:3000';
   }
-
-  return 'http://localhost:3000';
+  return window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'http://localhost:3000';
 }
 
-function getCurrentUserId(){
+function getCurrentUserId() {
   return localStorage.getItem('cla-user-id') || 'unknown-user';
 }
 
-function getSessionIdentifier(session){
-  if(!session || typeof session !== 'object') return null;
+function getSessionIdentifier(session) {
+  if (!session || typeof session !== 'object') return null;
   return session.session_id || session.sessionId || session.id || session._id || null;
 }
 
-function getSessionOwnerId(session){
-  if(!session || typeof session !== 'object') return null;
+function getSessionOwnerId(session) {
+  if (!session || typeof session !== 'object') return null;
   return session.user_id || session.userId || session.owner_id || session.created_by || session.email || session.username || null;
 }
 
@@ -57,8 +58,8 @@ const SESSION_STATUS = {
   ARCHIVED: 'archived',
 };
 
-function generateId(){
-  if(window.crypto && typeof window.crypto.randomUUID === 'function'){
+function generateId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
     return window.crypto.randomUUID();
   }
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
@@ -68,7 +69,7 @@ function generateId(){
   });
 }
 
-function generateSessionId(){
+function generateSessionId() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = new Uint8Array(12);
   window.crypto.getRandomValues(bytes);
@@ -79,11 +80,11 @@ function generateSessionId(){
   return `CLA-${chunks.join('-')}`;
 }
 
-function nowISO(){
+function nowISO() {
   return new Date().toISOString();
 }
 
-function createSession({ title = 'New chat', user_id = getCurrentUserId(), status = SESSION_STATUS.ACTIVE } = {}){
+function createSession({ title = 'New chat', user_id = getCurrentUserId(), status = SESSION_STATUS.ACTIVE } = {}) {
   const sessionId = generateSessionId();
   const timestamp = nowISO();
   return {
@@ -98,7 +99,7 @@ function createSession({ title = 'New chat', user_id = getCurrentUserId(), statu
   };
 }
 
-function createMessage(sessionId, role, content){
+function createMessage(sessionId, role, content) {
   const existing = messagesBySession[sessionId] || [];
   return {
     message_id: generateId(),
@@ -116,7 +117,7 @@ function createMessage(sessionId, role, content){
   };
 }
 
-function normalizePersistedSession(session, fallbackSession){
+function normalizePersistedSession(session, fallbackSession) {
   return {
     ...fallbackSession,
     ...session,
@@ -125,29 +126,29 @@ function normalizePersistedSession(session, fallbackSession){
   };
 }
 
-async function persistSession(sessionPayload){
+async function persistSession(sessionPayload) {
   const persistedSession = await createChatSession(sessionPayload);
   return normalizePersistedSession(persistedSession, sessionPayload);
 }
 
-function getCurrentSession(){
+function getCurrentSession() {
   return sessions.find(session => session.session_id === currentSessionId) || null;
 }
 
-function getMessagesForSession(sessionId){
+function getMessagesForSession(sessionId) {
   return messagesBySession[sessionId] || [];
 }
 
-function setCurrentSession(sessionId){
+function setCurrentSession(sessionId) {
   currentSessionId = sessionId;
-  if(!messagesBySession[sessionId]){
+  if (!messagesBySession[sessionId]) {
     messagesBySession[sessionId] = [];
   }
 }
 
-function applyTheme(theme){
-  if(theme === 'dark'){
-    document.documentElement.setAttribute('data-theme','dark');
+function applyTheme(theme) {
+  if (theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
     themeToggle.innerHTML = '☾';
   } else {
     document.documentElement.removeAttribute('data-theme');
@@ -158,39 +159,51 @@ function applyTheme(theme){
 const savedTheme = localStorage.getItem('cla-theme') || 'light';
 applyTheme(savedTheme);
 
-themeToggle?.addEventListener('click', ()=>{
+themeToggle?.addEventListener('click', () => {
   const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   applyTheme(current);
   localStorage.setItem('cla-theme', current);
 });
 
-function escapeHTML(value){
-  return value.replace(/[&<>"]+/g, match => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[match]));
+function escapeHTML(value) {
+  return value.replace(/[&<>"]+/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[match]));
 }
 
-function highlightMatch(text, query){
-  if(!query) return escapeHTML(text);
+function formatMarkdown(text) {
+  if (!text) return '';
+  let html = escapeHTML(text);
+  // Bold: **text**
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // Italic: *text*
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  // Inline code: `text`
+  html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+  return html;
+}
+
+function highlightMatch(text, query) {
+  if (!query) return escapeHTML(text);
   const normalized = text.toLowerCase();
   const needle = query.toLowerCase();
   const index = normalized.indexOf(needle);
-  if(index === -1) return escapeHTML(text);
+  if (index === -1) return escapeHTML(text);
   const before = escapeHTML(text.slice(0, index));
   const match = escapeHTML(text.slice(index, index + needle.length));
   const after = escapeHTML(text.slice(index + needle.length));
   return `${before}<mark>${match}</mark>${after}`;
 }
 
-function scrollToBottom(){
-  if(!chatWindow) return;
+function scrollToBottom() {
+  if (!chatWindow) return;
   chatWindow.scrollTop = chatWindow.scrollHeight;
 }
 
-function truncateTitle(text){
+function truncateTitle(text) {
   return text.length > 40 ? text.slice(0, 40) + '...' : text;
 }
 
-function ensureSessionMenuPortal(){
-  if(sessionMenuPortal) return sessionMenuPortal;
+function ensureSessionMenuPortal() {
+  if (sessionMenuPortal) return sessionMenuPortal;
   sessionMenuPortal = document.createElement('div');
   sessionMenuPortal.id = 'sessionMenuPortal';
   sessionMenuPortal.className = 'session-menu-portal';
@@ -198,19 +211,19 @@ function ensureSessionMenuPortal(){
   return sessionMenuPortal;
 }
 
-function renderSessionMenuPortal(){
+function renderSessionMenuPortal() {
   const portal = ensureSessionMenuPortal();
   portal.innerHTML = '';
-  if(activeSessionMenuId === null) return;
+  if (activeSessionMenuId === null) return;
 
   const session = sessions.find(item => item.session_id === activeSessionMenuId);
-  if(!session) {
+  if (!session) {
     activeSessionMenuId = null;
     return;
   }
 
   const trigger = document.querySelector(`.session-more-btn[data-session-id="${CSS.escape(activeSessionMenuId)}"]`);
-  if(!trigger) {
+  if (!trigger) {
     activeSessionMenuId = null;
     return;
   }
@@ -227,7 +240,7 @@ function renderSessionMenuPortal(){
     </svg>
     <span>Delete chat</span>
   `;
-  deleteBtn.addEventListener('click', (event)=>{
+  deleteBtn.addEventListener('click', (event) => {
     event.stopPropagation();
     openDeleteDialog(session.session_id);
   });
@@ -238,36 +251,36 @@ function renderSessionMenuPortal(){
     const menuRect = menu.getBoundingClientRect();
     let top = rect.bottom + 6;
     let left = rect.right - menuRect.width;
-    if(top + menuRect.height > window.innerHeight - 8){
+    if (top + menuRect.height > window.innerHeight - 8) {
       top = rect.top - menuRect.height - 6;
     }
-    if(top < 8){ top = 8; }
+    if (top < 8) { top = 8; }
     left = Math.min(window.innerWidth - menuRect.width - 8, Math.max(8, left));
     menu.style.top = `${top}px`;
     menu.style.left = `${left}px`;
   });
 }
 
-function renderSessions(){
-  if(!chatList) return;
+function renderSessions() {
+  if (!chatList) return;
   const visibleSessions = sessionSearchQuery ? filteredSessionIds : sessions.map(session => session.session_id);
   chatList.innerHTML = '';
   visibleSessions.forEach(sessionId => {
     const session = sessions.find(item => item.session_id === sessionId);
-    if(!session) return;
+    if (!session) return;
     const row = document.createElement('div');
     row.className = 'session-item-row';
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'chat-item' + (session.session_id === currentSessionId ? ' active' : '');
     item.innerHTML = highlightMatch(session.title || 'New chat', sessionSearchQuery);
-    item.addEventListener('click', ()=> selectSession(session.session_id));
+    item.addEventListener('click', () => selectSession(session.session_id));
     const moreBtn = document.createElement('button');
     moreBtn.type = 'button';
     moreBtn.className = 'session-more-btn';
     moreBtn.dataset.sessionId = session.session_id;
     moreBtn.innerHTML = '<img src="../assets/Images/more.png" alt="More options" class="session-more-icon">';
-    moreBtn.addEventListener('click', (event)=>{
+    moreBtn.addEventListener('click', (event) => {
       event.stopPropagation();
       toggleSessionMenu(session.session_id);
     });
@@ -278,10 +291,22 @@ function renderSessions(){
   renderSessionMenuPortal();
 }
 
-function updateWelcomeCard(){
-  if(!welcomeCard) return;
+function updateWelcomeCard() {
+  if (!welcomeCard) return;
+
+  const welcomeTitleEl = welcomeCard.querySelector('.welcome-title');
+  const welcomeSubtitleEl = welcomeCard.querySelector('.welcome-subtitle');
+
+  if (activeMode === 'rag') {
+    if (welcomeTitleEl) welcomeTitleEl.textContent = 'Ask Legal RAG AI';
+    if (welcomeSubtitleEl) welcomeSubtitleEl.textContent = 'Search the legal database with hybrid vector & keyword retrieval. Answers are strictly grounded in Articles with source citations.';
+  } else {
+    if (welcomeTitleEl) welcomeTitleEl.textContent = 'Ask Legal AI';
+    if (welcomeSubtitleEl) welcomeSubtitleEl.textContent = 'Your corporate legal assistant. Ask about company law, case law, circulars, articles and more.';
+  }
+
   const session = getCurrentSession();
-  const messages = session ? getMessagesForSession(session.session_id) : [];
+  const messages = activeMode === 'rag' ? ragMessages : (session ? getMessagesForSession(session.session_id) : []);
   const chatShell = document.querySelector('.chat-window-shell');
 
   const showWelcome = messages.length === 0;
@@ -289,28 +314,178 @@ function updateWelcomeCard(){
 
   // When there are no messages, do not render the empty chat shell visually.
   // Use conditional rendering via DOM styles instead of CSS hacks like opacity.
-  if(chatShell){
+  if (chatShell) {
     chatShell.style.display = showWelcome ? 'none' : '';
   }
 }
 
-function renderMessages(){
-  if(!chatWindow) return;
+function renderMessages() {
+  if (!chatWindow) return;
   const session = getCurrentSession();
-  const messages = session ? getMessagesForSession(session.session_id) : [];
+  const messages = activeMode === 'rag' ? ragMessages : (session ? getMessagesForSession(session.session_id) : []);
   chatWindow.innerHTML = '';
   messages.forEach(message => {
     const div = document.createElement('div');
     div.className = message.role === 'user' ? 'user-msg' : 'assistant-msg';
-    if(message.role === 'assistant'){
-      div.innerHTML = `<div class="msg-title">CLA Online Legal Chatbot</div><p>${escapeHTML(message.content)}</p>`;
+    if (message.role === 'assistant') {
+      const safeContent = formatMarkdown(message.content || '');
+      const titleText = activeMode === 'rag' ? 'CLA Legal RAG Search' : 'CLA Online Legal Chatbot';
+      div.innerHTML = `<div class="msg-title">${titleText}</div><p>${safeContent}</p>`;
+
+      // Render RAG sources/citations if present
+      const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
+      if (sources.length > 0) {
+        const citationsContainer = document.createElement('div');
+        citationsContainer.className = 'citations-container';
+        citationsContainer.innerHTML = `<div class="citations-header-title">Source Citations (${sources.length})</div>`;
+
+        sources.forEach(s => {
+          const card = document.createElement('div');
+          card.className = 'citation-card';
+
+          let detailsHtml = '';
+          if (s.author) detailsHtml += `<span><strong>Author:</strong> ${escapeHTML(s.author)}</span>`;
+          if (s.filename) detailsHtml += `<span><strong>File:</strong> ${escapeHTML(s.filename)}</span>`;
+          if (s.subject) detailsHtml += `<span><strong>Subject:</strong> ${escapeHTML(s.subject)}</span>`;
+          if (s.doc_date) {
+            try {
+              const formattedDate = new Date(s.doc_date).toLocaleDateString();
+              detailsHtml += `<span><strong>Date:</strong> ${formattedDate}</span>`;
+            } catch (e) {
+              detailsHtml += `<span><strong>Date:</strong> ${escapeHTML(s.doc_date)}</span>`;
+            }
+          }
+          if (s.vol) detailsHtml += `<span><strong>Vol:</strong> ${escapeHTML(s.vol)}</span>`;
+
+          card.innerHTML = `
+            <div class="citation-header">
+              <span class="citation-badge">Article</span>
+              <div class="citation-title">${escapeHTML(s.title || 'Untitled')}</div>
+            </div>
+            ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
+          `;
+          citationsContainer.appendChild(card);
+        });
+        div.appendChild(citationsContainer);
+      }
+      // Render RAGAS evaluation metrics if present
+      const evaluation =
+        message.metadata && message.metadata.evaluation
+          ? message.metadata.evaluation
+          : null;
+
+      if (evaluation) {
+        const evaluationContainer = document.createElement('div');
+        evaluationContainer.className = 'ragas-evaluation-container';
+
+        const formatMetric = (value) => {
+          if (value === null || value === undefined) {
+            return 'N/A';
+          }
+
+          return `${(Number(value) * 100).toFixed(1)}%`;
+        };
+
+        const getMetricClass = (value, inverse = false) => {
+          if (value === null || value === undefined) {
+            return 'metric-unavailable';
+          }
+
+          const score = Number(value);
+
+          if (inverse) {
+            if (score <= 0.2) return 'metric-good';
+            if (score <= 0.5) return 'metric-medium';
+            return 'metric-poor';
+          }
+
+          if (score >= 0.8) return 'metric-good';
+          if (score >= 0.5) return 'metric-medium';
+          return 'metric-poor';
+        };
+
+        evaluationContainer.innerHTML = `
+    <div class="ragas-header">
+      <span>RAGAS Evaluation</span>
+      <span class="ragas-status">
+        ${escapeHTML(evaluation.status || 'unknown')}
+      </span>
+    </div>
+
+    <div class="ragas-metrics-grid">
+
+      <div class="ragas-metric">
+        <span class="ragas-metric-label">Faithfulness</span>
+        <span class="ragas-metric-value ${getMetricClass(evaluation.faithfulness)}">
+          ${formatMetric(evaluation.faithfulness)}
+        </span>
+      </div>
+
+      <div class="ragas-metric">
+        <span class="ragas-metric-label">Answer Relevancy</span>
+        <span class="ragas-metric-value ${getMetricClass(evaluation.answer_relevancy)}">
+          ${formatMetric(evaluation.answer_relevancy)}
+        </span>
+      </div>
+
+      <div class="ragas-metric">
+        <span class="ragas-metric-label">Context Precision</span>
+        <span class="ragas-metric-value ${getMetricClass(evaluation.context_precision)}">
+          ${formatMetric(evaluation.context_precision)}
+        </span>
+      </div>
+
+      <div class="ragas-metric">
+        <span class="ragas-metric-label">Hallucination</span>
+        <span class="ragas-metric-value ${getMetricClass(evaluation.hallucination_score, true)}">
+          ${formatMetric(evaluation.hallucination_score)}
+        </span>
+      </div>
+
+      <div class="ragas-metric ragas-overall-metric">
+        <span class="ragas-metric-label">Overall Score</span>
+        <span class="ragas-metric-value ${getMetricClass(evaluation.overall_score)}">
+          ${formatMetric(evaluation.overall_score)}
+        </span>
+      </div>
+
+    </div>
+  `;
+
+        div.appendChild(evaluationContainer);
+      }
+      const followUps = message.metadata && message.metadata.follow_up_questions ? message.metadata.follow_up_questions : [];
+      if (followUps.length) {
+        const followUpContainer = document.createElement('div');
+        followUpContainer.className = 'message-follow-ups';
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'follow-up-title';
+        titleDiv.textContent = 'Suggested follow-up questions:';
+        followUpContainer.appendChild(titleDiv);
+
+        followUps.forEach(q => {
+          const btn = document.createElement('button');
+          btn.className = 'follow-up-btn';
+          btn.textContent = q;
+          btn.addEventListener('click', () => {
+            if (!messageInput) return;
+            messageInput.value = q;
+            resizeTextArea();
+            messageInput.focus();
+            handleUserSend();
+          });
+          followUpContainer.appendChild(btn);
+        });
+        div.appendChild(followUpContainer);
+      }
     } else {
       // preserve message bubble styling; inject attachments if present
       const safeContent = escapeHTML(message.content || '');
       const html = `<div class="user-message-text">${safeContent}</div>`;
       div.innerHTML = html;
       const attachments = message.metadata && message.metadata.attachments ? message.metadata.attachments : [];
-      if(attachments.length){
+      if (attachments.length) {
         const attachContainer = document.createElement('div');
         attachContainer.className = 'message-attachments';
         attachments.forEach(att => {
@@ -327,28 +502,28 @@ function renderMessages(){
   scrollToBottom();
 }
 
-function updateSessionCounters(session){
-  if(!session) return;
+function updateSessionCounters(session) {
+  if (!session) return;
   const messages = getMessagesForSession(session.session_id);
   session.message_count = messages.length;
   session.updated_at = nowISO();
-  if(messages.length){
+  if (messages.length) {
     session.last_message_at = messages[messages.length - 1].created_at;
   }
 }
 
-function addMessage(role, content, metadata){
+function addMessage(role, content, metadata) {
   const session = getCurrentSession();
-  if(!session) return null;
+  if (!session) return null;
   const message = createMessage(session.session_id, role, content);
-  if(metadata && typeof metadata === 'object'){
+  if (metadata && typeof metadata === 'object') {
     message.metadata = Object.assign(message.metadata || {}, metadata);
   }
   const messages = getMessagesForSession(session.session_id);
   messages.push(message);
   messagesBySession[session.session_id] = messages;
   updateSessionCounters(session);
-  if(role === 'user' && (!session.title || session.title === 'New chat')){
+  if (role === 'user' && (!session.title || session.title === 'New chat')) {
     session.title = truncateTitle(content);
   }
   renderSessions();
@@ -357,9 +532,9 @@ function addMessage(role, content, metadata){
   return message;
 }
 
-async function addAssistantMessage(){
+async function addAssistantMessage() {
   const session = getCurrentSession();
-  if(!session) return null;
+  if (!session) return null;
 
   const assistantMessage = createMessage(
     session.session_id,
@@ -383,7 +558,7 @@ async function addAssistantMessage(){
   }
 }
 
-async function createNewSession(){
+async function createNewSession() {
   const session = createSession();
   try {
     const resolvedSession = await persistSession(session);
@@ -402,7 +577,7 @@ async function createNewSession(){
   updateWelcomeCard();
 }
 
-async function selectSession(sessionId){
+async function selectSession(sessionId) {
   setCurrentSession(sessionId);
 
   activeSessionMenuId = null;
@@ -411,109 +586,213 @@ async function selectSession(sessionId){
     const messages = await fetchSessionMessages(sessionId);
 
     messagesBySession[sessionId] = messages;
-  } catch(error) {
+  } catch (error) {
     console.error('Unable to load session messages', error);
   }
 
   renderSessions();
+
+  try {
+    const msgs = await fetchSessionMessages(sessionId);
+    messagesBySession[sessionId] = msgs;
+  } catch (error) {
+    console.error('Failed to load session messages:', error);
+  }
+
   renderMessages();
   updateWelcomeCard();
 }
 
-function toggleSessionMenu(sessionId){
+function toggleSessionMenu(sessionId) {
   activeSessionMenuId = activeSessionMenuId === sessionId ? null : sessionId;
   renderSessions();
 }
 
-function closeSessionMenu(){
-  if(activeSessionMenuId !== null){
+function closeSessionMenu() {
+  if (activeSessionMenuId !== null) {
     activeSessionMenuId = null;
     renderSessions();
   }
 }
 
-async function handleUserSend(){
-  if(!messageInput || isSendingMessage) return;
-
+async function handleUserSend() {
+  if (!messageInput || isSendingMessage) return;
   const text = messageInput.value.trim();
 
-  if(!text && selectedFiles.length === 0) return;
-
-  const session = getCurrentSession();
-
-  if(!session) return;
+  if (!text && selectedFiles.length === 0) return;
 
   isSendingMessage = true;
 
-  try {
-    const attachmentsMeta = selectedFiles.map(file => ({
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      lastModified: file.lastModified,
-      key: `${file.name}-${file.size}-${file.lastModified}`
-    }));
+  // prepare attachments metadata
+  const attachmentsMeta = selectedFiles.length ? selectedFiles.map(f => ({
+    name: f.name,
+    size: f.size,
+    type: f.type,
+    lastModified: f.lastModified,
+    key: `${f.name}-${f.size}-${f.lastModified}`
+  })) : [];
 
-    const message = createMessage(
-      session.session_id,
-      'user',
-      text
-    );
+  if (activeMode === 'rag') {
+    // RAG Mode stateless execution
+    const userMsg = {
+      message_id: 'user-' + Date.now(),
+      role: 'user',
+      content: text,
+      created_at: nowISO(),
+      metadata: { attachments: attachmentsMeta }
+    };
+    ragMessages.push(userMsg);
 
-    message.metadata.attachments = attachmentsMeta;
-
-    const savedMessage = await sendMessageToSession(
-      session.session_id,
-      message
-    );
-
-    const messages = getMessagesForSession(
-      session.session_id
-    );
-
-    messages.push(savedMessage);
-
-    messagesBySession[session.session_id] = messages;
-
-    if(
-      !session.title ||
-      session.title === 'New chat'
-    ){
-      session.title = truncateTitle(text);
-    }
-
+    // Clear input fields immediately
     messageInput.value = '';
-
-    selectedFiles = [];
-
-    if(fileUpload){
-      fileUpload.value = '';
-    }
-
     resizeTextArea();
+    selectedFiles = [];
+    if (fileUpload) fileUpload.value = '';
     renderAttachmentPreview();
 
-    renderSessions();
+    const thinkingMessageId = 'thinking-' + Date.now();
+    const thinkingMsg = {
+      message_id: thinkingMessageId,
+      role: 'assistant',
+      content: 'CLA is searching legal database and generating grounded answer...',
+      created_at: nowISO(),
+      metadata: { isThinking: true }
+    };
+    ragMessages.push(thinkingMsg);
     renderMessages();
     updateWelcomeCard();
 
-    await addAssistantMessage();
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/ask`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ question: text })
+      });
 
-  } catch(error) {
-    console.error('Unable to send message', error);
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      ragMessages = ragMessages.filter(m => m.message_id !== thinkingMessageId);
+      ragMessages.push({
+        message_id: 'assistant-' + Date.now(),
+        role: 'assistant',
+        content: data.answer || '',
+        created_at: nowISO(),
+        metadata: {
+          sources: data.sources || [],
+          evaluation: data.evaluation || null
+        }
+      });
+    } catch (error) {
+      console.error('RAG request failed:', error);
+      ragMessages = ragMessages.filter(m => m.message_id !== thinkingMessageId);
+      ragMessages.push({
+        message_id: 'error-' + Date.now(),
+        role: 'assistant',
+        content: 'I apologize, but I encountered an error while retrieving documents and generating answer. Please try again. Error: ' + error.message,
+        created_at: nowISO(),
+        metadata: { isError: true }
+      });
+    } finally {
+      isSendingMessage = false;
+      renderMessages();
+      updateWelcomeCard();
+    }
+    return;
+  }
+
+  // Add the user message locally first
+  const userMsg = addMessage('user', text || '', { attachments: attachmentsMeta });
+
+  // Clear input fields immediately
+  messageInput.value = '';
+  resizeTextArea();
+  selectedFiles = [];
+  if (fileUpload) fileUpload.value = '';
+  renderAttachmentPreview();
+
+  // Add a temporary thinking message to show loading state
+  const thinkingMessageId = 'thinking-' + Date.now();
+  const sessionId = currentSessionId;
+  const thinkingMsg = {
+    message_id: thinkingMessageId,
+    session_id: sessionId,
+    role: 'assistant',
+    content: 'CLA is analyzing your query and searching resources...',
+    created_at: nowISO(),
+    metadata: { isThinking: true }
+  };
+
+  if (!messagesBySession[sessionId]) {
+    messagesBySession[sessionId] = [];
+  }
+  messagesBySession[sessionId].push(thinkingMsg);
+  renderMessages();
+  updateWelcomeCard();
+
+  try {
+    const payload = {
+      content: text || '',
+      metadata: { attachments: attachmentsMeta }
+    };
+
+    // Call the backend API to generate response using the agent flow
+    const result = await sendMessageToSession(sessionId, payload);
+
+    // Remove the thinking message
+    messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
+
+    // Push the finalized messages from backend
+    if (result.userMessage) {
+      messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== userMsg.message_id);
+      messagesBySession[sessionId].push(result.userMessage);
+    }
+    if (result.assistantMessage) {
+      messagesBySession[sessionId].push(result.assistantMessage);
+    }
+
+    // Update session info from database
+    const session = getCurrentSession();
+    if (session) {
+      session.message_count = messagesBySession[sessionId].length;
+      session.updated_at = nowISO();
+      if (result.assistantMessage && (!session.title || session.title === 'New chat')) {
+        session.title = truncateTitle(text);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to send message:', error);
+    // Replace thinking message with error description
+    messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
+    messagesBySession[sessionId].push({
+      message_id: 'error-' + Date.now(),
+      session_id: sessionId,
+      role: 'assistant',
+      content: 'I apologize, but I encountered an error while processing your request. Please try again. Error: ' + error.message,
+      created_at: nowISO(),
+      metadata: { isError: true }
+    });
   } finally {
     isSendingMessage = false;
+    renderSessions();
+    renderMessages();
+    updateWelcomeCard();
   }
 }
 
-function debounceSearch(){
+function debounceSearch() {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(handleSessionSearch, 300);
 }
 
-function handleSessionSearch(){
+function handleSessionSearch() {
   sessionSearchQuery = sessionSearchInput?.value.trim() || '';
-  if(!sessionSearchQuery){
+  if (!sessionSearchQuery) {
     filteredSessionIds = [];
     renderSessions();
     return;
@@ -521,60 +800,101 @@ function handleSessionSearch(){
 
   const query = sessionSearchQuery.toLowerCase();
   filteredSessionIds = sessions.filter(session => {
-    if(session.session_id.toLowerCase().includes(query)) return true;
-    if(session.title && session.title.toLowerCase().includes(query)) return true;
+    if (session.session_id.toLowerCase().includes(query)) return true;
+    if (session.title && session.title.toLowerCase().includes(query)) return true;
     const messages = getMessagesForSession(session.session_id);
     return messages.some(message => message.content.toLowerCase().includes(query));
   }).map(session => session.session_id);
   renderSessions();
 }
 
-function resizeTextArea(){
-  if(!messageInput) return;
+function resizeTextArea() {
+  if (!messageInput) return;
   messageInput.style.height = 'auto';
   messageInput.style.height = `${messageInput.scrollHeight}px`;
 }
 
-sendBtn?.addEventListener('click', ()=>{
+sendBtn?.addEventListener('click', () => {
   handleUserSend();
 });
 
 messageInput?.addEventListener('keydown', event => {
-  if(event.key === 'Enter' && !event.shiftKey){
+  if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     handleUserSend();
   }
 });
 
-messageInput?.addEventListener('input', ()=>{
+messageInput?.addEventListener('input', () => {
   resizeTextArea();
 });
 
 document.querySelectorAll('.suggestion-btn').forEach(button => {
   button.addEventListener('click', () => {
-    if(!messageInput) return;
+    if (!messageInput) return;
     messageInput.value = button.textContent.trim();
     resizeTextArea();
     messageInput.focus();
   });
 });
 
-newChatButton?.addEventListener('click', ()=>{
+newChatButton?.addEventListener('click', () => {
   createNewSession();
 });
 
-uploadBtn?.addEventListener('click', ()=>{
+uploadBtn?.addEventListener('click', () => {
   fileUpload?.click();
 });
 
-function getFileKey(file){
+const chatModeTab = document.getElementById('chatModeTab');
+const ragModeTab = document.getElementById('ragModeTab');
+
+chatModeTab?.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (activeMode === 'chat') return;
+  activeMode = 'chat';
+  chatModeTab.classList.add('active');
+  ragModeTab.classList.remove('active');
+
+  // Set title back
+  const pageTitle = document.querySelector('.chat-page-title');
+  if (pageTitle) pageTitle.textContent = 'CLA Legal Chatbot';
+
+  // Show sidebar
+  const chatPanel = document.getElementById('chatPanel');
+  if (chatPanel) chatPanel.style.display = '';
+
+  renderMessages();
+  updateWelcomeCard();
+});
+
+ragModeTab?.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (activeMode === 'rag') return;
+  activeMode = 'rag';
+  ragModeTab.classList.add('active');
+  chatModeTab.classList.remove('active');
+
+  // Set title to RAG
+  const pageTitle = document.querySelector('.chat-page-title');
+  if (pageTitle) pageTitle.textContent = 'CLA Legal RAG Search';
+
+  // Hide sidebar
+  const chatPanel = document.getElementById('chatPanel');
+  if (chatPanel) chatPanel.style.display = 'none';
+
+  renderMessages();
+  updateWelcomeCard();
+});
+
+function getFileKey(file) {
   return `${file.name}-${file.size}-${file.lastModified}`;
 }
 
-function renderAttachmentPreview(){
+function renderAttachmentPreview() {
   const preview = document.getElementById('attachmentPreview');
-  if(!preview) return;
-  if(selectedFiles.length === 0){
+  if (!preview) return;
+  if (selectedFiles.length === 0) {
     preview.style.display = 'none';
     preview.innerHTML = '';
     return;
@@ -582,7 +902,7 @@ function renderAttachmentPreview(){
   // render compact list
   const list = document.createElement('div');
   list.className = 'attachment-list';
-  selectedFiles.forEach((file)=>{
+  selectedFiles.forEach((file) => {
     const row = document.createElement('div');
     row.className = 'attachment-row';
     row.innerHTML = `
@@ -597,7 +917,7 @@ function renderAttachmentPreview(){
   preview.style.display = 'block';
   // attach handlers for remove buttons
   preview.querySelectorAll('.remove-attachment').forEach(btn => {
-    btn.addEventListener('click', (e)=>{
+    btn.addEventListener('click', (e) => {
       e.preventDefault();
       const key = btn.getAttribute('data-key');
       selectedFiles = selectedFiles.filter(f => getFileKey(f) !== key);
@@ -606,40 +926,40 @@ function renderAttachmentPreview(){
   });
 }
 
-fileUpload?.addEventListener('change', ()=>{
+fileUpload?.addEventListener('change', () => {
   const newFiles = Array.from(fileUpload.files || []);
-  if(newFiles.length === 0) return;
+  if (newFiles.length === 0) return;
   // merge with selectedFiles, avoid duplicates, limit to 10
   const existingKeys = new Set(selectedFiles.map(f => getFileKey(f)));
-  for(const f of newFiles){
-    if(selectedFiles.length >= 10) break; // max limit
+  for (const f of newFiles) {
+    if (selectedFiles.length >= 10) break; // max limit
     const key = getFileKey(f);
-    if(existingKeys.has(key)) continue;
+    if (existingKeys.has(key)) continue;
     selectedFiles.push(f);
     existingKeys.add(key);
   }
   // reset native input so same files can be selected again
-  if(fileUpload) fileUpload.value = '';
+  if (fileUpload) fileUpload.value = '';
   renderAttachmentPreview();
 });
 
-sessionSearchInput?.addEventListener('input', ()=>{
+sessionSearchInput?.addEventListener('input', () => {
   debounceSearch();
 });
 
-document.addEventListener('click', (event)=>{
+document.addEventListener('click', (event) => {
   const clickedMenu = event.target.closest('.session-menu');
   const clickedMoreButton = event.target.closest('.session-more-btn');
-  if(activeSessionMenuId && !clickedMenu && !clickedMoreButton){
+  if (activeSessionMenuId && !clickedMenu && !clickedMoreButton) {
     closeSessionMenu();
   }
 });
 
-document.addEventListener('keydown', (event)=>{
-  if(event.key === 'Escape'){
-    if(activeSessionMenuId){
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (activeSessionMenuId) {
       closeSessionMenu();
-    } else if(pendingDeleteSessionId){
+    } else if (pendingDeleteSessionId) {
       closeDeleteDialog();
     }
   }
@@ -652,33 +972,33 @@ const deleteErrorText = document.getElementById('deleteErrorText');
 const deleteConfirmBtn = document.getElementById('confirmDeleteBtn');
 const deleteCancelBtn = document.getElementById('cancelDeleteBtn');
 
-function openDeleteDialog(sessionId){
+function openDeleteDialog(sessionId) {
   pendingDeleteSessionId = sessionId;
   activeSessionMenuId = null;
   renderSessions();
-  if(deleteDialogOverlay) deleteDialogOverlay.hidden = false;
-  if(deleteDialogTitle) deleteDialogTitle.textContent = 'Delete chat?';
-  if(deleteDialogDescription) deleteDialogDescription.textContent = 'This chat will be permanently deleted from your chat history.';
-  if(deleteErrorText) deleteErrorText.textContent = '';
-  if(deleteConfirmBtn){
+  if (deleteDialogOverlay) deleteDialogOverlay.hidden = false;
+  if (deleteDialogTitle) deleteDialogTitle.textContent = 'Delete chat?';
+  if (deleteDialogDescription) deleteDialogDescription.textContent = 'This chat will be permanently deleted from your chat history.';
+  if (deleteErrorText) deleteErrorText.textContent = '';
+  if (deleteConfirmBtn) {
     deleteConfirmBtn.disabled = false;
     deleteConfirmBtn.textContent = 'Delete';
   }
 }
 
-function closeDeleteDialog(){
+function closeDeleteDialog() {
   pendingDeleteSessionId = null;
-  if(deleteDialogOverlay) deleteDialogOverlay.hidden = true;
-  if(deleteErrorText) deleteErrorText.textContent = '';
-  if(deleteConfirmBtn){
+  if (deleteDialogOverlay) deleteDialogOverlay.hidden = true;
+  if (deleteErrorText) deleteErrorText.textContent = '';
+  if (deleteConfirmBtn) {
     deleteConfirmBtn.disabled = false;
     deleteConfirmBtn.textContent = 'Delete';
   }
 }
 
-async function deleteSessionFromBackend(sessionId){
+async function deleteSessionFromBackend(sessionId) {
   const debugMode = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  if(debugMode){
+  if (debugMode) {
     console.debug('[deleteSession] sessionId', sessionId);
   }
   const response = await fetch(`${getApiBaseUrl()}/api/chat/sessions/${encodeURIComponent(sessionId)}`, {
@@ -688,28 +1008,28 @@ async function deleteSessionFromBackend(sessionId){
       'x-user-id': getCurrentUserId()
     }
   });
-  if(debugMode){
+  if (debugMode) {
     console.debug('[deleteSession] status', response.status);
   }
   let payload = {};
   try { payload = await response.json(); } catch (error) { payload = {}; }
-  if(!response.ok){
+  if (!response.ok) {
     throw new Error(payload.error || 'Unable to delete chat right now.');
   }
   return payload;
 }
 
-async function removeSessionFromFrontState(sessionId){
+async function removeSessionFromFrontState(sessionId) {
   const sessionIndex = sessions.findIndex(session => session.session_id === sessionId);
-  if(sessionIndex === -1) return;
+  if (sessionIndex === -1) return;
   const remainingSessions = sessions.filter(session => session.session_id !== sessionId);
   delete messagesBySession[sessionId];
 
   let nextSessions = remainingSessions;
   let nextCurrentSessionId = currentSessionId;
 
-  if(currentSessionId === sessionId){
-    if(remainingSessions.length > 0){
+  if (currentSessionId === sessionId) {
+    if (remainingSessions.length > 0) {
       const fallbackIndex = Math.min(sessionIndex, remainingSessions.length - 1);
       nextCurrentSessionId = remainingSessions[fallbackIndex].session_id;
     } else {
@@ -723,7 +1043,7 @@ async function removeSessionFromFrontState(sessionId){
   sessions = nextSessions;
   setCurrentSession(nextCurrentSessionId);
 
-  if(sessionSearchQuery){
+  if (sessionSearchQuery) {
     filteredSessionIds = filteredSessionIds.filter(id => id !== sessionId);
   }
   renderSessions();
@@ -731,10 +1051,10 @@ async function removeSessionFromFrontState(sessionId){
   updateWelcomeCard();
 }
 
-async function handleDeleteConfirm(){
-  if(isDeletingSession || !pendingDeleteSessionId) return;
+async function handleDeleteConfirm() {
+  if (isDeletingSession || !pendingDeleteSessionId) return;
   isDeletingSession = true;
-  if(deleteConfirmBtn){
+  if (deleteConfirmBtn) {
     deleteConfirmBtn.disabled = true;
     deleteConfirmBtn.textContent = 'Deleting...';
   }
@@ -745,32 +1065,32 @@ async function handleDeleteConfirm(){
     activeSessionMenuId = null;
     renderSessions();
   } catch (error) {
-    if(deleteErrorText){
+    if (deleteErrorText) {
       deleteErrorText.textContent = error.message || 'Unable to delete chat right now.';
     }
   } finally {
     isDeletingSession = false;
-    if(deleteConfirmBtn){
+    if (deleteConfirmBtn) {
       deleteConfirmBtn.disabled = false;
       deleteConfirmBtn.textContent = 'Delete';
     }
   }
 }
 
-deleteCancelBtn?.addEventListener('click', ()=>{
+deleteCancelBtn?.addEventListener('click', () => {
   closeDeleteDialog();
 });
 
-deleteConfirmBtn?.addEventListener('click', ()=>{
+deleteConfirmBtn?.addEventListener('click', () => {
   handleDeleteConfirm();
 });
-deleteDialogOverlay?.addEventListener('click', (event)=>{
-  if(event.target === deleteDialogOverlay){
+deleteDialogOverlay?.addEventListener('click', (event) => {
+  if (event.target === deleteDialogOverlay) {
     closeDeleteDialog();
   }
 });
 
-function createSessionFromBackend(sessionData){
+function createSessionFromBackend(sessionData) {
   return {
     session_id: sessionData.session_id || generateId(),
     user_id: sessionData.user_id || getCurrentUserId(),
@@ -783,7 +1103,7 @@ function createSessionFromBackend(sessionData){
   };
 }
 
-async function fetchChatSessions(){
+async function fetchChatSessions() {
   isLoadingSessions = true;
 
   try {
@@ -792,12 +1112,13 @@ async function fetchChatSessions(){
       {
         method: 'GET',
         headers: {
+          'Content-Type': 'application/json',
           'x-user-id': getCurrentUserId()
         }
       }
     );
 
-    if(!response.ok){
+    if (!response.ok) {
       throw new Error('Unable to load chat sessions');
     }
 
@@ -806,13 +1127,15 @@ async function fetchChatSessions(){
     return (data.sessions || []).map(
       createSessionFromBackend
     );
-
+  } catch (err) {
+    console.error('fetchChatSessions error:', err);
+    return [];
   } finally {
     isLoadingSessions = false;
   }
 }
 
-async function fetchSessionMessages(sessionId){
+async function fetchSessionMessages(sessionId) {
   isLoadingMessages = true;
 
   try {
@@ -821,78 +1144,68 @@ async function fetchSessionMessages(sessionId){
       {
         method: 'GET',
         headers: {
+          'Content-Type': 'application/json',
           'x-user-id': getCurrentUserId()
         }
       }
     );
 
-    if(!response.ok){
+    if (!response.ok) {
       throw new Error('Unable to load session messages');
     }
 
     const data = await response.json();
 
     return data.messages || [];
-
+  } catch (err) {
+    console.error('fetchSessionMessages error:', err);
+    return messagesBySession[sessionId] || [];
   } finally {
     isLoadingMessages = false;
   }
 }
 
-async function searchChatSessions(query){
+async function searchChatSessions(query) {
   // TODO: replace with API call to GET /api/chat/sessions/search?q=
   return [];
 }
 
-async function createChatSession(sessionPayload){
+async function sendMessageToSession(sessionId, messagePayload) {
+  const response = await fetch(`${getApiBaseUrl()}/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-user-id': getCurrentUserId(),
+    },
+    body: JSON.stringify(messagePayload),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to send message');
+  }
+  return await response.json();
+}
+
+async function createChatSession(sessionPayload) {
   const response = await fetch(`${getApiBaseUrl()}/api/chat/sessions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-user-id': getCurrentUserId()
+      'x-user-id': getCurrentUserId(),
     },
-    body: JSON.stringify({
-      session_id: getSessionIdentifier(sessionPayload),
-      user_id: getSessionOwnerId(sessionPayload) || getCurrentUserId(),
-      title: sessionPayload.title || 'New chat',
-      status: sessionPayload.status || SESSION_STATUS.ACTIVE,
-    })
+    body: JSON.stringify(sessionPayload),
   });
-  let payload = {};
-  try { payload = await response.json(); } catch (error) { payload = {}; }
-  if(!response.ok){
-    throw new Error(payload.error || 'Unable to create chat session right now.');
+  if (!response.ok) {
+    throw new Error('Failed to create session');
   }
+  const payload = await response.json();
   return payload.session || payload;
 }
 
-async function sendMessageToSession(sessionId, messagePayload){
-  const response = await fetch(
-    `${getApiBaseUrl()}/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': getCurrentUserId()
-      },
-      body: JSON.stringify(messagePayload)
-    }
-  );
-
-  if(!response.ok){
-    throw new Error('Unable to save message');
-  }
-
-  const data = await response.json();
-
-  return data.message;
-}
-
-async function initSession(){
+async function initSession() {
   try {
     const persistedSessions = await fetchChatSessions();
 
-    if(persistedSessions.length > 0){
+    if (persistedSessions.length > 0) {
       sessions = persistedSessions;
       const firstSession = persistedSessions[0];
       messagesBySession[firstSession.session_id] = [];

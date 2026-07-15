@@ -5,6 +5,8 @@
   "scripts": {
     "start": "node backend/start.js",
     "test": "node --test backend/tests/llm_provider.test.js",
+    "test:agents": "node --test backend/tests/agentSystem.test.js",
+    "test:system": "node --test backend/tests/system.test.js",
     "test:mongodb": "node backend/tests/mongodb_chat_persistence.test.js",
     "test:portkey": "node backend/tests/portkey.test.js",
     "test:fallback": "node backend/tests/portkey_fallback.test.js",

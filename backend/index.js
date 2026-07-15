@@ -2,6 +2,8 @@
 
 require('dotenv').config();
 const http = require('http');
+const path = require('path');
+const { spawn } = require('child_process');
 const { randomUUID, randomBytes } = require('crypto');
 const { ObjectId } = require('mongodb');
 const { connectDB, closeDB } = require('./mongoClient');
@@ -111,12 +113,158 @@ async function ensureIndexes(db) {
   ]);
 }
 
+function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
+  return new Promise((resolve, reject) => {
+    let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
+    if (!require('fs').existsSync(pythonPath)) {
+      pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
+    }
+
+    const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
+    if (!require('fs').existsSync(scriptPath)) {
+      return reject(new Error(`search_documents.py not found at ${scriptPath}`));
+    }
+
+    const child = spawn(pythonPath, [scriptPath, '--json']);
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('error', (err) => {
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(`Python process exited with code ${code}. Stderr: ${stderr}`));
+      }
+      try {
+        const result = JSON.parse(stdout);
+        if (result.error) {
+          return reject(new Error(result.error));
+        }
+        resolve(result.results || []);
+      } catch (err) {
+        reject(new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout}`));
+      }
+    });
+
+    const inputPayload = JSON.stringify({
+      query: query,
+      top_k: topK,
+      hybrid: hybrid,
+      source_filter: sourceFilter
+    });
+
+    child.stdin.write(inputPayload);
+    child.stdin.end();
+  });
+}
+function runRagasEvaluation(question, answer, contexts) {
+  return new Promise((resolve) => {
+    const evaluationScript = path.join(
+      __dirname,
+      '..',
+      'evaluation',
+      'live_evaluator.py'
+    );
+
+    const evaluationPython = path.join(
+      __dirname,
+      '..',
+      'evaluation',
+      '.venv',
+      'Scripts',
+      'python.exe'
+    );
+
+    const pythonProcess = spawn(evaluationPython, [evaluationScript], {
+      cwd: path.join(__dirname, '..'),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    pythonProcess.on('error', (error) => {
+      console.error('[RAGAS] Failed to start evaluator:', error);
+
+      resolve({
+        status: 'failed',
+        error: error.message,
+      });
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (stderr.trim()) {
+        console.error('[RAGAS stderr]', stderr.trim());
+      }
+
+      try {
+        const result = JSON.parse(stdout.trim());
+
+        if (code !== 0) {
+          console.error('[RAGAS] Evaluator exited with code:', code);
+        }
+
+        resolve(result);
+      } catch (error) {
+        console.error(
+          '[RAGAS] Failed to parse evaluator output:',
+          stdout
+        );
+
+        resolve({
+          status: 'failed',
+          error: 'Failed to parse RAGAS evaluation output.',
+        });
+      }
+    });
+
+    const payload = {
+      question,
+      answer,
+      contexts,
+    };
+
+    pythonProcess.stdin.write(JSON.stringify(payload));
+    pythonProcess.stdin.end();
+  });
+}
 async function startServer() {
   try {
     const db = await connectDB();
     await ensureIndexes(db);
 
     const server = http.createServer(async (req, res) => {
+      // Set CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-user-id, x-auth-user-id');
+
+      // Handle preflight OPTIONS request
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
       const path = getRequestPath(req.url || '/');
 
       if (handleCors(req, res)) {
@@ -191,6 +339,205 @@ async function startServer() {
           }));
         }
 
+        return;
+      }
+
+      if (path === '/api/ask' && req.method === 'POST') {
+        try {
+          const payload = await getRequestBody(req);
+          const question = payload.question;
+
+          if (!question || typeof question !== 'string' || !question.trim()) {
+            setJsonHeaders(res, 400);
+            res.end(JSON.stringify({ error: 'Question parameter is required and cannot be empty.' }));
+            return;
+          }
+
+          console.log(`[RAG Endpoint] Received question: "${question.trim()}"`);
+
+          let results;
+          try {
+            results = await runPythonSearch(question, 5, true);
+          } catch (searchErr) {
+            console.error('[RAG Endpoint] Search execution failed:', searchErr);
+            setJsonHeaders(res, 500);
+            res.end(JSON.stringify({ error: 'Failed to search legal documents database.' }));
+            return;
+          }
+
+          if (!results || results.length === 0) {
+            console.log('[RAG Endpoint] No documents matched the query.');
+            setJsonHeaders(res, 200);
+            res.end(JSON.stringify({
+              answer: 'I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question.',
+              sources: []
+            }));
+            return;
+          }
+
+          console.log(`[RAG Endpoint] Found ${results.length} matching document chunks. Generating answer...`);
+
+          // Format search context
+          const contextBlock = results.map((r, idx) => {
+            const sourceIndex = idx + 1;
+            const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+            const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+              (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+            const category = r.category || 'Unknown';
+            const subject = r.subject || 'Unknown';
+            const sections = r.sections || 'Unknown';
+
+            return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
+          }).join('\n\n---\n\n');
+
+          // Build Grounded LLM Prompt
+          const systemPrompt = `You are a professional legal research assistant for Indian corporate and commercial law.
+You must answer the user's question grounding your answer strictly and ONLY in the provided search context.
+Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."
+
+Citing Sources:
+For every fact or statement you make, you must cite which source(s) it came from.
+Use the exact citation format: [Title (FileName)], where:
+- Title is the DocTitle/Title of the document (e.g., THE NITTY-GRITTY OF COMPANY LAW...)
+- FileName is the FileName of the source file (e.g., CompanyLaw_A.pdf or similar)
+These details are specified at the start of each source section in the context as: Title: "..." | File: ...
+
+Example citation: ...managing directors must be in the employment of the company [THE NITTY-GRITTY OF COMPANY LAW (CompanyLaw_Article.pdf)].
+
+Keep your answer clear, precise, and professional.`;
+
+          const provider = settings.DEFAULT_LLM_PROVIDER;
+          const model = settings.DEFAULT_LLM_MODEL;
+          const llm = getLLMProvider(provider, model);
+
+          let llmResponse;
+          try {
+            llmResponse = await llm.generate({
+              systemPrompt: systemPrompt,
+              messages: [{ role: 'user', content: `Question: ${question}\n\nSearch Context:\n${contextBlock}` }],
+              temperature: 0.1,
+            });
+          } catch (llmErr) {
+            console.error('[RAG Endpoint] LLM generation failed:', llmErr);
+            setJsonHeaders(res, 500);
+            res.end(JSON.stringify({ error: 'LLM generation failed.' }));
+            return;
+          }
+
+          console.log(
+            '[RAG Endpoint] Raw LLM response:',
+            JSON.stringify(llmResponse, null, 2)
+          );
+
+          const answerText =
+            llmResponse?.content ||
+            llmResponse?.text ||
+            llmResponse?.response ||
+            llmResponse?.message?.content ||
+            llmResponse?.choices?.[0]?.message?.content ||
+            '';
+
+          console.log(
+            '[RAG Endpoint] Extracted answer length:',
+            answerText.length
+          );
+
+          if (!answerText.trim()) {
+            console.error(
+              '[RAG Endpoint] LLM returned an empty answer. RAGAS evaluation skipped.'
+            );
+
+            setJsonHeaders(res, 502);
+            res.end(JSON.stringify({
+              error: 'The LLM provider returned an empty answer.',
+              provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+              model: llmResponse?.model || settings.DEFAULT_LLM_MODEL
+            }));
+
+            return;
+          }
+
+          console.log('[RAG Endpoint] Answer generated successfully.');
+
+          // Parse and extract the unique sources actually cited in the generated answer
+          const uniqueSources = [];
+          const seenSources = new Set();
+
+          for (const r of results) {
+            const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+            const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+              (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+
+            const sourceKey = `${title}:::${fileName}`;
+            if (seenSources.has(sourceKey)) continue;
+
+            const isCited = answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) ||
+              answerText.toLowerCase().includes(fileName.toLowerCase());
+
+            if (isCited) {
+              seenSources.add(sourceKey);
+              uniqueSources.push({
+                title,
+                filename: fileName,
+                author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+                category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+                subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+                doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+                vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+                issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+                issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+              });
+            }
+          }
+
+          // Fallback to top result's source if no explicit citation found in answer (and answer isn't no-match)
+          if (uniqueSources.length === 0 && results.length > 0 &&
+            !answerText.toLowerCase().includes("nothing relevant found") &&
+            !answerText.toLowerCase().includes("could not find authority")) {
+            const r = results[0];
+            const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+            const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+              (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+            uniqueSources.push({
+              title,
+              filename: fileName,
+              author: (r.original && r.original.parent && r.original.parent.Author) || null,
+              sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+              category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+              subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+              doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+              vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+              issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+              issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+            });
+          }
+
+          setJsonHeaders(res, 200);
+          res.end(JSON.stringify({
+            answer: answerText,
+            sources: uniqueSources,
+            searchResults: results.map(r => ({
+              embedding_id: r.embedding_id,
+              source_table: r.source_table,
+              record_id: r.record_id,
+              parent_id: r.parent_id,
+              chunk_text: r.chunk_text,
+              category: r.category,
+              subject: r.subject,
+              sections: r.sections,
+              doc_title: r.doc_title,
+              law_title: r.law_title,
+              doc_date: r.doc_date,
+              score: r.score || r.rrf_score
+            })),
+            evaluation: evaluation
+          }));
+        } catch (err) {
+          console.error('[RAG Endpoint] Request handler failed:', err);
+          setJsonHeaders(res, 500);
+          res.end(JSON.stringify({ error: 'Internal server error.' }));
+        }
         return;
       }
 
@@ -304,44 +651,51 @@ async function startServer() {
             return;
           }
 
-          const updatedSession = await sessionsCollection.findOneAndUpdate(
-            { _id: session._id, user_id: userId },
-            { $inc: { message_count: 1 } },
-            { returnDocument: 'after' }
-          );
           const now = new Date().toISOString();
-          const message = {
+          const userMsgDoc = {
             message_id: payload.message_id || randomUUID(),
             session_id: session.session_id,
             user_id: userId,
-            role: payload.role || 'assistant',
+            role: 'user',
             content: payload.content || '',
-            created_at: payload.created_at || now,
-            sequence_number: updatedSession.message_count,
-            metadata: payload.metadata || {
-              sources: [],
-              citations: [],
-              model: null,
-            },
+            created_at: now,
+            sequence_number: session.message_count + 1,
+            metadata: payload.metadata || {}
           };
+          await messagesCollection.insertOne(userMsgDoc);
 
-          try {
-            await messagesCollection.insertOne(message);
-            console.log('[MongoDB] Message saved');
-          } catch (insertError) {
-            await sessionsCollection.updateOne(
-              { _id: session._id, user_id: userId },
-              { $inc: { message_count: -1 } }
-            );
-            throw insertError;
-          }
+          const previousMessages = await messagesCollection.find({ session_id: session.session_id })
+            .sort({ sequence_number: 1, created_at: 1 })
+            .toArray();
+
+          const { runAgentFlow } = require('./agentSystem');
+          const agentResult = await runAgentFlow(payload.content || '', { history: previousMessages });
+
+          const assistantMsgDoc = {
+            message_id: randomUUID(),
+            session_id: session.session_id,
+            user_id: userId,
+            role: 'assistant',
+            content: agentResult.content,
+            created_at: new Date().toISOString(),
+            sequence_number: session.message_count + 2,
+            metadata: {
+              route: agentResult.route,
+              follow_up_questions: agentResult.follow_up_questions,
+              sources: agentResult.sources || [],
+              citations: agentResult.citations || [],
+              model: agentResult.model || null
+            }
+          };
+          await messagesCollection.insertOne(assistantMsgDoc);
 
           const sessionUpdate = {
-            updated_at: now,
-            last_message_at: now,
+            updated_at: new Date().toISOString(),
+            last_message_at: new Date().toISOString(),
+            message_count: session.message_count + 2
           };
 
-          if (payload.role === 'user' && session.title === 'New chat' && payload.content) {
+          if (session.title === 'New chat' && payload.content) {
             sessionUpdate.title = payload.content.trim().slice(0, 50);
           }
 
@@ -350,14 +704,16 @@ async function startServer() {
             { $set: sessionUpdate }
           );
 
-          setJsonHeaders(res, 201);
-          res.end(JSON.stringify({ message }));
+          setJsonHeaders(res, 200);
+          res.end(JSON.stringify({
+            userMessage: userMsgDoc,
+            assistantMessage: assistantMsgDoc
+          }));
         } catch (error) {
-          console.error('Save message failed', error);
+          console.error('Send message failed', error);
           setJsonHeaders(res, 500);
-          res.end(JSON.stringify({ error: 'Unable to save chat message.' }));
+          res.end(JSON.stringify({ error: 'Unable to process message.' }));
         }
-
         return;
       }
 
@@ -421,3 +777,4 @@ async function startServer() {
 }
 
 startServer();
+

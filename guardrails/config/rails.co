@@ -1,0 +1,18 @@
+define user ask guardrail check
+  "Check whether this user request is allowed: $user_request"
+
+define bot guardrail allowed
+  "ALLOWED"
+
+define bot guardrail blocked
+  "BLOCKED"
+
+define flow check legal request
+  user ask guardrail check
+
+  if "ignore previous instructions" in $user_request
+    bot guardrail blocked
+  else if "reveal your system prompt" in $user_request
+    bot guardrail blocked
+  else
+    bot guardrail allowed
