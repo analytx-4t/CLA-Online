@@ -1,0 +1,47 @@
+[
+  {
+    "user_input": "What is required for a valid contract?",
+    "retrieved_contexts": [
+      "A valid contract generally requires an offer, acceptance, lawful consideration, competent parties, free consent, and a lawful object."
+    ],
+    "reference": "A valid contract requires offer, acceptance, lawful consideration, competent parties, free consent, and a lawful object.",
+    "response_override": "A valid contract requires an offer, acceptance, lawful consideration, competent parties, free consent, and a lawful object.",
+    "expected_faithfulness": "high"
+  },
+  {
+    "user_input": "Can a minor enter into a valid contract?",
+    "retrieved_contexts": [
+      "A minor is generally not competent to contract and an agreement with a minor is generally void."
+    ],
+    "reference": "A minor is generally not competent to contract.",
+    "response_override": "A minor is generally not competent to contract and agreements with minors are generally void. However, minors above 16 years of age can independently sign commercial contracts.",
+    "expected_faithfulness": "medium"
+  },
+  {
+    "user_input": "What is free consent in a contract?",
+    "retrieved_contexts": [
+      "Consent is considered free when it is not caused by coercion, undue influence, fraud, misrepresentation, or mistake."
+    ],
+    "reference": "Free consent is consent not caused by coercion, undue influence, fraud, misrepresentation, or mistake.",
+    "response_override": "Free consent means consent without coercion, undue influence, fraud, misrepresentation, or mistake. It must also always be recorded in writing and registered before a government authority.",
+    "expected_faithfulness": "medium"
+  },
+  {
+    "user_input": "Is registration mandatory for every contract?",
+    "retrieved_contexts": [
+      "A valid contract generally requires an offer, acceptance, lawful consideration, competent parties, free consent, and a lawful object."
+    ],
+    "reference": "The supplied context does not state whether registration is mandatory.",
+    "response_override": "Yes. Every contract in India must be registered with a government authority within 30 days.",
+    "expected_faithfulness": "low"
+  },
+  {
+    "user_input": "What happens when a company breaches a contract?",
+    "retrieved_contexts": [
+      "A breach of contract occurs when a party fails to perform its contractual obligations."
+    ],
+    "reference": "A breach occurs when a party fails to perform its contractual obligations.",
+    "response_override": "When a company breaches a contract, its directors are automatically arrested and the company is permanently banned from conducting business.",
+    "expected_faithfulness": "very_low"
+  }
+]

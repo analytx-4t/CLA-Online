@@ -1,0 +1,42 @@
+[
+  {
+    "user_input": "What is required for a valid contract?",
+    "response": "A valid contract requires an offer, acceptance, lawful consideration, competent parties, free consent, and a lawful object.",
+    "reference": "A valid contract requires offer, acceptance, lawful consideration, competent parties, free consent, and a lawful object.",
+    "expected_faithfulness": "high",
+    "faithfulness": 1.0,
+    "reason": null
+  },
+  {
+    "user_input": "Can a minor enter into a valid contract?",
+    "response": "A minor is generally not competent to contract and agreements with minors are generally void. However, minors above 16 years of age can independently sign commercial contracts.",
+    "reference": "A minor is generally not competent to contract.",
+    "expected_faithfulness": "medium",
+    "faithfulness": 0.6666666666666666,
+    "reason": null
+  },
+  {
+    "user_input": "What is free consent in a contract?",
+    "response": "Free consent means consent without coercion, undue influence, fraud, misrepresentation, or mistake. It must also always be recorded in writing and registered before a government authority.",
+    "reference": "Free consent is consent not caused by coercion, undue influence, fraud, misrepresentation, or mistake.",
+    "expected_faithfulness": "medium",
+    "faithfulness": 0.7142857142857143,
+    "reason": null
+  },
+  {
+    "user_input": "Is registration mandatory for every contract?",
+    "response": "Yes. Every contract in India must be registered with a government authority within 30 days.",
+    "reference": "The supplied context does not state whether registration is mandatory.",
+    "expected_faithfulness": "low",
+    "faithfulness": 0.0,
+    "reason": null
+  },
+  {
+    "user_input": "What happens when a company breaches a contract?",
+    "response": "When a company breaches a contract, its directors are automatically arrested and the company is permanently banned from conducting business.",
+    "reference": "A breach occurs when a party fails to perform its contractual obligations.",
+    "expected_faithfulness": "very_low",
+    "faithfulness": 0.0,
+    "reason": null
+  }
+]

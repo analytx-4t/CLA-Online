@@ -1,3 +1,5 @@
+
+
 require('dotenv').config();
 const http = require('http');
 const path = require('path');
@@ -7,6 +9,17 @@ const { ObjectId } = require('mongodb');
 const { connectDB, closeDB } = require('./mongoClient');
 const { getProviderHealth, settings } = require('./config');
 const { getLLMProvider } = require('./llm/factory');
+const { traceLLMGeneration } = require('./langsmith');
+
+let logfire;
+
+async function getLogfire() {
+  if (!logfire) {
+    logfire = await import('@pydantic/logfire-node');
+  }
+
+  return logfire;
+}
 
 const PORT = process.env.PORT || 3000;
 
@@ -106,14 +119,14 @@ function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
     if (!require('fs').existsSync(pythonPath)) {
       pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
     }
-    
+
     const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
     if (!require('fs').existsSync(scriptPath)) {
       return reject(new Error(`search_documents.py not found at ${scriptPath}`));
     }
 
     const child = spawn(pythonPath, [scriptPath, '--json']);
-    
+
     let stdout = '';
     let stderr = '';
 
@@ -150,244 +163,252 @@ function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
       hybrid: hybrid,
       source_filter: sourceFilter
     });
-    
+
     child.stdin.write(inputPayload);
     child.stdin.end();
   });
 }
+function runRagasEvaluation(question, answer, contexts) {
+  return new Promise((resolve) => {
+    const evaluationScript = path.join(
+      __dirname,
+      '..',
+      'evaluation',
+      'live_evaluator.py'
+    );
 
-function runPythonCitation(sourceTable, recordId, parentId = null) {
-  return new Promise((resolve, reject) => {
-    let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
-    if (!require('fs').existsSync(pythonPath)) {
-      pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
-    }
-    
-    const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
-    if (!require('fs').existsSync(scriptPath)) {
-      return reject(new Error(`search_documents.py not found at ${scriptPath}`));
-    }
-
-    const child = spawn(pythonPath, [scriptPath, '--json']);
-    
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    child.on('error', (err) => {
-      reject(err);
-    });
-
-    child.on('close', (code) => {
-      if (code !== 0) {
-        return reject(new Error(`Python process exited with code ${code}. Stderr: ${stderr}`));
-      }
-      try {
-        const result = JSON.parse(stdout);
-        if (result.error) {
-          return reject(new Error(result.error));
+    function runPythonCitation(sourceTable, recordId, parentId = null) {
+      return new Promise((resolve, reject) => {
+        let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
+        if (!require('fs').existsSync(pythonPath)) {
+          pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
         }
-        resolve(result);
-      } catch (err) {
-        reject(new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout}`));
-      }
-    });
 
-    const inputPayload = JSON.stringify({
-      action: "get_citation",
-      source_table: sourceTable,
-      record_id: parseInt(recordId, 10) || recordId,
-      parent_id: parentId ? (parseInt(parentId, 10) || parentId) : null
-    });
-    
-    child.stdin.write(inputPayload);
-    child.stdin.end();
-  });
-}
+        const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
+        if (!require('fs').existsSync(scriptPath)) {
+          return reject(new Error(`search_documents.py not found at ${scriptPath}`));
+        }
 
-function escapeHTML(str) {
-  if (!str) return '';
-  return str.toString()
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+        const child = spawn(pythonPath, [scriptPath, '--json']);
 
-function formatDocumentContent(rawText) {
-  if (!rawText) return '<p>No content available.</p>';
-  
-  const trimmed = rawText.trim();
-  const hasHTML = /<[a-z][\s\S]*>/i.test(trimmed) && (
-    trimmed.includes('</') || 
-    trimmed.includes('/>') || 
-    trimmed.toLowerCase().includes('<br>') || 
-    trimmed.toLowerCase().includes('<p>')
-  );
-  
-  if (hasHTML) {
-    let bodyContent = rawText;
-    const bodyMatch = rawText.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    if (bodyMatch) {
-      bodyContent = bodyMatch[1];
-    } else {
-      bodyContent = bodyContent.replace(/<head[^>]*>[\s\S]*?<\/head>/i, '');
+        let stdout = '';
+        let stderr = '';
+
+        child.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        child.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        child.on('error', (err) => {
+          reject(err);
+        });
+
+        child.on('close', (code) => {
+          if (code !== 0) {
+            return reject(new Error(`Python process exited with code ${code}. Stderr: ${stderr}`));
+          }
+          try {
+            const result = JSON.parse(stdout);
+            if (result.error) {
+              return reject(new Error(result.error));
+            }
+            resolve(result);
+          } catch (err) {
+            reject(new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout}`));
+          }
+        });
+
+        const inputPayload = JSON.stringify({
+          action: "get_citation",
+          source_table: sourceTable,
+          record_id: parseInt(recordId, 10) || recordId,
+          parent_id: parentId ? (parseInt(parentId, 10) || parentId) : null
+        });
+
+        child.stdin.write(inputPayload);
+        child.stdin.end();
+      });
     }
-    bodyContent = bodyContent
-      .replace(/<html[^>]*>/gi, '')
-      .replace(/<\/html>/gi, '')
-      .replace(/<!doctype[^>]*>/gi, '')
-      .replace(/<link[^>]*>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-      
-    return bodyContent.trim();
-  }
 
-  // Pre-process to separate glued paragraph boundaries
-  const preProcessed = rawText
-    .replace(/([.!?])([A-Z])/g, '$1\n$2')
-    .replace(/([.!?])(\d+(?:\.\d+)?\s+[A-Z])/g, '$1\n$2');
+    function escapeHTML(str) {
+      if (!str) return '';
+      return str.toString()
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
 
-  const lines = preProcessed.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  let htmlResult = '';
-  
-  let inFootnotes = false;
-  let inList = false;
+    function formatDocumentContent(rawText) {
+      if (!rawText) return '<p>No content available.</p>';
 
-  for (let idx = 0; idx < lines.length; idx++) {
-    let line = lines[idx].trim();
-    if (!line) continue;
+      const trimmed = rawText.trim();
+      const hasHTML = /<[a-z][\s\S]*>/i.test(trimmed) && (
+        trimmed.includes('</') ||
+        trimmed.includes('/>') ||
+        trimmed.toLowerCase().includes('<br>') ||
+        trimmed.toLowerCase().includes('<p>')
+      );
 
-    // Detect Footnotes/References section at the end of document
-    const isFootnote = line.startsWith('*') || /^\d+\s+[a-zA-Z\[]/.test(line) || /^\d+\s+See\s+/.test(line);
-    
-    if (isFootnote && idx > lines.length * 0.6) {
-      if (!inFootnotes) {
+      if (hasHTML) {
+        let bodyContent = rawText;
+        const bodyMatch = rawText.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        if (bodyMatch) {
+          bodyContent = bodyMatch[1];
+        } else {
+          bodyContent = bodyContent.replace(/<head[^>]*>[\s\S]*?<\/head>/i, '');
+        }
+        bodyContent = bodyContent
+          .replace(/<html[^>]*>/gi, '')
+          .replace(/<\/html>/gi, '')
+          .replace(/<!doctype[^>]*>/gi, '')
+          .replace(/<link[^>]*>/gi, '')
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+
+        return bodyContent.trim();
+      }
+
+      // Pre-process to separate glued paragraph boundaries
+      const preProcessed = rawText
+        .replace(/([.!?])([A-Z])/g, '$1\n$2')
+        .replace(/([.!?])(\d+(?:\.\d+)?\s+[A-Z])/g, '$1\n$2');
+
+      const lines = preProcessed.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+      let htmlResult = '';
+
+      let inFootnotes = false;
+      let inList = false;
+
+      for (let idx = 0; idx < lines.length; idx++) {
+        let line = lines[idx].trim();
+        if (!line) continue;
+
+        // Detect Footnotes/References section at the end of document
+        const isFootnote = line.startsWith('*') || /^\d+\s+[a-zA-Z\[]/.test(line) || /^\d+\s+See\s+/.test(line);
+
+        if (isFootnote && idx > lines.length * 0.6) {
+          if (!inFootnotes) {
+            if (inList) {
+              htmlResult += '</ul>';
+              inList = false;
+            }
+            htmlResult += '<div class="footnotes-section" style="margin-top: 40px; padding-top: 20px; border-top: 1px dashed var(--border);">';
+            htmlResult += '<h4 style="font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px;">References / Footnotes</h4>';
+            inFootnotes = true;
+          }
+
+          htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
+          continue;
+        }
+
+        if (inFootnotes) {
+          htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
+          continue;
+        }
+
+        const isBulletMarker = line.startsWith('-') || line.startsWith('•') || line.startsWith('*') ||
+          /^[a-z0-9]\)\s+/i.test(line) || /^\([a-z0-9]\)\s+/i.test(line);
+
+        let shouldBeListItem = isBulletMarker;
+        if (!shouldBeListItem && idx > 0) {
+          const prevLine = lines[idx - 1].trim();
+          if (prevLine.endsWith(':') && line.length < 150) {
+            shouldBeListItem = true;
+          } else if (inList && line.length < 150 && !/^\d+\.\s+/.test(line)) {
+            shouldBeListItem = true;
+          }
+        }
+
+        if (shouldBeListItem) {
+          if (!inList) {
+            htmlResult += '<ul style="margin-bottom: 1.6em; padding-left: 24px;">';
+            inList = true;
+          }
+          const cleaned = line
+            .replace(/^[-•*]\s*/, '')
+            .replace(/^[a-z0-9]\)\s+/i, '')
+            .replace(/^\([a-z0-9]\)\s+/i, '');
+          htmlResult += `<li style="margin-bottom: 0.5em; font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.7; color: var(--text);">${escapeHTML(cleaned)}</li>`;
+          continue;
+        }
+
         if (inList) {
           htmlResult += '</ul>';
           inList = false;
         }
-        htmlResult += '<div class="footnotes-section" style="margin-top: 40px; padding-top: 20px; border-top: 1px dashed var(--border);">';
-        htmlResult += '<h4 style="font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px;">References / Footnotes</h4>';
-        inFootnotes = true;
+
+        const isAllUpper = line.length < 150 && line === line.toUpperCase() && /[A-Z]/.test(line);
+        const isNumberHeader = line.length < 120 && (/^\d+\.\s+[A-Z]/i.test(line) || /^[IVXLCDM]+\.\s+[A-Z]/i.test(line));
+        const isShortNoPeriod = line.length < 100 && !line.endsWith('.');
+        const isDocHeaderLine = idx < 3 && line.length < 120;
+
+        if (isAllUpper || isNumberHeader || isShortNoPeriod || isDocHeaderLine) {
+          let level = 3;
+          if (idx === 0) {
+            level = 2;
+          } else if (isAllUpper && line.length < 60) {
+            level = 2;
+          }
+
+          htmlResult += `<h${level} style="font-family: var(--font-sans); font-weight: 700; color: var(--text); margin-top: 1.6em; margin-bottom: 0.6em; line-height: 1.3;">${escapeHTML(line)}</h${level}>`;
+        } else {
+          let formattedLine = escapeHTML(line);
+          formattedLine = formattedLine.replace(/^(\d+(?:\.\d+)?\s+)/, '<strong>$1</strong>');
+
+          if ((line.startsWith('“') && line.endsWith('”')) || (line.startsWith('"') && line.endsWith('"')) || (line.startsWith('‘') && line.endsWith('’')) || (line.startsWith("'") && line.endsWith("'"))) {
+            htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em; font-style: italic; padding-left: 20px; border-left: 3px solid var(--primary-light);">${formattedLine}</p>`;
+          } else {
+            htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em;">${formattedLine}</p>`;
+          }
+        }
       }
-      
-      htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
-      continue;
-    }
 
-    if (inFootnotes) {
-      htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
-      continue;
-    }
-
-    const isBulletMarker = line.startsWith('-') || line.startsWith('•') || line.startsWith('*') || 
-                           /^[a-z0-9]\)\s+/i.test(line) || /^\([a-z0-9]\)\s+/i.test(line);
-                           
-    let shouldBeListItem = isBulletMarker;
-    if (!shouldBeListItem && idx > 0) {
-      const prevLine = lines[idx - 1].trim();
-      if (prevLine.endsWith(':') && line.length < 150) {
-        shouldBeListItem = true;
-      } else if (inList && line.length < 150 && !/^\d+\.\s+/.test(line)) {
-        shouldBeListItem = true;
+      if (inList) {
+        htmlResult += '</ul>';
       }
-    }
-
-    if (shouldBeListItem) {
-      if (!inList) {
-        htmlResult += '<ul style="margin-bottom: 1.6em; padding-left: 24px;">';
-        inList = true;
+      if (inFootnotes) {
+        htmlResult += '</div>';
       }
-      const cleaned = line
-        .replace(/^[-•*]\s*/, '')
-        .replace(/^[a-z0-9]\)\s+/i, '')
-        .replace(/^\([a-z0-9]\)\s+/i, '');
-      htmlResult += `<li style="margin-bottom: 0.5em; font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.7; color: var(--text);">${escapeHTML(cleaned)}</li>`;
-      continue;
+
+      return htmlResult;
     }
 
-    if (inList) {
-      htmlResult += '</ul>';
-      inList = false;
-    }
+    function renderCitationHTML(data, theme = 'light') {
+      const title = escapeHTML(data.title || 'Untitled Document');
+      const sourceTable = escapeHTML(data.source_table || '');
+      const recordId = escapeHTML(data.record_id || '');
 
-    const isAllUpper = line.length < 150 && line === line.toUpperCase() && /[A-Z]/.test(line);
-    const isNumberHeader = line.length < 120 && (/^\d+\.\s+[A-Z]/i.test(line) || /^[IVXLCDM]+\.\s+[A-Z]/i.test(line));
-    const isShortNoPeriod = line.length < 100 && !line.endsWith('.');
-    const isDocHeaderLine = idx < 3 && line.length < 120;
+      const child = data.child || {};
+      const parent = data.parent || {};
 
-    if (isAllUpper || isNumberHeader || isShortNoPeriod || isDocHeaderLine) {
-      let level = 3;
-      if (idx === 0) {
-        level = 2;
-      } else if (isAllUpper && line.length < 60) {
-        level = 2;
+      const fileName = escapeHTML(child.FileName || parent.FileName || 'Unknown');
+      const category = escapeHTML(child.Category || parent.Category || 'Unknown');
+      const subject = escapeHTML(child.Subject || parent.Subject || 'Unknown');
+      const sections = escapeHTML(child.Sections || parent.Sections || 'Unknown');
+      const author = escapeHTML(parent.Author || 'Unknown');
+      const issueYear = escapeHTML(parent.IssueYear || '');
+      const issueMonth = escapeHTML(parent.IssueMonth || '');
+      const docDate = escapeHTML(parent.DocDate || child.DocDate || '');
+
+      let formattedDate = 'Unknown';
+      if (docDate) {
+        try {
+          formattedDate = new Date(docDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+        } catch (e) {
+          formattedDate = docDate;
+        }
+      } else if (issueMonth || issueYear) {
+        formattedDate = `${issueMonth} ${issueYear}`.trim();
       }
-      
-      htmlResult += `<h${level} style="font-family: var(--font-sans); font-weight: 700; color: var(--text); margin-top: 1.6em; margin-bottom: 0.6em; line-height: 1.3;">${escapeHTML(line)}</h${level}>`;
-    } else {
-      let formattedLine = escapeHTML(line);
-      formattedLine = formattedLine.replace(/^(\d+(?:\.\d+)?\s+)/, '<strong>$1</strong>');
-      
-      if ((line.startsWith('“') && line.endsWith('”')) || (line.startsWith('"') && line.endsWith('"')) || (line.startsWith('‘') && line.endsWith('’')) || (line.startsWith("'") && line.endsWith("'"))) {
-        htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em; font-style: italic; padding-left: 20px; border-left: 3px solid var(--primary-light);">${formattedLine}</p>`;
-      } else {
-        htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em;">${formattedLine}</p>`;
-      }
-    }
-  }
 
-  if (inList) {
-    htmlResult += '</ul>';
-  }
-  if (inFootnotes) {
-    htmlResult += '</div>';
-  }
+      const docContent = formatDocumentContent(data.html);
+      const isDark = theme === 'dark';
 
-  return htmlResult;
-}
-
-function renderCitationHTML(data, theme = 'light') {
-  const title = escapeHTML(data.title || 'Untitled Document');
-  const sourceTable = escapeHTML(data.source_table || '');
-  const recordId = escapeHTML(data.record_id || '');
-  
-  const child = data.child || {};
-  const parent = data.parent || {};
-  
-  const fileName = escapeHTML(child.FileName || parent.FileName || 'Unknown');
-  const category = escapeHTML(child.Category || parent.Category || 'Unknown');
-  const subject = escapeHTML(child.Subject || parent.Subject || 'Unknown');
-  const sections = escapeHTML(child.Sections || parent.Sections || 'Unknown');
-  const author = escapeHTML(parent.Author || 'Unknown');
-  const issueYear = escapeHTML(parent.IssueYear || '');
-  const issueMonth = escapeHTML(parent.IssueMonth || '');
-  const docDate = escapeHTML(parent.DocDate || child.DocDate || '');
-  
-  let formattedDate = 'Unknown';
-  if (docDate) {
-    try {
-      formattedDate = new Date(docDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-    } catch(e) {
-      formattedDate = docDate;
-    }
-  } else if (issueMonth || issueYear) {
-    formattedDate = `${issueMonth} ${issueYear}`.trim();
-  }
-
-  const docContent = formatDocumentContent(data.html);
-  const isDark = theme === 'dark';
-
-  return `<!DOCTYPE html>
+      return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -810,8 +831,78 @@ function renderCitationHTML(data, theme = 'light') {
   </div>
 </body>
 </html>`;
-}
+    }
 
+    const evaluationPython = path.join(
+      __dirname,
+      '..',
+      'evaluation',
+      '.venv',
+      'Scripts',
+      'python.exe'
+    );
+
+    const pythonProcess = spawn(evaluationPython, [evaluationScript], {
+      cwd: path.join(__dirname, '..'),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    pythonProcess.on('error', (error) => {
+      console.error('[RAGAS] Failed to start evaluator:', error);
+
+      resolve({
+        status: 'failed',
+        error: error.message,
+      });
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (stderr.trim()) {
+        console.error('[RAGAS stderr]', stderr.trim());
+      }
+
+      try {
+        const result = JSON.parse(stdout.trim());
+
+        if (code !== 0) {
+          console.error('[RAGAS] Evaluator exited with code:', code);
+        }
+
+        resolve(result);
+      } catch (error) {
+        console.error(
+          '[RAGAS] Failed to parse evaluator output:',
+          stdout
+        );
+
+        resolve({
+          status: 'failed',
+          error: 'Failed to parse RAGAS evaluation output.',
+        });
+      }
+    });
+
+    const payload = {
+      question,
+      answer,
+      contexts,
+    };
+
+    pythonProcess.stdin.write(JSON.stringify(payload));
+    pythonProcess.stdin.end();
+  });
+}
 async function startServer() {
   try {
     const db = await connectDB();
@@ -913,23 +1004,61 @@ async function startServer() {
       }
 
       if (path === '/api/llm/generate' && req.method === 'POST') {
+        const lf = await getLogfire();
+
         try {
           const payload = await getRequestBody(req);
           const provider = payload.provider || settings.DEFAULT_LLM_PROVIDER;
-          const llm = getLLMProvider(provider, payload.model);
-          const response = await llm.generate({
-            systemPrompt: payload.systemPrompt || '',
-            messages: payload.messages || [],
-            temperature: payload.temperature,
-            maxTokens: payload.maxTokens,
-            modelOverride: payload.modelOverride,
+          const model = payload.model || 'default';
+
+          const response = await lf.span(
+            'LLM generation request',
+            {
+              provider,
+              model,
+              message_count: payload.messages?.length || 0,
+            },
+            {},
+            async () => {
+              const llm = getLLMProvider(provider, payload.model);
+
+              return traceLLMGeneration({
+                provider,
+                model: payload.model || llm.defaultModel || 'default',
+                messageCount: payload.messages?.length || 0,
+
+                generate: async () => {
+                  return llm.generate({
+                    systemPrompt: payload.systemPrompt || '',
+                    messages: payload.messages || [],
+                    temperature: payload.temperature,
+                    maxTokens: payload.maxTokens,
+                    modelOverride: payload.modelOverride,
+                  });
+                },
+              });
+            }
+          );
+
+          lf.info('LLM generation completed', {
+            provider,
+            model,
           });
+
           setJsonHeaders(res, 200);
           res.end(JSON.stringify(response));
         } catch (error) {
+          lf.reportError(
+            'LLM generation failed',
+            error
+          );
+
           setJsonHeaders(res, 500);
-          res.end(JSON.stringify({ error: error.message || 'LLM request failed.' }));
+          res.end(JSON.stringify({
+            error: error.message || 'LLM request failed.'
+          }));
         }
+
         return;
       }
 
@@ -972,12 +1101,12 @@ async function startServer() {
           const contextBlock = results.map((r, idx) => {
             const sourceIndex = idx + 1;
             const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-            const fileName = (r.original && r.original.child && r.original.child.FileName) || 
-                             (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+            const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+              (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
             const category = r.category || 'Unknown';
             const subject = r.subject || 'Unknown';
             const sections = r.sections || 'Unknown';
-            
+
             return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
           }).join('\n\n---\n\n');
 
@@ -1020,8 +1149,40 @@ What is the penalty for violating this provision?`;
             return;
           }
 
-          let answerText = llmResponse.content || '';
+          console.log(
+            '[RAG Endpoint] Raw LLM response:',
+            JSON.stringify(llmResponse, null, 2)
+          );
+
+          let answerText =
+            llmResponse?.content ||
+            llmResponse?.text ||
+            llmResponse?.response ||
+            llmResponse?.message?.content ||
+            llmResponse?.choices?.[0]?.message?.content ||
+            '';
+
           let suggestions = [];
+
+          console.log(
+            '[RAG Endpoint] Extracted answer length:',
+            answerText.length
+          );
+
+          if (!answerText.trim()) {
+            console.error(
+              '[RAG Endpoint] LLM returned an empty answer. RAGAS evaluation skipped.'
+            );
+
+            setJsonHeaders(res, 502);
+            res.end(JSON.stringify({
+              error: 'The LLM provider returned an empty answer.',
+              provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+              model: llmResponse?.model || settings.DEFAULT_LLM_MODEL
+            }));
+
+            return;
+          }
           console.log('[RAG Endpoint] Answer generated successfully.');
 
           // Extract suggestions
@@ -1051,10 +1212,10 @@ What is the penalty for violating this provision?`;
             for (let i = 0; i < results.length; i++) {
               const r = results[i];
               const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-              const fileName = (r.original && r.original.child && r.original.child.FileName) || 
-                               (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-              if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) || 
-                  answerText.toLowerCase().includes(fileName.toLowerCase())) {
+              const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+                (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+              if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) ||
+                answerText.toLowerCase().includes(fileName.toLowerCase())) {
                 citedIndices.add(i);
               }
             }
@@ -1065,9 +1226,13 @@ What is the penalty for violating this provision?`;
           citedIndices.forEach(idx => {
             const r = results[idx];
             const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-            const fileName = (r.original && r.original.child && r.original.child.FileName) || 
-                             (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+            const fileName =
+              (r.original && r.original.child && r.original.child.FileName) ||
+              (r.original && r.original.parent && r.original.parent.FileName) ||
+              'Unknown';
+
             const sourceKey = `${title}:::${fileName}`;
+
             if (!seenSources.has(sourceKey)) {
               seenSources.add(sourceKey);
               uniqueSources.push({
@@ -1089,13 +1254,13 @@ What is the penalty for violating this provision?`;
           });
 
           // Fallback to top result's source if no explicit citation found in answer (and answer isn't no-match)
-          if (uniqueSources.length === 0 && results.length > 0 && 
-              !answerText.toLowerCase().includes("nothing relevant found") && 
-              !answerText.toLowerCase().includes("could not find authority")) {
+          if (uniqueSources.length === 0 && results.length > 0 &&
+            !answerText.toLowerCase().includes("nothing relevant found") &&
+            !answerText.toLowerCase().includes("could not find authority")) {
             const r = results[0];
             const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-            const fileName = (r.original && r.original.child && r.original.child.FileName) || 
-                             (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+            const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+              (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
             uniqueSources.push({
               title,
               filename: fileName,
@@ -1130,7 +1295,8 @@ What is the penalty for violating this provision?`;
               law_title: r.law_title,
               doc_date: r.doc_date,
               score: r.score || r.rrf_score
-            }))
+            })),
+            evaluation: evaluation
           }));
         } catch (err) {
           console.error('[RAG Endpoint] Request handler failed:', err);
@@ -1299,12 +1465,12 @@ What is the penalty for violating this provision?`;
               const contextBlock = results.map((r, idx) => {
                 const sourceIndex = idx + 1;
                 const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                const fileName = (r.original && r.original.child && r.original.child.FileName) || 
-                                 (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+                  (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
                 const category = r.category || 'Unknown';
                 const subject = r.subject || 'Unknown';
                 const sections = r.sections || 'Unknown';
-                
+
                 return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
               }).join('\n\n---\n\n');
 
@@ -1374,10 +1540,10 @@ What is the penalty for violating this provision?`;
                 for (let i = 0; i < results.length; i++) {
                   const r = results[i];
                   const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                  const fileName = (r.original && r.original.child && r.original.child.FileName) || 
-                                   (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-                  if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) || 
-                      answerText.toLowerCase().includes(fileName.toLowerCase())) {
+                  const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+                    (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                  if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) ||
+                    answerText.toLowerCase().includes(fileName.toLowerCase())) {
                     citedIndices.add(i);
                   }
                 }
@@ -1387,8 +1553,8 @@ What is the penalty for violating this provision?`;
               citedIndices.forEach(idx => {
                 const r = results[idx];
                 const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                const fileName = (r.original && r.original.child && r.original.child.FileName) || 
-                                 (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+                  (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
                 const sourceKey = `${title}:::${fileName}`;
                 if (!seenSources.has(sourceKey)) {
                   seenSources.add(sourceKey);
@@ -1413,8 +1579,8 @@ What is the penalty for violating this provision?`;
               if (uniqueSources.length === 0 && results.length > 0) {
                 const r = results[0];
                 const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                const fileName = (r.original && r.original.child && r.original.child.FileName) || 
-                                 (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+                  (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
                 uniqueSources.push({
                   title,
                   filename: fileName,
@@ -1599,3 +1765,4 @@ What is the penalty for violating this provision?`;
 }
 
 startServer();
+
