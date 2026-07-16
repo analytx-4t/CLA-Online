@@ -48,8 +48,75 @@ def safe_score(result):
         return round(float(value), 4)
     except (TypeError, ValueError):
         return None
+def sanitize_unicode(value):
+    """
+    Remove invalid Unicode surrogate characters and ensure
+    the text can be safely encoded as UTF-8.
+    """
+    if value is None:
+        return ""
 
+    text = str(value)
 
+    return text.encode(
+        "utf-8",
+        errors="replace"
+    ).decode(
+        "utf-8"
+    )
+async def run_metric_with_fallback(
+    metric_class,
+    evaluator_providers,
+    metric_kwargs=None,
+    score_kwargs=None,
+):
+    """
+    Run a RAGAS metric using evaluator providers in order.
+
+    Example:
+        Groq -> OpenAI
+
+    If one provider fails because of rate limits,
+    quota errors, network errors, or another provider
+    error, the next provider is tried automatically.
+    """
+
+    metric_kwargs = metric_kwargs or {}
+    score_kwargs = score_kwargs or {}
+
+    provider_errors = {}
+
+    for provider_name, evaluator_llm in evaluator_providers:
+        try:
+            metric = metric_class(
+                llm=evaluator_llm,
+                **metric_kwargs,
+            )
+
+            result = await metric.ascore(
+                **score_kwargs,
+            )
+
+            return {
+                "score": safe_score(result),
+                "provider": provider_name,
+                "errors": provider_errors,
+            }
+
+        except Exception as error:
+            provider_errors[provider_name] = str(error)
+
+            print(
+                f"[RAGAS] {provider_name} failed. "
+                f"Trying next evaluator provider...",
+                file=sys.stderr,
+            )
+
+    return {
+        "score": None,
+        "provider": None,
+        "errors": provider_errors,
+    }
 async def evaluate_live(question, answer, contexts):
     # ========================================================
     # VALIDATE INPUT
@@ -65,17 +132,46 @@ async def evaluate_live(question, answer, contexts):
         raise ValueError(
             "contexts must be a non-empty list"
         )
+        # ========================================================
+    # SANITIZE UNICODE INPUT
+    #
+    # Some legacy database documents contain malformed
+    # Unicode surrogate characters. These cannot be serialized
+    # as valid UTF-8 and can cause RAGAS/LLM requests to fail.
+    # ========================================================
+
+    question = sanitize_unicode(question)
+    answer = sanitize_unicode(answer)
+
+    contexts = [
+        sanitize_unicode(context)
+        for context in contexts
+        if context is not None
+    ]
+
+    contexts = [
+        context
+        for context in contexts
+        if context.strip()
+    ]
+
+    if not contexts:
+        raise ValueError(
+            "No valid contexts remain after Unicode sanitization"
+        )
 
     # ========================================================
     # API KEYS
     # ========================================================
 
     groq_api_key = os.getenv("GROQ_API_KEY")
+    openai_api_key = os.getenv("OPENAI_API_KEY")
     gemini_api_key = os.getenv("GEMINI_API_KEY")
 
-    if not groq_api_key:
+    if not groq_api_key and not openai_api_key:
         raise ValueError(
-            "GROQ_API_KEY is not configured in the root .env"
+            "At least one evaluator LLM provider must be configured: "
+            "GROQ_API_KEY or OPENAI_API_KEY"
         )
 
     if not gemini_api_key:
@@ -90,15 +186,44 @@ async def evaluate_live(question, answer, contexts):
     # Groq is used as the judge LLM.
     # ========================================================
 
-    groq_client = AsyncOpenAI(
-        api_key=groq_api_key,
-        base_url="https://api.groq.com/openai/v1",
-    )
+    # ========================================================
+# EVALUATOR LLM PROVIDERS
+#
+# Primary: Groq
+# Fallback: OpenAI
+# ========================================================
 
-    evaluator_llm = llm_factory(
-        "llama-3.3-70b-versatile",
-        client=groq_client,
-    )
+    evaluator_providers = []
+
+    if groq_api_key:
+        groq_client = AsyncOpenAI(
+            api_key=groq_api_key,
+            base_url="https://api.groq.com/openai/v1",
+        )
+
+        groq_llm = llm_factory(
+            "llama-3.3-70b-versatile",
+            client=groq_client,
+        )
+
+        evaluator_providers.append(
+            ("groq", groq_llm)
+        )
+
+
+    if openai_api_key:
+        openai_client = AsyncOpenAI(
+            api_key=openai_api_key,
+        )
+
+        openai_llm = llm_factory(
+            "gpt-4.1-mini",
+            client=openai_client,
+        )
+
+        evaluator_providers.append(
+            ("openai", openai_llm)
+        )
 
     # ========================================================
     # GEMINI EMBEDDINGS
@@ -115,25 +240,7 @@ async def evaluate_live(question, answer, contexts):
         model="gemini-embedding-001",
     )
 
-    # ========================================================
-    # RAGAS METRICS
-    # ========================================================
-
-    faithfulness_metric = Faithfulness(
-        llm=evaluator_llm,
-    )
-
-    answer_relevancy_metric = AnswerRelevancy(
-        llm=evaluator_llm,
-        embeddings=evaluator_embeddings,
-    )
-
-    context_precision_metric = (
-        ContextPrecisionWithoutReference(
-            llm=evaluator_llm,
-        )
-    )
-
+    
     # ========================================================
     # RESULT OBJECT
     # ========================================================
@@ -148,7 +255,7 @@ async def evaluate_live(question, answer, contexts):
     }
 
     errors = {}
-
+    providers_used = {}
     # ========================================================
     # 1. FAITHFULNESS
     #
@@ -156,17 +263,28 @@ async def evaluate_live(question, answer, contexts):
     # by the retrieved contexts.
     # ========================================================
 
-    try:
-        result = await faithfulness_metric.ascore(
-            user_input=question,
-            response=answer,
-            retrieved_contexts=contexts,
+    faithfulness_result = await run_metric_with_fallback(
+        metric_class=Faithfulness,
+        evaluator_providers=evaluator_providers,
+        score_kwargs={
+            "user_input": question,
+            "response": answer,
+            "retrieved_contexts": contexts,
+        },
+    )
+
+    evaluation["faithfulness"] = (
+        faithfulness_result["score"]
+    )
+
+    providers_used["faithfulness"] = (
+        faithfulness_result["provider"]
+    )
+
+    if faithfulness_result["score"] is None:
+        errors["faithfulness"] = (
+            faithfulness_result["errors"]
         )
-
-        evaluation["faithfulness"] = safe_score(result)
-
-    except Exception as error:
-        errors["faithfulness"] = str(error)
 
     # ========================================================
     # 2. ANSWER RELEVANCY
@@ -179,16 +297,30 @@ async def evaluate_live(question, answer, contexts):
     # - Gemini embeddings
     # ========================================================
 
-    try:
-        result = await answer_relevancy_metric.ascore(
-            user_input=question,
-            response=answer,
+    answer_relevancy_result = await run_metric_with_fallback(
+        metric_class=AnswerRelevancy,
+        evaluator_providers=evaluator_providers,
+        metric_kwargs={
+            "embeddings": evaluator_embeddings,
+        },
+        score_kwargs={
+            "user_input": question,
+            "response": answer,
+        },
+    )
+
+    evaluation["answer_relevancy"] = (
+        answer_relevancy_result["score"]
+    )
+
+    providers_used["answer_relevancy"] = (
+        answer_relevancy_result["provider"]
+    )
+
+    if answer_relevancy_result["score"] is None:
+        errors["answer_relevancy"] = (
+            answer_relevancy_result["errors"]
         )
-
-        evaluation["answer_relevancy"] = safe_score(result)
-
-    except Exception as error:
-        errors["answer_relevancy"] = str(error)
 
     # ========================================================
     # 3. CONTEXT PRECISION
@@ -197,17 +329,28 @@ async def evaluate_live(question, answer, contexts):
     # This version does not require a golden reference answer.
     # ========================================================
 
-    try:
-        result = await context_precision_metric.ascore(
-            user_input=question,
-            response=answer,
-            retrieved_contexts=contexts,
+        context_precision_result = await run_metric_with_fallback(
+        metric_class=ContextPrecisionWithoutReference,
+        evaluator_providers=evaluator_providers,
+        score_kwargs={
+            "user_input": question,
+            "response": answer,
+            "retrieved_contexts": contexts,
+        },
+    )
+
+    evaluation["context_precision"] = (
+        context_precision_result["score"]
+    )
+
+    providers_used["context_precision"] = (
+        context_precision_result["provider"]
+    )
+
+    if context_precision_result["score"] is None:
+        errors["context_precision"] = (
+            context_precision_result["errors"]
         )
-
-        evaluation["context_precision"] = safe_score(result)
-
-    except Exception as error:
-        errors["context_precision"] = str(error)
 
     # ========================================================
     # 4. HALLUCINATION SCORE
@@ -253,7 +396,7 @@ async def evaluate_live(question, answer, contexts):
             sum(available_scores) / len(available_scores),
             4,
         )
-
+    evaluation["providers_used"] = providers_used
     # Include metric-specific errors without
     # crashing the entire evaluation.
     if errors:

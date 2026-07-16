@@ -1,6 +1,7 @@
 const themeToggle = document.getElementById('themeToggle');
 const newChatButton = document.getElementById('newChatButton');
 const chatWindow = document.getElementById('chatWindow');
+const chatBody = document.querySelector('.chat-body');
 const chatList = document.getElementById('chatList');
 const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
@@ -8,6 +9,8 @@ const uploadBtn = document.getElementById('uploadBtn');
 const fileUpload = document.getElementById('fileUpload');
 const welcomeCard = document.getElementById('welcomeCard');
 const sessionSearchInput = document.getElementById('sessionSearchInput');
+const chatPanel = document.getElementById('chatPanel');
+const chatMain = document.querySelector('.chat-main');
 
 let sessions = [];
 let messagesBySession = {};
@@ -23,8 +26,8 @@ let activeSessionMenuId = null;
 let pendingDeleteSessionId = null;
 let isDeletingSession = false;
 let sessionMenuPortal = null;
-
-let activeMode = 'chat'; // 'chat' or 'rag'
+let isAutoScrollEnabled = true; // Track if auto-scroll should be active
+let sidebarResizeActive = false;
 
 function getApiBaseUrl() {
   const configuredBaseUrl = (window.__CLA_API_BASE_URL__ || '').toString().trim();
@@ -99,12 +102,11 @@ function clearTypingIntervals() {
 function createSession({ title, user_id = getCurrentUserId(), status = SESSION_STATUS.ACTIVE } = {}) {
   const sessionId = generateSessionId();
   const timestamp = nowISO();
-  const defaultTitle = activeMode === 'rag' ? 'New RAG Search' : 'New chat';
   return {
     session_id: sessionId,
     user_id,
-    title: title || defaultTitle,
-    mode: activeMode,
+    title: title || 'New chat',
+    mode: 'chat',
     created_at: timestamp,
     updated_at: timestamp,
     last_message_at: timestamp,
@@ -177,6 +179,13 @@ themeToggle?.addEventListener('click', () => {
   const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   applyTheme(current);
   localStorage.setItem('cla-theme', current);
+});
+
+// Listen for theme changes from other tabs/windows or Citation page
+window.addEventListener('storage', (event) => {
+  if (event.key === 'cla-theme' && event.newValue) {
+    applyTheme(event.newValue);
+  }
 });
 
 function escapeHTML(value) {
@@ -253,6 +262,16 @@ function formatMarkdown(text) {
   return html;
 }
 
+function sanitizeCitations(text, maxIndex) {
+  if (!text) return '';
+  // remove citation markers [n] where n > maxIndex or if maxIndex is 0 (no sources)
+  return text.replace(/\[(\d+)\]/g, (match, num) => {
+    const n = Number(num);
+    if (!maxIndex || isNaN(n) || n > maxIndex) return ''; // remove the citation entirely
+    return `[${n}]`;
+  });
+}
+
 function buildHTMLTable(rows) {
   if (rows.length < 2) return rows.join('\n');
 
@@ -298,8 +317,239 @@ function highlightMatch(text, query) {
 }
 
 function scrollToBottom() {
-  if (!chatWindow) return;
-  chatWindow.scrollTop = chatWindow.scrollHeight;
+  const scrollContainer = chatBody || chatWindow;
+  if (!scrollContainer) return;
+  if (!isAutoScrollEnabled) return;
+  // Use requestAnimationFrame to ensure DOM has updated
+  requestAnimationFrame(() => {
+    scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: 'smooth' });
+  });
+}
+
+function setupAutoScrollListener() {
+  const scrollContainer = chatBody || chatWindow;
+  if (!scrollContainer) return;
+  
+  let scrollTimeout;
+  scrollContainer.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    
+    // Check if user is scrolled near the bottom (within 100px)
+    const isNearBottom = scrollContainer.scrollHeight - (scrollContainer.scrollTop + scrollContainer.clientHeight) < 100;
+    isAutoScrollEnabled = isNearBottom;
+    
+    // Re-enable auto-scroll after 1 second of inactivity
+    scrollTimeout = setTimeout(() => {
+      isAutoScrollEnabled = true;
+    }, 1000);
+  });
+}
+
+function ensureConversationTracker() {
+  if (!chatWindow) return null;
+  // Create a collapsed rail + hidden panel if missing
+  let rail = document.getElementById('conversationTrackerRail');
+  if (!rail) {
+    rail = document.createElement('div');
+    rail.id = 'conversationTrackerRail';
+    rail.className = 'conversation-tracker-rail';
+
+    // Panel that expands on hover (holds chips)
+    const panel = document.createElement('div');
+    panel.id = 'conversationTrackerPanel';
+    panel.className = 'conversation-tracker-panel';
+    rail.appendChild(panel);
+
+    document.body.appendChild(rail);
+
+    // Compute scrollbar width and position tracker closer to scrollbar
+    const setTrackerPosition = () => {
+      // Compute browser scrollbar width (may be 0 on overlay scrollbars)
+      const scrollbarWidth = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+      // Place the rail directly to the left of the scrollbar with a small 4px gap
+      const gap = 4;
+      const offset = scrollbarWidth > 0 ? (scrollbarWidth + gap) : gap + 2;
+      rail.style.setProperty('--tracker-right', offset + 'px');
+
+      // Position the expanding panel immediately left of the rail, accounting for rail width
+      const panel = document.getElementById('conversationTrackerPanel');
+      if (panel) {
+        // measure rail width (falls back to 18)
+        const railWidth = rail.getBoundingClientRect().width || 18;
+        const panelRight = offset + railWidth + 6; // small breathing room
+        panel.style.right = `${panelRight}px`;
+      }
+    };
+    setTrackerPosition();
+    window.addEventListener('resize', setTrackerPosition);
+
+    // Keep panel open while hovering rail or panel
+    const panelEl = document.getElementById('conversationTrackerPanel');
+    let openTimeout = null;
+    rail.addEventListener('mouseenter', () => {
+      clearTimeout(openTimeout);
+      rail.classList.add('open');
+    });
+    rail.addEventListener('mouseleave', () => {
+      // delay closing to allow mouse to move into panel
+      openTimeout = setTimeout(() => rail.classList.remove('open'), 120);
+    });
+    if (panelEl) {
+      panelEl.addEventListener('mouseenter', () => {
+        clearTimeout(openTimeout);
+        rail.classList.add('open');
+      });
+      panelEl.addEventListener('mouseleave', () => {
+        openTimeout = setTimeout(() => rail.classList.remove('open'), 120);
+      });
+    }
+
+    // Create hover preview container appended to body
+    let preview = document.getElementById('trackerHoverPreview');
+    if (!preview) {
+      preview = document.createElement('div');
+      preview.id = 'trackerHoverPreview';
+      preview.className = 'tracker-hover-preview';
+      preview.hidden = true;
+      document.body.appendChild(preview);
+    }
+  }
+  return document.getElementById('conversationTrackerPanel');
+}
+
+function buildConversationTrackerEntries(messages) {
+  const entries = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message.role !== 'user') continue;
+    const assistantMatch = messages.slice(index + 1).find((candidate) => candidate.role === 'assistant' && !candidate.metadata?.isThinking && !candidate.metadata?.isError);
+    if (!assistantMatch) continue;
+    entries.push({
+      userMessage: message,
+      assistantMessage: assistantMatch,
+    });
+  }
+  return entries;
+}
+
+function renderConversationTracker(messages) {
+  const panel = ensureConversationTracker();
+  if (!panel) return;
+  const entries = buildConversationTrackerEntries(messages);
+  if (!entries.length) {
+    panel.innerHTML = '';
+    // parent rail stays, panel empty
+    return;
+  }
+
+  panel.innerHTML = '';
+  entries.forEach((entry, itemIndex) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'tracker-chip';
+    const preview = (entry.userMessage.content || '').replace(/\s+/g, ' ').trim();
+    chip.innerHTML = `
+      <span class="tracker-index">${itemIndex + 1}</span>
+      <span class="tracker-text">${escapeHTML(preview.length > 72 ? `${preview.slice(0, 72)}…` : preview)}</span>
+    `;
+    chip.addEventListener('click', () => scrollToMessage(entry.assistantMessage.message_id));
+
+    // Hover preview: show full user prompt in the floating preview box
+    chip.addEventListener('mouseenter', (ev) => {
+      const previewEl = document.getElementById('trackerHoverPreview');
+      if (!previewEl) return;
+      const fullUserPrompt = (entry.userMessage.content || '').replace(/\s+/g, ' ').trim();
+      previewEl.innerHTML = `<div class="preview-title">${escapeHTML(fullUserPrompt)}</div>`;
+      const rect = chip.getBoundingClientRect();
+      // Position preview to the left of the panel
+      previewEl.style.top = Math.max(12, rect.top - 8) + 'px';
+      previewEl.style.right = (window.innerWidth - rect.left + 24) + 'px';
+      previewEl.hidden = false;
+    });
+    chip.addEventListener('mouseleave', () => {
+      const previewEl = document.getElementById('trackerHoverPreview');
+      if (previewEl) previewEl.hidden = true;
+    });
+    panel.appendChild(chip);
+  });
+
+  // Adjust panel height dynamically: grow with number of entries up to 5, then enable vertical scroll
+  try {
+    const perChip = 52; // approximate chip height including gap
+    const visible = Math.min(entries.length, 5);
+    if (entries.length === 0) {
+      panel.style.height = 'auto';
+      panel.style.maxHeight = '200px';
+    } else if (entries.length <= 5) {
+      panel.style.height = `${visible * perChip + 12}px`;
+      panel.style.maxHeight = '';
+    } else {
+      panel.style.height = '';
+      panel.style.maxHeight = `${5 * perChip + 12}px`;
+    }
+    // ensure only vertical scrollbar
+    panel.style.overflowY = 'auto';
+    panel.style.overflowX = 'hidden';
+  } catch (err) {
+    // ignore
+  }
+}
+
+function scrollToMessage(messageId) {
+  if (!messageId || !chatWindow) return;
+  const target = chatWindow.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.remove('tracker-highlight');
+  void target.offsetWidth;
+  target.classList.add('tracker-highlight');
+}
+
+function applySidebarWidth(width) {
+  if (!chatPanel) return;
+  const minWidth = 260;
+  const maxWidth = 420;
+  const clampedWidth = Math.min(maxWidth, Math.max(minWidth, width));
+  chatPanel.style.width = `${clampedWidth}px`;
+  chatPanel.style.flexBasis = `${clampedWidth}px`;
+  localStorage.setItem('cla-sidebar-width', `${clampedWidth}`);
+}
+
+function setupSidebarResizer() {
+  if (!chatPanel || !chatMain) return;
+  const handle = document.getElementById('chatResizeHandle');
+  if (!handle) return;
+
+  const savedWidth = Number(localStorage.getItem('cla-sidebar-width'));
+  if (savedWidth) {
+    applySidebarWidth(savedWidth);
+  }
+
+  handle.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+    sidebarResizeActive = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const startX = event.clientX;
+    const startWidth = chatPanel.getBoundingClientRect().width;
+
+    const onMove = (moveEvent) => {
+      if (!sidebarResizeActive) return;
+      const nextWidth = startWidth + (moveEvent.clientX - startX);
+      applySidebarWidth(nextWidth);
+    };
+
+    const onUp = () => {
+      sidebarResizeActive = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
 }
 
 function truncateTitle(text) {
@@ -377,7 +627,9 @@ function renderSessions() {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'chat-item' + (session.session_id === currentSessionId ? ' active' : '');
-    item.innerHTML = highlightMatch(session.title || 'New chat', sessionSearchQuery);
+    const titleText = session.title || 'New chat';
+    item.setAttribute('title', titleText);
+    item.innerHTML = highlightMatch(titleText, sessionSearchQuery);
     item.addEventListener('click', () => selectSession(session.session_id));
     const moreBtn = document.createElement('button');
     moreBtn.type = 'button';
@@ -401,13 +653,8 @@ function updateWelcomeCard() {
   const welcomeTitleEl = welcomeCard.querySelector('.welcome-title');
   const welcomeSubtitleEl = welcomeCard.querySelector('.welcome-subtitle');
 
-  if (activeMode === 'rag') {
-    if (welcomeTitleEl) welcomeTitleEl.textContent = 'Ask Legal RAG AI';
-    if (welcomeSubtitleEl) welcomeSubtitleEl.textContent = 'Search the legal database with hybrid vector & keyword retrieval. Answers are strictly grounded in Articles with source citations.';
-  } else {
-    if (welcomeTitleEl) welcomeTitleEl.textContent = 'Ask Legal AI';
-    if (welcomeSubtitleEl) welcomeSubtitleEl.textContent = 'Your corporate legal assistant. Ask about company law, case law, circulars, articles and more.';
-  }
+  if (welcomeTitleEl) welcomeTitleEl.textContent = 'Ask Legal AI';
+  if (welcomeSubtitleEl) welcomeSubtitleEl.textContent = 'Your corporate legal assistant. Ask about company law, case law, circulars, articles and more.';
 
   const session = getCurrentSession();
   const messages = session ? getMessagesForSession(session.session_id) : [];
@@ -421,98 +668,159 @@ function updateWelcomeCard() {
   }
 }
 
-function renderCitationsAndActions(container, message) {
-  if (container.querySelector('.citations-breadcrumbs') || container.querySelector('.message-actions')) {
+function setCitationCardsExpanded(citationsContainer, expanded) {
+  if (!citationsContainer) return;
+  const toggleBtn = citationsContainer.querySelector('.citation-toggle-btn');
+
+  if (!toggleBtn) {
+    citationsContainer.dataset.expanded = 'true';
+    return;
+  }
+
+  if (expanded) {
+    const existingExtra = citationsContainer.querySelectorAll('.citation-card');
+    if (existingExtra.length === 1 && Array.isArray(citationsContainer._remainingSources)) {
+      citationsContainer._remainingSources.forEach((source, offset) => {
+        const idx = offset + 1;
+        const card = citationsContainer._renderCitationCard(source, idx);
+        citationsContainer.insertBefore(card, toggleBtn);
+      });
+    }
+  } else {
+    const remainingCards = Array.from(citationsContainer.querySelectorAll('.citation-card'))
+      .filter(card => Number(card.dataset.citationIndex) > 0);
+    remainingCards.forEach(card => card.remove());
+  }
+
+  const remaining = citationsContainer._remainingSources ? citationsContainer._remainingSources.length : 0;
+  toggleBtn.textContent = expanded ? 'Hide Sources' : `Show ${remaining} More Sources`;
+  toggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  citationsContainer.dataset.expanded = expanded ? 'true' : 'false';
+  
+  // Scroll to show expanded citations
+  requestAnimationFrame(() => {
+    scrollToBottom();
+  });
+}
+
+function ensureCitationVisible(citationsContainer, cardEl) {
+  if (!citationsContainer || !cardEl) return;
+
+  if (citationsContainer.dataset.expanded !== 'true' && Number(cardEl.dataset.citationIndex) > 0) {
+    setCitationCardsExpanded(citationsContainer, true);
+    requestAnimationFrame(() => {
+      cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      cardEl.classList.remove('highlight');
+      void cardEl.offsetWidth;
+      cardEl.classList.add('highlight');
+    });
+    return;
+  }
+
+  cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  cardEl.classList.remove('highlight');
+  void cardEl.offsetWidth;
+  cardEl.classList.add('highlight');
+}
+
+function renderSourceCitations(container, message) {
+  if (container.querySelector('.citations-container')) {
     return;
   }
 
   const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
-
-  // Render breadcrumbs and citation cards
-  if (sources.length > 0) {
-    const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
-
-    // Render breadcrumb chain only if multiple sources exist
-    if (sources.length > 1) {
-      const breadcrumbsRow = document.createElement('div');
-      breadcrumbsRow.className = 'citations-breadcrumbs';
-
-      sources.forEach((s, idx) => {
-        if (idx > 0) {
-          const separator = document.createElement('span');
-          separator.className = 'citation-breadcrumb-separator';
-          separator.innerHTML = ' &gt; ';
-          breadcrumbsRow.appendChild(separator);
-        }
-
-        const pill = document.createElement('button');
-        pill.type = 'button';
-        pill.className = 'citation-breadcrumb-item-chain';
-        pill.innerHTML = `source ${idx + 1}`;
-        pill.title = s.title || 'Untitled Source';
-
-        pill.addEventListener('click', () => {
-          const cardEl = container.querySelector(`#citation-card-${message.message_id}-${idx}`);
-          if (cardEl) {
-            cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            cardEl.classList.remove('highlight');
-            void cardEl.offsetWidth; // trigger reflow
-            cardEl.classList.add('highlight');
-          }
-        });
-        breadcrumbsRow.appendChild(pill);
-      });
-      container.appendChild(breadcrumbsRow);
-    }
-
-    const citationsContainer = document.createElement('div');
-    citationsContainer.className = 'citations-container';
-    citationsContainer.innerHTML = `<div class="citations-header-title">Source Citations (${sources.length})</div>`;
-
-    sources.forEach((s, idx) => {
-      const sourceNum = idx + 1;
-
-      // Citation Card
-      const card = document.createElement('div');
-      card.className = 'citation-card';
-      card.id = `citation-card-${message.message_id}-${idx}`;
-
-      let detailsHtml = '';
-      if (s.author) detailsHtml += `<span><strong>Author:</strong> ${escapeHTML(s.author)}</span>`;
-      if (s.filename) detailsHtml += `<span><strong>File:</strong> ${escapeHTML(s.filename)}</span>`;
-      if (s.sections) detailsHtml += `<span><strong>Sections:</strong> ${escapeHTML(s.sections)}</span>`;
-      if (s.subject) detailsHtml += `<span><strong>Subject:</strong> ${escapeHTML(s.subject)}</span>`;
-      if (s.doc_date) {
-        try {
-          const formattedDate = new Date(s.doc_date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-          detailsHtml += `<span><strong>Date:</strong> ${formattedDate}</span>`;
-        } catch (e) {
-          detailsHtml += `<span><strong>Date:</strong> ${escapeHTML(s.doc_date)}</span>`;
-        }
-      }
-
-      let openLinkHtml = '';
-      if (s.source_table && s.record_id) {
-        const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
-        openLinkHtml = `<a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(s.record_id)}${parentParam}&theme=${activeTheme}" target="_blank" class="open-citation-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="vertical-align: middle; margin-right: 3px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Citation</a>`;
-      }
-
-      card.innerHTML = `
-        <div class="citation-card-top-row">
-          <span class="citation-badge">Source [${sourceNum}] - ${escapeHTML(s.source_table || 'Article')}</span>
-          ${openLinkHtml}
-        </div>
-        <div class="citation-title">${escapeHTML(s.title || 'Untitled Document')}</div>
-        ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
-      `;
-
-      citationsContainer.appendChild(card);
-    });
-
-    container.appendChild(citationsContainer);
+  if (sources.length === 0) {
+    return;
   }
 
-  // Feedback Action Buttons (Copy, Helpful, Not Helpful)
+  const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
+  const citationsContainer = document.createElement('div');
+  citationsContainer.className = 'citations-container';
+  citationsContainer.innerHTML = `<div class="citations-header-title">Source Citations (${sources.length})</div>`;
+  citationsContainer._remainingSources = sources.slice(1);
+
+  citationsContainer._renderCitationCard = (s, idx) => {
+    const sourceNum = idx + 1;
+    const card = document.createElement('div');
+    card.className = 'citation-card';
+    card.id = `citation-card-${message.message_id}-${idx}`;
+    card.dataset.citationIndex = String(idx);
+
+    let detailsHtml = '';
+    const addDetail = (label, value) => {
+      if (value === null || value === undefined) {
+        detailsHtml += `<span><strong>${label}:</strong> N/A</span>`;
+      } else {
+        detailsHtml += `<span><strong>${label}:</strong> ${escapeHTML(String(value))}</span>`;
+      }
+    };
+
+    if (s.title) addDetail('Title', s.title);
+    if (s.category) addDetail('Category', s.category);
+    if (s.subject) addDetail('Subject', s.subject);
+    if (s.author) addDetail('Author', s.author);
+    if (s.sections) addDetail('Section', s.sections);
+    if (s.doc_date) {
+      try {
+        const formattedDate = new Date(s.doc_date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+        addDetail('Date', formattedDate);
+      } catch (e) {
+        addDetail('Date', s.doc_date);
+      }
+    }
+    if (s.vol) addDetail('Volume', s.vol);
+    if (s.issue_month || s.issue_year) {
+      const issueStr = [s.issue_month, s.issue_year].filter(Boolean).join(' ');
+      if (issueStr) addDetail('Issue', issueStr);
+    }
+
+    let openLinkHtml = '';
+    if (s.source_table && s.record_id) {
+      const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
+      openLinkHtml = `<a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(s.record_id)}${parentParam}&theme=${activeTheme}" target="_blank" class="open-citation-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="vertical-align: middle; margin-right: 3px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Citation</a>`;
+    }
+
+    card.innerHTML = `
+      <div class="citation-card-top-row">
+        <span class="citation-badge">Source [${sourceNum}]</span>
+        ${openLinkHtml}
+      </div>
+      <div class="citation-title" title="${escapeHTML(s.title || 'Untitled Document')}">${escapeHTML(s.title || 'Untitled Document')}</div>
+      ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
+    `;
+    return card;
+  };
+
+  citationsContainer.appendChild(citationsContainer._renderCitationCard(sources[0], 0));
+
+  if (sources.length > 1) {
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'citation-toggle-btn';
+    toggleBtn.setAttribute('aria-expanded', 'false');
+    toggleBtn.textContent = `Show ${sources.length - 1} More Sources`;
+    toggleBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const isExpanded = citationsContainer.dataset.expanded === 'true';
+      setCitationCardsExpanded(citationsContainer, !isExpanded);
+      requestAnimationFrame(() => {
+        scrollToBottom();
+      });
+    });
+    citationsContainer.appendChild(toggleBtn);
+    setCitationCardsExpanded(citationsContainer, false);
+  }
+
+  container.appendChild(citationsContainer);
+}
+
+
+function renderMessageActions(container, message) {
+  if (container.querySelector('.message-actions')) {
+    return;
+  }
+
   const actionsRow = document.createElement('div');
   actionsRow.className = 'message-actions';
 
@@ -588,12 +896,33 @@ function renderCitationsAndActions(container, message) {
     link.addEventListener('click', (e) => {
       e.preventDefault();
       const index = parseInt(link.getAttribute('data-citation-index'), 10) - 1;
+      // If the message metadata for sources contains a passage id, open citation page with passage anchor
+      const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
+      const src = sources[index];
+      if (src && src.source_table && src.record_id && src.passage_id) {
+        const parentParam = src.parent_id ? `&parentId=${encodeURIComponent(src.parent_id)}` : '';
+        const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(src.source_table)}&recordId=${encodeURIComponent(src.record_id)}${parentParam}&theme=${document.documentElement.getAttribute('data-theme') || 'light'}&highlight=${encodeURIComponent(src.passage_id)}`;
+        window.open(url, '_blank');
+        return;
+      }
+
+      const citationsContainer = container.querySelector('.citations-container');
+      if (!citationsContainer) return;
+
       const cardEl = container.querySelector(`#citation-card-${message.message_id}-${index}`);
       if (cardEl) {
-        cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        cardEl.classList.remove('highlight');
-        void cardEl.offsetWidth; // trigger reflow
-        cardEl.classList.add('highlight');
+        ensureCitationVisible(citationsContainer, cardEl);
+        return;
+      }
+
+      if (index > 0) {
+        setCitationCardsExpanded(citationsContainer, true);
+        requestAnimationFrame(() => {
+          const expandedCardEl = container.querySelector(`#citation-card-${message.message_id}-${index}`);
+          if (expandedCardEl) {
+            ensureCitationVisible(citationsContainer, expandedCardEl);
+          }
+        });
       }
     });
   });
@@ -606,22 +935,19 @@ function renderMessages() {
   const session = getCurrentSession();
   const messages = session ? getMessagesForSession(session.session_id) : [];
   chatWindow.innerHTML = '';
+  renderConversationTracker(messages);
 
   messages.forEach(message => {
     const wrapper = document.createElement('div');
     wrapper.className = 'message-bubble-wrapper';
+    wrapper.dataset.messageId = message.message_id;
+    wrapper.dataset.messageRole = message.role;
 
     const div = document.createElement('div');
     div.className = message.role === 'user' ? 'user-msg' : 'assistant-msg';
     wrapper.appendChild(div);
 
     if (message.role === 'assistant') {
-      const titleText = activeMode === 'rag' ? 'CLA Legal RAG Search' : 'CLA Online Legal Chatbot';
-      const titleDiv = document.createElement('div');
-      titleDiv.className = 'msg-title';
-      titleDiv.textContent = titleText;
-      div.appendChild(titleDiv);
-
       const contentDiv = document.createElement('div');
       contentDiv.className = 'assistant-text-content';
       div.appendChild(contentDiv);
@@ -638,100 +964,22 @@ function renderMessages() {
         const interval = setInterval(() => {
           currentLen += 3; // type 3 chars at a time for responsive speed
           if (currentLen >= rawText.length) {
-            contentDiv.innerHTML = formatMarkdown(rawText);
+            // Sanitize citations based on available sources for this message
+            const sourcesForMessage = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
+            const sanitized = sanitizeCitations(rawText, sourcesForMessage.length);
+            contentDiv.innerHTML = formatMarkdown(sanitized);
             contentDiv.classList.remove('streaming-cursor');
             clearInterval(interval);
 
-            renderCitationsAndActions(div, message);
-            // Render RAGAS evaluation metrics if present
-            const evaluation =
-              message.metadata && message.metadata.evaluation
-                ? message.metadata.evaluation
-                : null;
-
-            if (evaluation) {
-              const evaluationContainer = document.createElement('div');
-              evaluationContainer.className = 'ragas-evaluation-container';
-
-              const formatMetric = (value) => {
-                if (value === null || value === undefined) {
-                  return 'N/A';
-                }
-
-                return `${(Number(value) * 100).toFixed(1)}%`;
-              };
-
-              const getMetricClass = (value, inverse = false) => {
-                if (value === null || value === undefined) {
-                  return 'metric-unavailable';
-                }
-
-                const score = Number(value);
-
-                if (inverse) {
-                  if (score <= 0.2) return 'metric-good';
-                  if (score <= 0.5) return 'metric-medium';
-                  return 'metric-poor';
-                }
-
-                if (score >= 0.8) return 'metric-good';
-                if (score >= 0.5) return 'metric-medium';
-                return 'metric-poor';
-              };
-
-              evaluationContainer.innerHTML = `
-    <div class="ragas-header">
-      <span>RAGAS Evaluation</span>
-      <span class="ragas-status">
-        ${escapeHTML(evaluation.status || 'unknown')}
-      </span>
-    </div>
-
-    <div class="ragas-metrics-grid">
-      <div class="ragas-metric">
-        <span class="ragas-metric-label">Faithfulness</span>
-        <span class="ragas-metric-value ${getMetricClass(evaluation.faithfulness)}">
-          ${formatMetric(evaluation.faithfulness)}
-        </span>
-      </div>
-
-      <div class="ragas-metric">
-        <span class="ragas-metric-label">Answer Relevancy</span>
-        <span class="ragas-metric-value ${getMetricClass(evaluation.answer_relevancy)}">
-          ${formatMetric(evaluation.answer_relevancy)}
-        </span>
-      </div>
-
-      <div class="ragas-metric">
-        <span class="ragas-metric-label">Context Precision</span>
-        <span class="ragas-metric-value ${getMetricClass(evaluation.context_precision)}">
-          ${formatMetric(evaluation.context_precision)}
-        </span>
-      </div>
-
-      <div class="ragas-metric">
-        <span class="ragas-metric-label">Hallucination</span>
-        <span class="ragas-metric-value ${getMetricClass(evaluation.hallucination_score, true)}">
-          ${formatMetric(evaluation.hallucination_score)}
-        </span>
-      </div>
-
-      <div class="ragas-metric ragas-overall-metric">
-        <span class="ragas-metric-label">Overall Score</span>
-        <span class="ragas-metric-value ${getMetricClass(evaluation.overall_score)}">
-          ${formatMetric(evaluation.overall_score)}
-        </span>
-      </div>
-    </div>
-  `;
-
-              div.appendChild(evaluationContainer);
-            }
-            // Render suggested follow-ups after typing finishes
+            // Render in order: Citations, Follow-up Questions, Message Actions
+            renderSourceCitations(div, message);
             renderSuggestedFollowUps(div, message);
+            renderMessageActions(div, message);
             scrollToBottom();
           } else {
-            contentDiv.innerHTML = formatMarkdown(rawText.slice(0, currentLen));
+            const sourcesForMessage = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
+            const sanitizedPartial = sanitizeCitations(rawText.slice(0, currentLen), sourcesForMessage.length);
+            contentDiv.innerHTML = formatMarkdown(sanitizedPartial);
             scrollToBottom();
           }
         }, typingSpeed);
@@ -739,9 +987,13 @@ function renderMessages() {
         activeTypingIntervals.push(interval);
       } else {
         // Display immediately
-        contentDiv.innerHTML = formatMarkdown(message.content || '');
-        renderCitationsAndActions(div, message);
+        const sourcesForMessage = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
+        const sanitizedContent = sanitizeCitations(message.content || '', sourcesForMessage.length);
+        contentDiv.innerHTML = formatMarkdown(sanitizedContent);
+        // Render in order: Citations, Follow-up Questions, Message Actions
+        renderSourceCitations(div, message);
         renderSuggestedFollowUps(div, message);
+        renderMessageActions(div, message);
       }
     } else {
       const safeContent = escapeHTML(message.content || '');
@@ -766,31 +1018,44 @@ function renderMessages() {
 }
 
 function renderSuggestedFollowUps(container, message) {
-  const followUps = message.metadata && message.metadata.follow_up_questions ? message.metadata.follow_up_questions : [];
-  if (followUps.length) {
-    const followUpContainer = document.createElement('div');
-    followUpContainer.className = 'message-follow-ups';
+  const followUps = Array.isArray(message.metadata && message.metadata.follow_up_questions)
+    ? message.metadata.follow_up_questions
+    : [];
+  if (!followUps.length) {
+    return;
+  }
+
+  const followUpContainer = document.createElement('div');
+  followUpContainer.className = 'message-follow-ups';
 
     const titleDiv = document.createElement('div');
     titleDiv.className = 'follow-up-title';
-    titleDiv.textContent = 'Suggested follow-up questions:';
+    titleDiv.textContent = 'Suggested follow-up questions';
     followUpContainer.appendChild(titleDiv);
 
-    followUps.forEach(q => {
-      const btn = document.createElement('button');
-      btn.className = 'follow-up-btn';
-      btn.textContent = q;
-      btn.addEventListener('click', () => {
+    const chipsContainer = document.createElement('div');
+    chipsContainer.className = 'follow-up-chips-container';
+    
+    followUps.forEach((q, index) => {
+      const chip = document.createElement('button');
+      chip.className = 'follow-up-chip';
+      chip.innerHTML = `<span class="chip-number">${index + 1}</span><span class="chip-text">${escapeHTML(q)}</span>`;
+      chip.addEventListener('click', () => {
         if (!messageInput) return;
         messageInput.value = q;
         resizeTextArea();
         messageInput.focus();
         handleUserSend();
+        // Scroll to show new message after a small delay to ensure render
+        setTimeout(() => {
+          isAutoScrollEnabled = true;
+          scrollToBottom();
+        }, 100);
       });
-      followUpContainer.appendChild(btn);
+      chipsContainer.appendChild(chip);
     });
-    container.appendChild(followUpContainer);
-  }
+  followUpContainer.appendChild(chipsContainer);
+  container.appendChild(followUpContainer);
 }
 
 function updateSessionCounters(session) {
@@ -883,6 +1148,12 @@ async function selectSession(sessionId) {
   renderSessions();
   renderMessages();
   updateWelcomeCard();
+  
+  // Re-enable auto-scroll when switching sessions
+  isAutoScrollEnabled = true;
+  requestAnimationFrame(() => {
+    scrollToBottom();
+  });
 }
 
 function toggleSessionMenu(sessionId) {
@@ -914,81 +1185,7 @@ async function handleUserSend() {
     key: `${f.name}-${f.size}-${f.lastModified}`
   })) : [];
   
-  if (activeMode === 'rag') {
-    // RAG Mode stateless execution
-    const userMsg = {
-      message_id: 'user-' + Date.now(),
-      role: 'user',
-      content: text,
-      created_at: nowISO(),
-      metadata: { attachments: attachmentsMeta }
-    };
-    ragMessages.push(userMsg);
-
-    // Clear input fields immediately
-    messageInput.value = '';
-    resizeTextArea();
-    selectedFiles = [];
-    if (fileUpload) fileUpload.value = '';
-    renderAttachmentPreview();
-
-    const thinkingMessageId = 'thinking-' + Date.now();
-    const thinkingMsg = {
-      message_id: thinkingMessageId,
-      role: 'assistant',
-      content: 'CLA is searching legal database and generating grounded answer...',
-      created_at: nowISO(),
-      metadata: { isThinking: true }
-    };
-    ragMessages.push(thinkingMsg);
-    renderMessages();
-    updateWelcomeCard();
-
-    try {
-      const response = await fetch(`${getApiBaseUrl()}/api/ask`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ question: text })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      ragMessages = ragMessages.filter(m => m.message_id !== thinkingMessageId);
-      ragMessages.push({
-        message_id: 'assistant-' + Date.now(),
-        role: 'assistant',
-        content: data.answer || '',
-        created_at: nowISO(),
-        metadata: {
-          sources: data.sources || [],
-          evaluation: data.evaluation || null
-        }
-      });
-    } catch (error) {
-      console.error('RAG request failed:', error);
-      ragMessages = ragMessages.filter(m => m.message_id !== thinkingMessageId);
-      ragMessages.push({
-        message_id: 'error-' + Date.now(),
-        role: 'assistant',
-        content: 'I apologize, but I encountered an error while retrieving documents and generating answer. Please try again. Error: ' + error.message,
-        created_at: nowISO(),
-        metadata: { isError: true }
-      });
-    } finally {
-      isSendingMessage = false;
-      renderMessages();
-      updateWelcomeCard();
-    }
-    return;
-  }
-
-  // Add the user message locally first
+  // Add the user message locally first and preserve the generated message ID for later persistence.
   const userMsg = addMessage('user', text || '', { attachments: attachmentsMeta });
 
   // Clear input fields immediately
@@ -998,18 +1195,13 @@ async function handleUserSend() {
   if (fileUpload) fileUpload.value = '';
   renderAttachmentPreview();
 
-  // Add a temporary thinking message to show loading state
   const thinkingMessageId = 'thinking-' + Date.now();
   const sessionId = currentSessionId;
-  const thinkingText = activeMode === 'rag'
-    ? 'CLA is searching the legal database and generating a grounded answer...'
-    : 'CLA is analyzing your query and generating a response...';
-
   const thinkingMsg = {
     message_id: thinkingMessageId,
     session_id: sessionId,
     role: 'assistant',
-    content: thinkingText,
+    content: 'CLA is analyzing your query and generating a response...',
     created_at: nowISO(),
     metadata: { isThinking: true }
   };
@@ -1022,41 +1214,84 @@ async function handleUserSend() {
   updateWelcomeCard();
 
   try {
-    const payload = {
+    const response = await fetch(`${getApiBaseUrl()}/api/ask`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ question: text })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server returned status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const answerContent = data.answer || data.response || data.content || '';
+    const followUps = Array.isArray(data.follow_up_questions)
+      ? data.follow_up_questions
+      : (Array.isArray(data.followUpQuestions)
+        ? data.followUpQuestions
+        : (Array.isArray(data.suggestions)
+          ? data.suggestions
+          : (Array.isArray(data.followUps)
+            ? data.followUps
+            : [])));
+    const sources = data.sources || data.source || [];
+    const evaluation = data.evaluation || data.ragas_evaluation || null;
+    const route = data.route || null;
+    const searchResults = data.searchResults || data.search_results || [];
+
+    const persistPayload = {
+      message_id: userMsg.message_id,
       content: text || '',
-      metadata: { attachments: attachmentsMeta }
+      metadata: {
+        attachments: attachmentsMeta
+      },
+      assistantMessage: {
+        content: answerContent,
+        metadata: {
+          follow_up_questions: Array.isArray(followUps) ? followUps : [],
+          sources: Array.isArray(sources) ? sources : [],
+          evaluation,
+          route,
+          searchResults: Array.isArray(searchResults) ? searchResults : []
+        }
+      }
     };
 
-    // Call the backend API to generate response using the agent flow
-    const result = await sendMessageToSession(sessionId, payload);
-
-    // Remove the thinking message
+    const saveResult = await sendMessageToSession(sessionId, persistPayload);
     messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
 
-    // Push the finalized messages from backend
-    if (result.userMessage) {
+    if (saveResult.userMessage) {
       messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== userMsg.message_id);
-      messagesBySession[sessionId].push(result.userMessage);
+      messagesBySession[sessionId].push(saveResult.userMessage);
     }
-    if (result.assistantMessage) {
-      messagesBySession[sessionId].push(result.assistantMessage);
-      // Mark assistant response to animate/type it out
-      messagesToAnimate.add(result.assistantMessage.message_id);
+    if (saveResult.assistantMessage) {
+      messagesBySession[sessionId].push(saveResult.assistantMessage);
+      messagesToAnimate.add(saveResult.assistantMessage.message_id);
+    } else {
+      messagesBySession[sessionId].push({
+        message_id: 'assistant-' + Date.now(),
+        session_id: sessionId,
+        user_id: getCurrentUserId(),
+        role: 'assistant',
+        content: answerContent,
+        created_at: nowISO(),
+        metadata: persistPayload.assistantMessage.metadata
+      });
     }
 
-    // Update session info from database
     const session = getCurrentSession();
     if (session) {
       session.message_count = messagesBySession[sessionId].length;
       session.updated_at = nowISO();
-      const defaultTitle = activeMode === 'rag' ? 'New RAG Search' : 'New chat';
-      if (result.assistantMessage && (!session.title || session.title === defaultTitle || session.title === 'New chat')) {
+      if (session.title === 'New chat') {
         session.title = truncateTitle(text);
       }
     }
   } catch (error) {
     console.error('Failed to send message:', error);
-    // Replace thinking message with error description
     messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
     messagesBySession[sessionId].push({
       message_id: 'error-' + Date.now(),
@@ -1133,53 +1368,6 @@ newChatButton?.addEventListener('click', () => {
 
 uploadBtn?.addEventListener('click', () => {
   fileUpload?.click();
-});
-
-const chatModeTab = document.getElementById('chatModeTab');
-const ragModeTab = document.getElementById('ragModeTab');
-
-chatModeTab?.addEventListener('click', (e) => {
-  e.preventDefault();
-  if (activeMode === 'chat') return;
-  activeMode = 'chat';
-  chatModeTab.classList.add('active');
-  ragModeTab.classList.remove('active');
-
-  // Set title back
-  const pageTitle = document.querySelector('.chat-page-title');
-  if (pageTitle) pageTitle.textContent = 'CLA Legal Chatbot';
-
-  // Reload sessions for chat mode
-  initSession();
-
-  // Show sidebar
-  const chatPanel = document.getElementById('chatPanel');
-  if (chatPanel) chatPanel.style.display = '';
-
-  renderMessages();
-  updateWelcomeCard();
-});
-
-ragModeTab?.addEventListener('click', (e) => {
-  e.preventDefault();
-  if (activeMode === 'rag') return;
-  activeMode = 'rag';
-  ragModeTab.classList.add('active');
-  chatModeTab.classList.remove('active');
-
-  // Set title to RAG
-  const pageTitle = document.querySelector('.chat-page-title');
-  if (pageTitle) pageTitle.textContent = 'CLA Legal RAG Search';
-
-  // Reload sessions for RAG mode
-  initSession();
-
-  // Hide sidebar
-  const chatPanel = document.getElementById('chatPanel');
-  if (chatPanel) chatPanel.style.display = 'none';
-
-  renderMessages();
-  updateWelcomeCard();
 });
 
 function getFileKey(file) {
@@ -1259,6 +1447,8 @@ document.addEventListener('keydown', (event) => {
     }
   }
 });
+
+setupSidebarResizer();
 
 const deleteDialogOverlay = document.getElementById('deleteDialogOverlay');
 const deleteDialogTitle = document.getElementById('deleteDialogTitle');
@@ -1389,7 +1579,7 @@ function createSessionFromBackend(sessionData) {
   return {
     session_id: sessionData.session_id || generateId(),
     user_id: sessionData.user_id || getCurrentUserId(),
-    title: sessionData.title || (sessionData.mode === 'rag' ? 'New RAG Search' : 'New chat'),
+    title: sessionData.title || 'New chat',
     mode: sessionData.mode || 'chat',
     created_at: sessionData.created_at || nowISO(),
     updated_at: sessionData.updated_at || nowISO(),
@@ -1404,7 +1594,7 @@ async function fetchChatSessions() {
 
   try {
     const response = await fetch(
-      `${getApiBaseUrl()}/api/chat/sessions?mode=${activeMode}`,
+      `${getApiBaseUrl()}/api/chat/sessions`,
       {
         method: 'GET',
         headers: {
@@ -1521,6 +1711,9 @@ async function createChatSession(sessionPayload) {
 
 async function initSession() {
   try {
+    // Setup auto-scroll listener
+    setupAutoScrollListener();
+    
     const persistedSessions = await fetchChatSessions();
 
     if (persistedSessions.length > 0) {

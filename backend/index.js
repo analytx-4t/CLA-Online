@@ -10,6 +10,7 @@ const { connectDB, closeDB } = require('./mongoClient');
 const { getProviderHealth, settings } = require('./config');
 const { getLLMProvider } = require('./llm/factory');
 const { traceLLMGeneration } = require('./langsmith');
+const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./responseParser');
 
 let logfire;
 
@@ -112,7 +113,6 @@ async function ensureIndexes(db) {
     messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
   ]);
 }
-
 function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
   return new Promise((resolve, reject) => {
     let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
@@ -168,247 +168,368 @@ function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
     child.stdin.end();
   });
 }
-function runRagasEvaluation(question, answer, contexts) {
-  return new Promise((resolve) => {
-    const evaluationScript = path.join(
-      __dirname,
-      '..',
-      'evaluation',
-      'live_evaluator.py'
-    );
+function rerankSearchResults(query, results, topK = 5) {
+  if (!Array.isArray(results) || results.length === 0) {
+    return [];
+  }
 
-    function runPythonCitation(sourceTable, recordId, parentId = null) {
-      return new Promise((resolve, reject) => {
-        let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
-        if (!require('fs').existsSync(pythonPath)) {
-          pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
-        }
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'of', 'to', 'for',
+    'in', 'on', 'under', 'what', 'which', 'how', 'is',
+    'are', 'was', 'were', 'be', 'been', 'with', 'by',
+    'from', 'this', 'that'
+  ]);
 
-        const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
-        if (!require('fs').existsSync(scriptPath)) {
-          return reject(new Error(`search_documents.py not found at ${scriptPath}`));
-        }
+  const normalize = (value) =>
+    String(value || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
 
-        const child = spawn(pythonPath, [scriptPath, '--json']);
+  const queryText = normalize(query);
 
-        let stdout = '';
-        let stderr = '';
+  const queryTerms = [
+    ...new Set(
+      queryText
+        .split(' ')
+        .filter(term => term.length > 2 && !stopWords.has(term))
+    )
+  ];
 
-        child.stdout.on('data', (data) => {
-          stdout += data.toString();
-        });
+  // Extract legal section references such as:
+  // "Section 135", "section 188", etc.
+  const sectionMatches = [
+    ...queryText.matchAll(/\bsection\s+(\d+[a-z]?)\b/gi)
+  ];
 
-        child.stderr.on('data', (data) => {
-          stderr += data.toString();
-        });
+  const requestedSections = sectionMatches.map(match =>
+    match[1].toLowerCase()
+  );
 
-        child.on('error', (err) => {
-          reject(err);
-        });
+  const ranked = results.map((result, originalIndex) => {
+    const searchableText = normalize([
+      result.doc_title,
+      result.law_title,
+      result.category,
+      result.subject,
+      result.sections,
+      result.chunk_text
+    ].filter(Boolean).join(' '));
 
-        child.on('close', (code) => {
-          if (code !== 0) {
-            return reject(new Error(`Python process exited with code ${code}. Stderr: ${stderr}`));
-          }
-          try {
-            const result = JSON.parse(stdout);
-            if (result.error) {
-              return reject(new Error(result.error));
-            }
-            resolve(result);
-          } catch (err) {
-            reject(new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout}`));
-          }
-        });
+    let relevanceScore = 0;
 
-        const inputPayload = JSON.stringify({
-          action: "get_citation",
-          source_table: sourceTable,
-          record_id: parseInt(recordId, 10) || recordId,
-          parent_id: parentId ? (parseInt(parentId, 10) || parentId) : null
-        });
-
-        child.stdin.write(inputPayload);
-        child.stdin.end();
-      });
+    // Keyword overlap with the user's query.
+    for (const term of queryTerms) {
+      if (searchableText.includes(term)) {
+        relevanceScore += 1;
+      }
     }
 
-    function escapeHTML(str) {
-      if (!str) return '';
-      return str.toString()
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    }
-
-    function formatDocumentContent(rawText) {
-      if (!rawText) return '<p>No content available.</p>';
-
-      const trimmed = rawText.trim();
-      const hasHTML = /<[a-z][\s\S]*>/i.test(trimmed) && (
-        trimmed.includes('</') ||
-        trimmed.includes('/>') ||
-        trimmed.toLowerCase().includes('<br>') ||
-        trimmed.toLowerCase().includes('<p>')
+    // Strongly reward an exact requested legal section.
+    for (const section of requestedSections) {
+      const sectionPattern = new RegExp(
+        `\\bsection\\s+${section}\\b`,
+        'i'
       );
 
-      if (hasHTML) {
-        let bodyContent = rawText;
-        const bodyMatch = rawText.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-        if (bodyMatch) {
-          bodyContent = bodyMatch[1];
-        } else {
-          bodyContent = bodyContent.replace(/<head[^>]*>[\s\S]*?<\/head>/i, '');
-        }
-        bodyContent = bodyContent
-          .replace(/<html[^>]*>/gi, '')
-          .replace(/<\/html>/gi, '')
-          .replace(/<!doctype[^>]*>/gi, '')
-          .replace(/<link[^>]*>/gi, '')
-          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-
-        return bodyContent.trim();
+      if (sectionPattern.test(searchableText)) {
+        relevanceScore += 10;
       }
+    }
 
-      // Pre-process to separate glued paragraph boundaries
-      const preProcessed = rawText
-        .replace(/([.!?])([A-Z])/g, '$1\n$2')
-        .replace(/([.!?])(\d+(?:\.\d+)?\s+[A-Z])/g, '$1\n$2');
+    // Preserve the embedding system's own ordering as a
+    // secondary signal. Earlier results get a small bonus.
+    const retrievalRankBonus =
+      (results.length - originalIndex) / results.length;
 
-      const lines = preProcessed.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-      let htmlResult = '';
+    return {
+      ...result,
+      backend_relevance_score:
+        relevanceScore + retrievalRankBonus
+    };
+  });
 
-      let inFootnotes = false;
-      let inList = false;
+  ranked.sort(
+    (a, b) =>
+      b.backend_relevance_score -
+      a.backend_relevance_score
+  );
 
-      for (let idx = 0; idx < lines.length; idx++) {
-        let line = lines[idx].trim();
-        if (!line) continue;
+  const bestScore =
+    ranked[0]?.backend_relevance_score || 0;
 
-        // Detect Footnotes/References section at the end of document
-        const isFootnote = line.startsWith('*') || /^\d+\s+[a-zA-Z\[]/.test(line) || /^\d+\s+See\s+/.test(line);
+  // Keep results that are reasonably close to the strongest
+  // backend relevance score. This prevents unrelated documents
+  // from being included merely to fill the requested topK.
+  const minimumRelativeScore = bestScore * 0.5;
 
-        if (isFootnote && idx > lines.length * 0.6) {
-          if (!inFootnotes) {
-            if (inList) {
-              htmlResult += '</ul>';
-              inList = false;
-            }
-            htmlResult += '<div class="footnotes-section" style="margin-top: 40px; padding-top: 20px; border-top: 1px dashed var(--border);">';
-            htmlResult += '<h4 style="font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px;">References / Footnotes</h4>';
-            inFootnotes = true;
-          }
+  const relevantResults = ranked.filter(
+    result =>
+      result.backend_relevance_score >= minimumRelativeScore
+  );
 
-          htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
-          continue;
+  return relevantResults.slice(0, topK);
+}
+
+function runPythonCitation(sourceTable, recordId, parentId = null) {
+  return new Promise((resolve, reject) => {
+    let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
+    if (!require('fs').existsSync(pythonPath)) {
+      pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
+    }
+
+    const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
+    if (!require('fs').existsSync(scriptPath)) {
+      return reject(new Error(`search_documents.py not found at ${scriptPath}`));
+    }
+
+    const child = spawn(pythonPath, [scriptPath, '--json']);
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('error', (err) => {
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(`Python process exited with code ${code}. Stderr: ${stderr}`));
+      }
+      try {
+        const result = JSON.parse(stdout);
+        if (result.error) {
+          return reject(new Error(result.error));
         }
+        resolve(result);
+      } catch (err) {
+        reject(new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout}`));
+      }
+    });
 
-        if (inFootnotes) {
-          htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
-          continue;
-        }
+    const inputPayload = JSON.stringify({
+      action: "get_citation",
+      source_table: sourceTable,
+      record_id: parseInt(recordId, 10) || recordId,
+      parent_id: parentId ? (parseInt(parentId, 10) || parentId) : null
+    });
 
-        const isBulletMarker = line.startsWith('-') || line.startsWith('•') || line.startsWith('*') ||
-          /^[a-z0-9]\)\s+/i.test(line) || /^\([a-z0-9]\)\s+/i.test(line);
+    child.stdin.write(inputPayload);
+    child.stdin.end();
+  });
+}
 
-        let shouldBeListItem = isBulletMarker;
-        if (!shouldBeListItem && idx > 0) {
-          const prevLine = lines[idx - 1].trim();
-          if (prevLine.endsWith(':') && line.length < 150) {
-            shouldBeListItem = true;
-          } else if (inList && line.length < 150 && !/^\d+\.\s+/.test(line)) {
-            shouldBeListItem = true;
-          }
-        }
+function escapeHTML(str) {
+  if (!str) return '';
+  return str.toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
-        if (shouldBeListItem) {
-          if (!inList) {
-            htmlResult += '<ul style="margin-bottom: 1.6em; padding-left: 24px;">';
-            inList = true;
-          }
-          const cleaned = line
-            .replace(/^[-•*]\s*/, '')
-            .replace(/^[a-z0-9]\)\s+/i, '')
-            .replace(/^\([a-z0-9]\)\s+/i, '');
-          htmlResult += `<li style="margin-bottom: 0.5em; font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.7; color: var(--text);">${escapeHTML(cleaned)}</li>`;
-          continue;
-        }
+function formatDocumentContent(rawText) {
+  if (!rawText) return '<p>No content available.</p>';
 
+  const trimmed = rawText.trim();
+  const hasHTML = /<[a-z][\s\S]*>/i.test(trimmed) && (
+    trimmed.includes('</') ||
+    trimmed.includes('/>') ||
+    trimmed.toLowerCase().includes('<br>') ||
+    trimmed.toLowerCase().includes('<p>')
+  );
+
+  if (hasHTML) {
+    let bodyContent = rawText;
+    const bodyMatch = rawText.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    if (bodyMatch) {
+      bodyContent = bodyMatch[1];
+    } else {
+      bodyContent = bodyContent.replace(/<head[^>]*>[\s\S]*?<\/head>/i, '');
+    }
+    bodyContent = bodyContent
+      .replace(/<html[^>]*>/gi, '')
+      .replace(/<\/html>/gi, '')
+      .replace(/<!doctype[^>]*>/gi, '')
+      .replace(/<link[^>]*>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+
+    return bodyContent.trim();
+  }
+
+  // Pre-process to separate glued paragraph boundaries
+  const preProcessed = rawText
+    .replace(/([.!?])([A-Z])/g, '$1\n$2')
+    .replace(/([.!?])(\d+(?:\.\d+)?\s+[A-Z])/g, '$1\n$2');
+
+  const lines = preProcessed.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  let htmlResult = '';
+
+  let inFootnotes = false;
+  let inList = false;
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    let line = lines[idx].trim();
+    if (!line) continue;
+
+    // Detect Footnotes/References section at the end of document
+    const isFootnote = line.startsWith('*') || /^\d+\s+[a-zA-Z\[]/.test(line) || /^\d+\s+See\s+/.test(line);
+
+    if (isFootnote && idx > lines.length * 0.6) {
+      if (!inFootnotes) {
         if (inList) {
           htmlResult += '</ul>';
           inList = false;
         }
-
-        const isAllUpper = line.length < 150 && line === line.toUpperCase() && /[A-Z]/.test(line);
-        const isNumberHeader = line.length < 120 && (/^\d+\.\s+[A-Z]/i.test(line) || /^[IVXLCDM]+\.\s+[A-Z]/i.test(line));
-        const isShortNoPeriod = line.length < 100 && !line.endsWith('.');
-        const isDocHeaderLine = idx < 3 && line.length < 120;
-
-        if (isAllUpper || isNumberHeader || isShortNoPeriod || isDocHeaderLine) {
-          let level = 3;
-          if (idx === 0) {
-            level = 2;
-          } else if (isAllUpper && line.length < 60) {
-            level = 2;
-          }
-
-          htmlResult += `<h${level} style="font-family: var(--font-sans); font-weight: 700; color: var(--text); margin-top: 1.6em; margin-bottom: 0.6em; line-height: 1.3;">${escapeHTML(line)}</h${level}>`;
-        } else {
-          let formattedLine = escapeHTML(line);
-          formattedLine = formattedLine.replace(/^(\d+(?:\.\d+)?\s+)/, '<strong>$1</strong>');
-
-          if ((line.startsWith('“') && line.endsWith('”')) || (line.startsWith('"') && line.endsWith('"')) || (line.startsWith('‘') && line.endsWith('’')) || (line.startsWith("'") && line.endsWith("'"))) {
-            htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em; font-style: italic; padding-left: 20px; border-left: 3px solid var(--primary-light);">${formattedLine}</p>`;
-          } else {
-            htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em;">${formattedLine}</p>`;
-          }
-        }
+        htmlResult += '<div class="footnotes-section" style="margin-top: 40px; padding-top: 20px; border-top: 1px dashed var(--border);">';
+        htmlResult += '<h4 style="font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px;">References / Footnotes</h4>';
+        inFootnotes = true;
       }
 
-      if (inList) {
-        htmlResult += '</ul>';
-      }
-      if (inFootnotes) {
-        htmlResult += '</div>';
-      }
-
-      return htmlResult;
+      htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
+      continue;
     }
 
-    function renderCitationHTML(data, theme = 'light') {
-      const title = escapeHTML(data.title || 'Untitled Document');
-      const sourceTable = escapeHTML(data.source_table || '');
-      const recordId = escapeHTML(data.record_id || '');
+    if (inFootnotes) {
+      htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
+      continue;
+    }
 
-      const child = data.child || {};
-      const parent = data.parent || {};
+    const isBulletMarker = line.startsWith('-') || line.startsWith('•') || line.startsWith('*') ||
+      /^[a-z0-9]\)\s+/i.test(line) || /^\([a-z0-9]\)\s+/i.test(line);
 
-      const fileName = escapeHTML(child.FileName || parent.FileName || 'Unknown');
-      const category = escapeHTML(child.Category || parent.Category || 'Unknown');
-      const subject = escapeHTML(child.Subject || parent.Subject || 'Unknown');
-      const sections = escapeHTML(child.Sections || parent.Sections || 'Unknown');
-      const author = escapeHTML(parent.Author || 'Unknown');
-      const issueYear = escapeHTML(parent.IssueYear || '');
-      const issueMonth = escapeHTML(parent.IssueMonth || '');
-      const docDate = escapeHTML(parent.DocDate || child.DocDate || '');
+    let shouldBeListItem = isBulletMarker;
+    if (!shouldBeListItem && idx > 0) {
+      const prevLine = lines[idx - 1].trim();
+      if (prevLine.endsWith(':') && line.length < 150) {
+        shouldBeListItem = true;
+      } else if (inList && line.length < 150 && !/^\d+\.\s+/.test(line)) {
+        shouldBeListItem = true;
+      }
+    }
 
-      let formattedDate = 'Unknown';
-      if (docDate) {
-        try {
-          formattedDate = new Date(docDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-        } catch (e) {
-          formattedDate = docDate;
-        }
-      } else if (issueMonth || issueYear) {
-        formattedDate = `${issueMonth} ${issueYear}`.trim();
+    if (shouldBeListItem) {
+      if (!inList) {
+        htmlResult += '<ul style="margin-bottom: 1.6em; padding-left: 24px;">';
+        inList = true;
+      }
+      const cleaned = line
+        .replace(/^[-•*]\s*/, '')
+        .replace(/^[a-z0-9]\)\s+/i, '')
+        .replace(/^\([a-z0-9]\)\s+/i, '');
+      htmlResult += `<li style="margin-bottom: 0.5em; font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.7; color: var(--text);">${escapeHTML(cleaned)}</li>`;
+      continue;
+    }
+
+    if (inList) {
+      htmlResult += '</ul>';
+      inList = false;
+    }
+
+    const isAllUpper = line.length < 150 && line === line.toUpperCase() && /[A-Z]/.test(line);
+    const isNumberHeader = line.length < 120 && (/^\d+\.\s+[A-Z]/i.test(line) || /^[IVXLCDM]+\.\s+[A-Z]/i.test(line));
+    const isShortNoPeriod = line.length < 100 && !line.endsWith('.');
+    const isDocHeaderLine = idx < 3 && line.length < 120;
+
+    if (isAllUpper || isNumberHeader || isShortNoPeriod || isDocHeaderLine) {
+      let level = 3;
+      if (idx === 0) {
+        level = 2;
+      } else if (isAllUpper && line.length < 60) {
+        level = 2;
       }
 
-      const docContent = formatDocumentContent(data.html);
-      const isDark = theme === 'dark';
+      htmlResult += `<h${level} style="font-family: var(--font-sans); font-weight: 700; color: var(--text); margin-top: 1.6em; margin-bottom: 0.6em; line-height: 1.3;">${escapeHTML(line)}</h${level}>`;
+    } else {
+      let formattedLine = escapeHTML(line);
+      formattedLine = formattedLine.replace(/^(\d+(?:\.\d+)?\s+)/, '<strong>$1</strong>');
 
-      return `<!DOCTYPE html>
+      // Assign a stable passage id for each paragraph so front-end can deep-link
+      const passageId = `p-${idx}-${Math.abs(hashCode(line)).toString(36)}`;
+      if ((line.startsWith('“') && line.endsWith('”')) || (line.startsWith('"') && line.endsWith('"')) || (line.startsWith('‘') && line.endsWith('’')) || (line.startsWith("'") && line.endsWith("'"))) {
+        htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em; font-style: italic; padding-left: 20px; border-left: 3px solid var(--primary-light);">${formattedLine}</p>`;
+      } else {
+        htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em;">${formattedLine}</p>`;
+      }
+    }
+  }
+
+  if (inList) {
+    htmlResult += '</ul>';
+  }
+  if (inFootnotes) {
+    htmlResult += '</div>';
+  }
+
+  return htmlResult;
+}
+
+// Simple string hash for generating stable ids
+function hashCode(str) {
+  let hash = 0;
+  if (!str) return hash;
+  for (let i = 0; i < str.length; i++) {
+    const chr = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + chr;
+    hash |= 0; // Convert to 32bit integer
+  }
+  return hash;
+}
+
+function highlightTextInHtml(html, query) {
+  if (!html || !query) return html;
+  const safeQuery = String(query).trim();
+  if (!safeQuery) return html;
+  const escapedQuery = safeQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`(${escapedQuery})`, 'ig');
+  return html.replace(/>([^<]+)</g, (match, content) => {
+    const highlighted = content.replace(pattern, '<mark>$1</mark>');
+    return `>${highlighted}<`;
+  });
+}
+
+function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
+  const title = escapeHTML(data.title || 'Untitled Document');
+  const sourceTable = escapeHTML(data.source_table || '');
+  const recordId = escapeHTML(data.record_id || '');
+
+  const child = data.child || {};
+  const parent = data.parent || {};
+
+  const fileName = escapeHTML(child.FileName || parent.FileName || 'N/A');
+  const category = escapeHTML(child.Category || parent.Category || 'N/A');
+  const subject = escapeHTML(child.Subject || parent.Subject || 'N/A');
+  const sections = escapeHTML(child.Sections || parent.Sections || 'N/A');
+  const author = escapeHTML(parent.Author || 'N/A');
+  const issueYear = escapeHTML(parent.IssueYear || '');
+  const issueMonth = escapeHTML(parent.IssueMonth || '');
+  const docDate = escapeHTML(parent.DocDate || child.DocDate || '');
+
+  let formattedDate = 'N/A';
+  if (docDate) {
+    try {
+      formattedDate = new Date(docDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+    } catch (e) {
+      formattedDate = docDate;
+    }
+  } else if (issueMonth || issueYear) {
+    formattedDate = `${issueMonth} ${issueYear}`.trim();
+  }
+
+  const docContent = highlightTextInHtml(formatDocumentContent(data.html), highlightQuery);
+  const highlightBanner = highlightQuery ? `<div class="highlight-banner" id="highlight-banner">Highlighted passage: <strong>${escapeHTML(highlightQuery)}</strong></div>` : '';
+
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -418,17 +539,45 @@ function runRagasEvaluation(question, answer, contexts) {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
   <style>
-    :root {
-      --bg: ${isDark ? '#111111' : '#f7f7f7'};
-      --surface: ${isDark ? '#151515' : '#ffffff'};
-      --text: ${isDark ? '#fdfdfd' : '#111111'};
-      --muted: ${isDark ? '#A3A3A3' : '#6e6e6e'};
-      --border: ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)'};
+    /* ============================================================================
+       CITATION PAGE THEME SYSTEM - COMPLETELY INDEPENDENT
+       Uses class-based theming: body.light-theme or body.dark-theme
+       Storage key: citation-theme (independent from chat page)
+       ========================================================================== */
+
+    /* ============================================================================
+       LIGHT THEME VARIABLES
+       ========================================================================== */
+    body.light-theme {
+      --bg: #f7f7f7;
+      --surface: #ffffff;
+      --text: #111111;
+      --muted: #6e6e6e;
+      --border: rgba(0,0,0,0.08);
       --primary: #0C8742;
-      --primary-light: ${isDark ? 'rgba(12, 135, 66, 0.06)' : 'rgba(12, 135, 66, 0.08)'};
+      --primary-light: rgba(12, 135, 66, 0.08);
       --font-sans: 'Inter', sans-serif;
       --font-serif: 'Lora', Georgia, serif;
     }
+
+    /* ============================================================================
+       DARK THEME VARIABLES
+       ========================================================================== */
+    body.dark-theme {
+      --bg: #111111;
+      --surface: #151515;
+      --text: #fdfdfd;
+      --muted: #A3A3A3;
+      --border: rgba(255,255,255,0.06);
+      --primary: #0C8742;
+      --primary-light: rgba(12, 135, 66, 0.06);
+      --font-sans: 'Inter', sans-serif;
+      --font-serif: 'Lora', Georgia, serif;
+    }
+
+    /* ============================================================================
+       RESET & BASE STYLES
+       ========================================================================== */
 
     * {
       box-sizing: border-box;
@@ -445,9 +594,12 @@ function runRagasEvaluation(question, answer, contexts) {
       margin: 0;
       position: relative;
       min-height: 100vh;
+      transition: background-color 0.3s ease, color 0.3s ease;
     }
 
-    /* Courthouse Background Image & Tint */
+    /* ============================================================================
+       BACKGROUND IMAGE & OVERLAY - REACTIVE TO THEME
+       ========================================================================== */
     .chat-background-image {
       position: fixed;
       inset: 0;
@@ -457,7 +609,15 @@ function runRagasEvaluation(question, answer, contexts) {
       background-size: cover;
       pointer-events: none;
       z-index: 0;
-      opacity: ${isDark ? '0.12' : '0.4'};
+      transition: opacity 0.3s ease;
+    }
+
+    body.light-theme .chat-background-image {
+      opacity: 0.4;
+    }
+
+    body.dark-theme .chat-background-image {
+      opacity: 0.12;
     }
 
     .chat-background-tint {
@@ -465,7 +625,15 @@ function runRagasEvaluation(question, answer, contexts) {
       inset: 0;
       pointer-events: none;
       z-index: 1;
-      background: ${isDark ? 'rgba(0, 0, 0, 0.72)' : 'transparent'};
+      transition: background 0.3s ease;
+    }
+
+    body.light-theme .chat-background-tint {
+      background: transparent;
+    }
+
+    body.dark-theme .chat-background-tint {
+      background: rgba(0, 0, 0, 0.72);
     }
 
     /* Premium Top Header */
@@ -519,6 +687,33 @@ function runRagasEvaluation(question, answer, contexts) {
       padding: 40px;
       border-bottom: 1px solid var(--border);
       background: linear-gradient(to bottom right, var(--surface), var(--bg));
+    }
+
+    .highlight-banner {
+      margin-bottom: 18px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(12, 135, 66, 0.22);
+      background: rgba(12, 135, 66, 0.08);
+      color: var(--primary);
+      font-size: 0.92rem;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.25s ease;
+    }
+
+    .highlight-banner.is-active {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 18px rgba(12, 135, 66, 0.12);
+    }
+
+    .highlight-banner mark {
+      background: rgba(12, 135, 66, 0.18);
+      color: inherit;
+      padding: 0 2px;
+      border-radius: 4px;
     }
 
     .badge-row {
@@ -667,6 +862,54 @@ function runRagasEvaluation(question, answer, contexts) {
       border-top: 1px solid var(--border);
     }
 
+    /* Theme toggle button styling */
+    #themeToggleBtn, .navbar-theme-btn {
+      width: 40px;
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 1rem;
+      transition: all 0.2s ease;
+    }
+
+    #themeToggleBtn:hover, .navbar-theme-btn:hover {
+      border-color: rgba(12,135,66,0.16);
+      background: rgba(12,135,66,0.04);
+    }
+
+    #themeToggleBtn:active, .navbar-theme-btn:active {
+      transform: scale(0.95);
+    }
+
+    /* Citation page scrollbars - themed */
+    body::-webkit-scrollbar, .content-body::-webkit-scrollbar {
+      width: 12px;
+    }
+
+    body::-webkit-scrollbar-track, .content-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    body::-webkit-scrollbar-thumb, .content-body::-webkit-scrollbar-thumb {
+      background: rgba(12,135,66,0.28);
+      border-radius: 999px;
+    }
+
+    body::-webkit-scrollbar-thumb:hover, .content-body::-webkit-scrollbar-thumb:hover {
+      background: rgba(12,135,66,0.4);
+    }
+
+    body {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(12,135,66,0.28) transparent;
+    }
+
     .btn {
       display: inline-flex;
       align-items: center;
@@ -779,11 +1022,13 @@ function runRagasEvaluation(question, answer, contexts) {
       <img src="/assets/Images/logo.png" alt="CLA Corporate Law Adviser">
       <span>CLA Online Legal Database</span>
     </div>
+    <button class="navbar-theme-btn" id="themeToggleBtn" type="button">☀</button>
   </header>
 
   <div class="main-container">
     <div class="document-card">
       <div class="header-bar">
+        ${highlightBanner}
         <div class="badge-row">
           <span class="badge primary-badge">${sourceTable}</span>
         </div>
@@ -824,15 +1069,186 @@ function runRagasEvaluation(question, answer, contexts) {
       </div>
       
       <div class="footer-actions">
-        <button class="btn btn-secondary" onclick="window.close()">Close Tab</button>
+        <div>
+          <button class="btn btn-secondary" onclick="window.history.back()">← Back to AI Chatbot</button>
+        </div>
         <div class="footer-note">CLA Online - Verified Grounded Database Source</div>
+        <div></div>
       </div>
     </div>
   </div>
-</body>
-</html>`;
+
+  <script>
+    /**
+     * =========================================================================
+     * CITATION PAGE THEME MANAGER - COMPLETELY INDEPENDENT
+     * =========================================================================
+     * This theme system is completely self-contained and independent.
+     * - Uses dedicated localStorage key: 'citation-theme'
+     * - Uses class-based theming: body.light-theme / body.dark-theme
+     * - NO dependency on chat page, parent, iframe, or shared state
+     * - Manages all theme initialization and toggling
+     * =========================================================================
+     */
+
+    class CitationThemeManager {
+      constructor() {
+        this.STORAGE_KEY = 'citation-theme';
+        this.LIGHT_THEME = 'light';
+        this.DARK_THEME = 'dark';
+        this.DEFAULT_THEME = this.LIGHT_THEME;
+        this.themeToggleBtn = document.getElementById('themeToggleBtn');
+        this.currentTheme = null;
+      }
+
+      /**
+       * Initialize theme on page load
+       */
+      init() {
+        // Read stored theme or use default
+        this.currentTheme = this.getSavedTheme();
+        
+        // Apply theme immediately (before page renders to avoid flash)
+        this.applyTheme(this.currentTheme);
+        
+        // Attach event listener to theme toggle button
+        if (this.themeToggleBtn) {
+          this.themeToggleBtn.addEventListener('click', () => this.handleToggleClick());
+        }
+
+        // Optional: Listen for changes from other tabs (independent theme only)
+        window.addEventListener('storage', (event) => {
+          if (event.key === this.STORAGE_KEY && event.newValue) {
+            this.currentTheme = event.newValue;
+            this.applyTheme(this.currentTheme);
+          }
+        });
+      }
+
+      /**
+       * Get saved theme from localStorage
+       * @returns {string} 'light' or 'dark'
+       */
+      getSavedTheme() {
+        const saved = localStorage.getItem(this.STORAGE_KEY);
+        
+        // Return saved theme if valid
+        if (saved === this.LIGHT_THEME || saved === this.DARK_THEME) {
+          return saved;
+        }
+
+        // Fall back to default
+        return this.DEFAULT_THEME;
+      }
+
+      /**
+       * Apply theme to the page
+       * @param {string} theme - 'light' or 'dark'
+       */
+      applyTheme(theme) {
+        const isDark = theme === this.DARK_THEME;
+        const isLight = theme === this.LIGHT_THEME;
+
+        // Update body class
+        if (isDark) {
+          document.body.classList.remove(this.LIGHT_THEME);
+          document.body.classList.add(this.DARK_THEME);
+        } else if (isLight) {
+          document.body.classList.remove(this.DARK_THEME);
+          document.body.classList.add(this.LIGHT_THEME);
+        }
+
+        // Update button icon to show next theme (opposite of current)
+        if (this.themeToggleBtn) {
+          this.themeToggleBtn.textContent = isDark ? '☀' : '☾';
+          this.themeToggleBtn.setAttribute('aria-label', 
+            isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'
+          );
+        }
+
+        // Store the current theme
+        this.currentTheme = theme;
+        localStorage.setItem(this.STORAGE_KEY, theme);
+      }
+
+      /**
+       * Handle toggle button click
+       */
+      handleToggleClick() {
+        const nextTheme = this.currentTheme === this.DARK_THEME 
+          ? this.LIGHT_THEME 
+          : this.DARK_THEME;
+        
+        this.applyTheme(nextTheme);
+      }
+
+      /**
+       * Get current theme
+       * @returns {string}
+       */
+      getTheme() {
+        return this.currentTheme;
+      }
+
+      /**
+       * Check if dark mode is active
+       * @returns {boolean}
+       */
+      isDarkMode() {
+        return this.currentTheme === this.DARK_THEME;
+      }
     }
 
+    // Initialize theme manager as soon as DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        const themeManager = new CitationThemeManager();
+        themeManager.init();
+        window.citationThemeManager = themeManager; // Expose for debugging
+      });
+    } else {
+      const themeManager = new CitationThemeManager();
+      themeManager.init();
+      window.citationThemeManager = themeManager;
+    }
+
+    // Handle highlight functionality (unrelated to theme, but preserve existing behavior)
+    window.addEventListener('load', function() {
+      const highlightBanner = document.getElementById('highlight-banner');
+      if (highlightBanner) {
+        highlightBanner.classList.add('is-active');
+        highlightBanner.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+
+      // Handle passage ID highlighting from URL params
+      const urlParams = new URLSearchParams(window.location.search || '');
+      const passageId = urlParams.get('highlight') || '';
+      if (passageId) {
+        const selector = "[data-passage-id='" + passageId.replace(/[^a-zA-Z0-9-_:.]/g, '') + "']";
+        const target = document.querySelector(selector);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          target.classList.add('persistent-highlight');
+          const removeHighlight = () => {
+            target.classList.remove('persistent-highlight');
+            window.removeEventListener('click', removeHighlight);
+          };
+          setTimeout(() => window.addEventListener('click', removeHighlight), 200);
+        }
+      }
+    });
+  </script>
+</body>
+</html>`;
+}
+function runRagasEvaluation(question, answer, contexts) {
+  return new Promise((resolve) => {
+    const evaluationScript = path.join(
+      __dirname,
+      '..',
+      'evaluation',
+      'live_evaluator.py'
+    );
     const evaluationPython = path.join(
       __dirname,
       '..',
@@ -970,6 +1386,7 @@ async function startServer() {
           const sourceTable = urlParsed.searchParams.get('sourceTable');
           const recordId = urlParsed.searchParams.get('recordId');
           const parentId = urlParsed.searchParams.get('parentId');
+          const highlight = urlParsed.searchParams.get('highlight') || '';
           const theme = urlParsed.searchParams.get('theme') || 'light';
 
           if (!sourceTable || !recordId) {
@@ -986,7 +1403,7 @@ async function startServer() {
             return;
           }
 
-          const htmlResponse = renderCitationHTML(citationData, theme);
+          const htmlResponse = renderCitationHTML(citationData, theme, highlight);
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(htmlResponse);
         } catch (error) {
@@ -1075,9 +1492,114 @@ async function startServer() {
 
           console.log(`[RAG Endpoint] Received question: "${question.trim()}"`);
 
-          let results;
+          // Run guardrails early to avoid expensive operations for blocked requests.
           try {
-            results = await runPythonSearch(question, 5, true);
+            const { checkGuardrails } = require('./guardrails');
+            const guard = await checkGuardrails(question.trim());
+            if (guard) {
+              console.log('[NeMo Guardrails] Action:', guard.action, 'Category:', guard.category);
+              if (guard.action === 'RESPOND') {
+                console.log('[RAG Endpoint] Guardrail handled request. Skipping retrieval and generation.');
+                setJsonHeaders(res, 200);
+                res.end(JSON.stringify({
+                  answer: guard.response || 'Your request cannot be processed.',
+                  route: guard.route || guard.category || 'REFUSE',
+                  guardrail: {
+                    triggered: true,
+                    category: guard.category || guard.route
+                  },
+                  suggestions: [],
+                  sources: [],
+                  searchResults: [],
+                  evaluation: null
+                }));
+                return;
+              }
+            }
+          } catch (gErr) {
+            console.error('[RAG Endpoint] Guardrails error:', gErr?.message || gErr);
+            setJsonHeaders(res, 500);
+            res.end(JSON.stringify({ error: 'Guardrails check failed.' }));
+            return;
+          }
+          let results;
+
+          try {
+            // ----------------------------------------------------------
+            // Query Expansion Agent
+            // ----------------------------------------------------------
+            // Expand the user's legal query before retrieval.
+            // If expansion fails, expandLegalQuery() safely falls back
+            // to the original user question.
+            const { expandLegalQuery } = require('./agentSystem');
+
+            const queryExpansion = await expandLegalQuery(
+              question.trim()
+            );
+
+            const expandedQuery =
+              queryExpansion.expandedQuery || question.trim();
+
+            const expansionKeywords =
+              Array.isArray(queryExpansion.keywords)
+                ? queryExpansion.keywords
+                : [];
+
+            console.log(
+              '[RAG Endpoint] Query expansion result:',
+              {
+                originalQuery: question.trim(),
+                expandedQuery,
+                keywords: expansionKeywords,
+                suggestedFilters:
+                  queryExpansion.suggestedFilters || ''
+              }
+            );
+
+            // Build a retrieval query using the expanded legal query
+            // together with the extracted legal keywords.
+            const retrievalQuery = [
+              expandedQuery,
+              ...expansionKeywords
+            ]
+              .filter(Boolean)
+              .join(' ');
+
+            console.log(
+              `[RAG Endpoint] Retrieval query: "${retrievalQuery}"`
+            );
+
+            // Existing embedding search remains completely unchanged.
+            const candidateResults = await runPythonSearch(
+              retrievalQuery,
+              15,
+              true
+            );
+
+            // Rerank against the ORIGINAL user question.
+            // This prevents query expansion from changing the user's intent.
+            results = rerankSearchResults(
+              question,
+              candidateResults,
+              5
+            );
+
+            console.log(
+              `[RAG Endpoint] Retrieved ${candidateResults.length} candidates and reranked to ${results.length} results.`
+            );
+
+            console.log(
+              '[RAG Endpoint] Backend reranked results:',
+              results.map((result, index) => ({
+                rank: index + 1,
+                title: result.doc_title || 'Untitled',
+                sections: result.sections || null,
+                backend_relevance_score:
+                  result.backend_relevance_score,
+                retrieval_score:
+                  result.score || result.rrf_score || null
+              }))
+            );
           } catch (searchErr) {
             console.error('[RAG Endpoint] Search execution failed:', searchErr);
             setJsonHeaders(res, 500);
@@ -1185,17 +1707,49 @@ What is the penalty for violating this provision?`;
           }
           console.log('[RAG Endpoint] Answer generated successfully.');
 
-          // Extract suggestions
-          const sugIndex = answerText.indexOf('---SUGGESTIONS---');
-          if (sugIndex !== -1) {
-            const sugPart = answerText.slice(sugIndex + '---SUGGESTIONS---'.length);
-            answerText = answerText.slice(0, sugIndex).trim();
-            suggestions = sugPart
-              .split('\n')
-              .map(line => line.trim().replace(/^-\s*/, '').replace(/^\d+\.\s*/, ''))
-              .filter(line => line.length > 0 && !line.includes('---'));
-          }
+          const parsedResponse =
+            parseAnswerAndSuggestions(answerText);
 
+          answerText = parsedResponse.answer;
+          suggestions = parsedResponse.suggestions;
+
+          console.log(
+            `[RAG Endpoint] Extracted ${suggestions.length} suggestions.`
+          );
+          // Build retrieved contexts for RAGAS evaluation
+          const ragasContexts = results
+            .map(r => r.chunk_text || r.content || r.text || '')
+            .filter(context => context && context.trim());
+
+          // Run live RAGAS evaluation
+          let evaluation;
+
+          try {
+            console.log(
+              `[RAGAS] Starting evaluation with ${ragasContexts.length} contexts...`
+            );
+
+            evaluation = await runRagasEvaluation(
+              question,
+              answerText,
+              ragasContexts
+            );
+
+            console.log(
+              '[RAGAS] Evaluation completed:',
+              JSON.stringify(evaluation, null, 2)
+            );
+          } catch (evaluationError) {
+            console.error(
+              '[RAGAS] Evaluation failed:',
+              evaluationError
+            );
+
+            evaluation = {
+              status: 'failed',
+              error: evaluationError.message
+            };
+          }
           // Find all bracketed citation numbers, e.g., [1], [2]
           const citationRegex = /\[([1-9])\]/g;
           let match;
@@ -1281,6 +1835,8 @@ What is the penalty for violating this provision?`;
           setJsonHeaders(res, 200);
           res.end(JSON.stringify({
             answer: answerText,
+            suggestions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
+            follow_up_questions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
             sources: uniqueSources,
             searchResults: results.map(r => ({
               embedding_id: r.embedding_id,
@@ -1314,6 +1870,7 @@ What is the penalty for violating this provision?`;
           const sessionId = payload.session_id || generateSessionId();
           console.log(`[MongoDB] Creating session: ${sessionId}`);
           const now = new Date().toISOString();
+          console.log(`[AI Chatbot] Received message for session ${sessionId} from user ${userId}`);
           const sessionDocument = {
             session_id: sessionId,
             user_id: userId,
@@ -1348,14 +1905,14 @@ What is the penalty for violating this provision?`;
         try {
           const userId = getAuthenticatedUserId(req);
           const urlParsed = new URL(req.url, 'http://localhost');
-          const mode = urlParsed.searchParams.get('mode') || 'chat';
+          const mode = urlParsed.searchParams.get('mode');
           const sessionsCollection = db.collection('chat_sessions');
-          console.log(`[MongoDB] Loading sessions for user: ${userId}, mode: ${mode}`);
+          console.log(`[MongoDB] Loading sessions for user: ${userId}, mode: ${mode || 'all'}`);
 
           const query = { user_id: userId };
           if (mode === 'rag') {
             query.mode = 'rag';
-          } else {
+          } else if (mode === 'chat') {
             query.$or = [{ mode: 'chat' }, { mode: { $exists: false } }];
           }
 
@@ -1445,7 +2002,21 @@ What is the penalty for violating this provision?`;
 
           let assistantMsgDoc;
 
-          if (session.mode === 'rag') {
+          if (payload.assistantMessage && typeof payload.assistantMessage === 'object') {
+            const assistantContent = payload.assistantMessage.content || '';
+            const assistantMetadata = payload.assistantMessage.metadata || {};
+            console.log('[AI Chatbot] Persisting assistantMessage provided by client (likely from /api/ask)');
+            assistantMsgDoc = {
+              message_id: payload.assistantMessage.message_id || randomUUID(),
+              session_id: session.session_id,
+              user_id: userId,
+              role: 'assistant',
+              content: assistantContent,
+              created_at: new Date().toISOString(),
+              sequence_number: session.message_count + 2,
+              metadata: assistantMetadata
+            };
+          } else if (session.mode === 'rag') {
             console.log(`[RAG Session Flow] Executing search for question: "${payload.content}"`);
             let results = [];
             try {
@@ -1514,16 +2085,11 @@ What is the penalty for violating this provision?`;
               }
 
               // Extract suggestions
-              const sugIndex = answerText.indexOf('---SUGGESTIONS---');
-              if (sugIndex !== -1) {
-                const sugPart = answerText.slice(sugIndex + '---SUGGESTIONS---'.length);
-                answerText = answerText.slice(0, sugIndex).trim();
-                suggestions = sugPart
-                  .split('\n')
-                  .map(line => line.trim().replace(/^-\s*/, '').replace(/^\d+\.\s*/, ''))
-                  .filter(line => line.length > 0 && !line.includes('---'));
-              }
+              const parsedResponse =
+                parseAnswerAndSuggestions(answerText);
 
+              answerText = parsedResponse.answer;
+              suggestions = parsedResponse.suggestions;
               // Find all bracketed citation numbers, e.g., [1], [2]
               const citationRegex = /\[([1-9])\]/g;
               let match;

@@ -16,11 +16,11 @@
         <span class="navbar-title">Corporate Law Adviser</span>
       </div>
       <div class="chat-header">
-        <div class="chat-header-title chat-page-title">CLA Legal Chatbot</div>
       </div>
       <nav class="navbar-nav" aria-label="Primary navigation">
-        <a href="#" id="chatModeTab" class="nav-link active">AI CHATBOT</a>
-        <a href="#" id="ragModeTab" class="nav-link">LEGAL RAG SEARCH</a>
+        <button id="themeToggle" type="button" class="navbar-theme-btn" aria-label="Toggle theme">
+          <span class="icon icon-sun" aria-hidden="true">☀</span>
+        </button>
       </nav>
     </header>
 
@@ -44,14 +44,6 @@
         </div>
 
         <div class="session-footer">
-          <div class="sidebar-actions">
-            <button id="themeToggle" type="button" class="icon-btn" aria-label="Toggle theme">
-              <span class="icon icon-sun" aria-hidden="true">☀</span>
-            </button>
-            <button id="notificationsBtn" type="button" class="icon-btn" aria-label="Notifications">
-              <img src="../assets/Images/notification.png" alt="Notifications" class="control-icon notification-icon">
-            </button>
-          </div>
           <div class="profile-panel">
             <div class="profile-avatar">JD</div>
             <div class="profile-info">
@@ -62,6 +54,7 @@
         </div>
       </aside>
 
+      <div class="chat-resize-handle" id="chatResizeHandle" aria-hidden="true"></div>
       <main class="chat-main">
         <div class="chat-background-image" aria-hidden="true"></div>
         <div class="chat-background-tint" aria-hidden="true"></div>
