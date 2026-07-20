@@ -232,12 +232,18 @@ html[data-theme="dark"] .chat-body::-webkit-scrollbar-thumb{
 .assistant-msg{background:var(--message-assistant-bg);align-self:flex-start;color:var(--message-assistant-text);border-color:var(--message-assistant-border)}
 .user-msg{background:var(--message-user-bg);align-self:flex-end;color:var(--message-user-text);border-color:var(--message-user-border);max-width:75%}
 #attachmentPreview{margin-bottom:10px}
-.attachment-list{display:flex;flex-direction:column;gap:6px;padding:6px 6px;border-radius:10px;background:transparent;max-width:100%;max-height:110px;overflow:auto}
-.attachment-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;background:var(--surface);border:1px solid var(--chat-input-border);height:36px;min-height:36px}
-.attachment-row .att-icon{width:20px;height:20px;flex:0 0 20px}
-.attachment-row .file-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.95rem;color:var(--text)}
+.attachment-list{display:flex;flex-direction:column;gap:6px;padding:6px 6px;border-radius:10px;background:transparent;max-width:100%;max-height:140px;overflow:auto}
+.attachment-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;background:var(--surface);border:1px solid var(--chat-input-border);min-height:36px}
+.attachment-row .att-icon{width:20px;height:20px;flex:0 0 20px;display:flex;align-items:center;justify-content:center;font-size:0.95rem}
+.attachment-row .file-name-wrap{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.attachment-row .file-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.95rem;color:var(--text)}
 .attachment-row .file-meta{font-size:0.78rem;color:var(--muted);margin-left:6px}
+.attachment-row .file-error{font-size:0.75rem;color:#dc2626;line-height:1.3}
+.attachment-row.status-error{border-color:rgba(220,38,38,0.35);background:rgba(220,38,38,0.05)}
 .attachment-row .remove-attachment{background:transparent;border:none;color:var(--muted);cursor:pointer;padding:6px 8px;flex:0 0 auto}
+.att-spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--primary);animation:attachment-spin 0.7s linear infinite}
+@keyframes attachment-spin{to{transform:rotate(360deg)}}
+.attachment-notice{font-size:0.78rem;color:#dc2626;padding:2px 6px 6px}
 .message-attachments{margin-top:10px;display:flex;flex-direction:column;gap:6px}
 .message-attachments .attachment-row{background:transparent;border:1px solid rgba(255,255,255,0.04);height:32px;padding:6px 8px}
 .message-attachments .file-name{color:inherit;font-size:0.95rem}
@@ -460,28 +466,70 @@ html[data-theme="dark"] .session-more-icon{
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  width: 100%;
   min-width: 0;
+  cursor: default;
+}
+.citation-title:hover {
+  /* On hover, allow scrolling to read the full title */
+  overflow-x: auto;
+  text-overflow: clip;
 }
 .citation-details {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 6px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 16px;
   font-size: 0.8rem;
   color: var(--muted);
   border-top: 1px solid rgba(0,0,0,0.03);
-  padding-top: 8px;
+  padding-top: 10px;
 }
 html[data-theme="dark"] .citation-details {
   border-top: 1px solid rgba(255,255,255,0.03);
 }
-.citation-details span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.citation-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
-.citation-details strong {
+/* Title field spans full width and scrolls horizontally so it stays on one line */
+.citation-detail-item.is-title {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.citation-detail-item.is-title .citation-detail-value {
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-overflow: clip;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,0,0,0.18) transparent;
+  padding-bottom: 2px;
+}
+.citation-detail-item.is-title .citation-detail-value::-webkit-scrollbar {
+  height: 4px;
+}
+.citation-detail-item.is-title .citation-detail-value::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.18);
+  border-radius: 999px;
+}
+html[data-theme="dark"] .citation-detail-item.is-title .citation-detail-value::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.2);
+}
+.citation-detail-label {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.citation-detail-value {
   color: var(--text);
   font-weight: 600;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  line-height: 1.4;
 }
 
 /* Deep Link Citation Actions */

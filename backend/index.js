@@ -11,6 +11,7 @@ const { getProviderHealth, settings } = require('./config');
 const { getLLMProvider } = require('./llm/factory');
 const { traceLLMGeneration } = require('./langsmith');
 const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./responseParser');
+const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
 
 let logfire;
 
@@ -529,12 +530,17 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
   const docContent = highlightTextInHtml(formatDocumentContent(data.html), highlightQuery);
   const highlightBanner = highlightQuery ? `<div class="highlight-banner" id="highlight-banner">Highlighted passage: <strong>${escapeHTML(highlightQuery)}</strong></div>` : '';
 
+  const isDarkTheme = theme === 'dark';
+  const bodyThemeClass = isDarkTheme ? 'dark-theme' : 'light-theme';
+  const themeToggleIcon = isDarkTheme ? '☀' : '☾';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title} | CLA Online Citation</title>
+  <link rel="icon" href="/assets/Images/logo.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
@@ -779,6 +785,7 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
 
     .content-body {
       padding: 40px 50px;
+      background-color: var(--surface);
       font-family: var(--font-serif) !important;
       font-size: 1.15rem !important;
       line-height: 1.8 !important;
@@ -1013,7 +1020,7 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
     }
   </style>
 </head>
-<body>
+<body class="${bodyThemeClass}">
   <div class="chat-background-image" aria-hidden="true"></div>
   <div class="chat-background-tint" aria-hidden="true"></div>
 
@@ -1022,7 +1029,7 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
       <img src="/assets/Images/logo.png" alt="CLA Corporate Law Adviser">
       <span>CLA Online Legal Database</span>
     </div>
-    <button class="navbar-theme-btn" id="themeToggleBtn" type="button">☀</button>
+    <button class="navbar-theme-btn" id="themeToggleBtn" type="button">${themeToggleIcon}</button>
   </header>
 
   <div class="main-container">
@@ -1131,13 +1138,22 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
        */
       getSavedTheme() {
         const saved = localStorage.getItem(this.STORAGE_KEY);
-        
+
         // Return saved theme if valid
         if (saved === this.LIGHT_THEME || saved === this.DARK_THEME) {
           return saved;
         }
 
-        // Fall back to default
+        // No stored preference yet: keep whatever theme the server already
+        // rendered (matched to the chat's theme at the time this link was
+        // opened) instead of snapping back to the default and flashing.
+        if (document.body.classList.contains('dark-theme')) {
+          return this.DARK_THEME;
+        }
+        if (document.body.classList.contains('light-theme')) {
+          return this.LIGHT_THEME;
+        }
+
         return this.DEFAULT_THEME;
       }
 
@@ -1147,16 +1163,11 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
        */
       applyTheme(theme) {
         const isDark = theme === this.DARK_THEME;
-        const isLight = theme === this.LIGHT_THEME;
 
-        // Update body class
-        if (isDark) {
-          document.body.classList.remove(this.LIGHT_THEME);
-          document.body.classList.add(this.DARK_THEME);
-        } else if (isLight) {
-          document.body.classList.remove(this.DARK_THEME);
-          document.body.classList.add(this.LIGHT_THEME);
-        }
+        // Update body class. The CSS keys off "light-theme"/"dark-theme",
+        // not the bare "light"/"dark" theme values used for localStorage.
+        document.body.classList.remove('light-theme', 'dark-theme');
+        document.body.classList.add(isDark ? 'dark-theme' : 'light-theme');
 
         // Update button icon to show next theme (opposite of current)
         if (this.themeToggleBtn) {
@@ -1374,6 +1385,19 @@ async function startServer() {
         return;
       }
 
+      if (path === '/api/attachments/upload' && req.method === 'POST') {
+        try {
+          const result = await handleAttachmentUpload(req);
+          setJsonHeaders(res, 200);
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          console.error('[Attachments] Upload failed:', error.message);
+          setJsonHeaders(res, error.statusCode || 500);
+          res.end(JSON.stringify({ error: error.message || 'Unable to process the uploaded file(s).' }));
+        }
+        return;
+      }
+
       if (path === '/health' && req.method === 'GET') {
         setJsonHeaders(res, 200);
         res.end(JSON.stringify({ status: 'ok' }));
@@ -1492,6 +1516,11 @@ async function startServer() {
 
           console.log(`[RAG Endpoint] Received question: "${question.trim()}"`);
 
+          const attachmentContext = buildAttachmentContextBlock(payload.attachments);
+          if (attachmentContext) {
+            console.log(`[RAG Endpoint] Using ${payload.attachments.length} attachment(s) as supplementary context.`);
+          }
+
           // Run guardrails early to avoid expensive operations for blocked requests.
           try {
             const { checkGuardrails } = require('./guardrails');
@@ -1607,8 +1636,8 @@ async function startServer() {
             return;
           }
 
-          if (!results || results.length === 0) {
-            console.log('[RAG Endpoint] No documents matched the query.');
+          if ((!results || results.length === 0) && !attachmentContext) {
+            console.log('[RAG Endpoint] No documents matched the query and no attachment context available.');
             setJsonHeaders(res, 200);
             res.end(JSON.stringify({
               answer: 'I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question.',
@@ -1633,9 +1662,13 @@ async function startServer() {
           }).join('\n\n---\n\n');
 
           // Build Grounded LLM Prompt
+          const attachmentPromptRules = attachmentContext
+            ? `\n\nThe user has also attached one or more documents (see ATTACHED DOCUMENT CONTEXT below). You may draw on their content, but only to the extent it concerns corporate/commercial law matters within your scope as CLA. If an attached document is unrelated to corporate law (e.g. personal, unrelated business, or off-topic content), disregard it and rely on the Search Context alone. Do not use numbered citation tags like [1] for attached document content — those are reserved for the Search Context sources; refer to attached material in prose instead (e.g. "the agreement you attached").`
+            : '';
+
           const systemPrompt = `You are a professional legal research assistant for Indian corporate and commercial law.
-You must answer the user's question grounding your answer strictly and ONLY in the provided search context.
-Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."
+You must answer the user's question grounding your answer strictly and ONLY in the provided context (the Search Context below, and any ATTACHED DOCUMENT CONTEXT).
+Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."${attachmentPromptRules}
 
 Style and Tone Requirements:
 - Write in a natural, cohesive, humanized legal advisory tone. Do not just copy-paste blocks from the database.
@@ -1656,11 +1689,19 @@ What is the penalty for violating this provision?`;
           const model = settings.DEFAULT_LLM_MODEL;
           const llm = getLLMProvider(provider, model);
 
+          const userContentParts = [`Question: ${question}`];
+          if (contextBlock) {
+            userContentParts.push(`Search Context:\n${contextBlock}`);
+          }
+          if (attachmentContext) {
+            userContentParts.push(`ATTACHED DOCUMENT CONTEXT:\n${attachmentContext}`);
+          }
+
           let llmResponse;
           try {
             llmResponse = await llm.generate({
               systemPrompt: systemPrompt,
-              messages: [{ role: 'user', content: `Question: ${question}\n\nSearch Context:\n${contextBlock}` }],
+              messages: [{ role: 'user', content: userContentParts.join('\n\n') }],
               temperature: 0.1,
               maxTokens: 2048
             });
@@ -1807,8 +1848,10 @@ What is the penalty for violating this provision?`;
             }
           });
 
-          // Fallback to top result's source if no explicit citation found in answer (and answer isn't no-match)
-          if (uniqueSources.length === 0 && results.length > 0 &&
+          // Fallback to top result's source if no explicit citation found in answer (and answer isn't no-match).
+          // Skipped when the answer was grounded in an attachment instead — attaching an unrelated DB
+          // source to an answer that only describes the user's own document would be misleading.
+          if (uniqueSources.length === 0 && results.length > 0 && !attachmentContext &&
             !answerText.toLowerCase().includes("nothing relevant found") &&
             !answerText.toLowerCase().includes("could not find authority")) {
             const r = results[0];

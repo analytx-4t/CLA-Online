@@ -141,13 +141,20 @@ function callPythonGuardrails(text) {
   });
 }
 
+function matchesScriptedPattern(text, pattern) {
+  // Word-boundary match, not a plain substring test: a naive `includes()`
+  // would flag "which sections apply" as a "hi" greeting.
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
+}
+
 async function checkGuardrails(text) {
   // First, consult .co scripted rules for deterministic dialog responses
   try {
     const scripted = loadColangScriptedResponses();
     const lowered = (text || '').toLowerCase();
     for (const rule of scripted) {
-      if (lowered.includes(rule.pattern)) {
+      if (matchesScriptedPattern(lowered, rule.pattern)) {
         // Normalize rule.response
         const resp = rule.response || {};
         if (resp.allowed === false) {

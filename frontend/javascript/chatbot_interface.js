@@ -747,15 +747,12 @@ function renderSourceCitations(container, message) {
     card.dataset.citationIndex = String(idx);
 
     let detailsHtml = '';
-    const addDetail = (label, value) => {
-      if (value === null || value === undefined) {
-        detailsHtml += `<span><strong>${label}:</strong> N/A</span>`;
-      } else {
-        detailsHtml += `<span><strong>${label}:</strong> ${escapeHTML(String(value))}</span>`;
-      }
+    const addDetail = (label, value, extraClass = '') => {
+      const safeValue = (value === null || value === undefined) ? 'N/A' : escapeHTML(String(value));
+      detailsHtml += `<span class="citation-detail-item${extraClass ? ' ' + extraClass : ''}"><strong class="citation-detail-label">${label}</strong><span class="citation-detail-value">${safeValue}</span></span>`;
     };
 
-    if (s.title) addDetail('Title', s.title);
+    if (s.title) addDetail('Title', s.title, 'is-title');
     if (s.category) addDetail('Category', s.category);
     if (s.subject) addDetail('Subject', s.subject);
     if (s.author) addDetail('Author', s.author);
@@ -1174,17 +1171,28 @@ async function handleUserSend() {
 
   if (!text && selectedFiles.length === 0) return;
 
+  if (selectedFiles.some(entry => entry.status === 'uploading')) {
+    flashAttachmentNotice('Please wait for the attachment to finish uploading.');
+    return;
+  }
+
   isSendingMessage = true;
 
-  // prepare attachments metadata
-  const attachmentsMeta = selectedFiles.length ? selectedFiles.map(f => ({
-    name: f.name,
-    size: f.size,
-    type: f.type,
-    lastModified: f.lastModified,
-    key: `${f.name}-${f.size}-${f.lastModified}`
-  })) : [];
-  
+  // Attachment metadata persisted alongside the message (name/size for display in history).
+  const attachmentsMeta = selectedFiles.map(entry => ({
+    name: entry.file.name,
+    size: entry.file.size,
+    type: entry.file.type,
+    lastModified: entry.file.lastModified,
+    key: entry.key,
+    status: entry.status
+  }));
+
+  // Extracted text sent to the LLM as additional context (not persisted in message history).
+  const attachmentsForContext = selectedFiles
+    .filter(entry => entry.status === 'ready' && entry.text)
+    .map(entry => ({ name: entry.file.name, text: entry.text }));
+
   // Add the user message locally first and preserve the generated message ID for later persistence.
   const userMsg = addMessage('user', text || '', { attachments: attachmentsMeta });
 
@@ -1219,7 +1227,7 @@ async function handleUserSend() {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ question: text })
+      body: JSON.stringify({ question: text, attachments: attachmentsForContext })
     });
 
     if (!response.ok) {
@@ -1370,8 +1378,17 @@ uploadBtn?.addEventListener('click', () => {
   fileUpload?.click();
 });
 
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024; // 15MB, mirrors backend limit
+const SUPPORTED_ATTACHMENT_EXTENSIONS = ['.pdf', '.docx'];
+
 function getFileKey(file) {
   return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
+function isSupportedAttachmentType(file) {
+  const lowerName = (file.name || '').toLowerCase();
+  return SUPPORTED_ATTACHMENT_EXTENSIONS.some(ext => lowerName.endsWith(ext));
 }
 
 function renderAttachmentPreview() {
@@ -1382,45 +1399,102 @@ function renderAttachmentPreview() {
     preview.innerHTML = '';
     return;
   }
-  // render compact list
   const list = document.createElement('div');
   list.className = 'attachment-list';
-  selectedFiles.forEach((file) => {
+  selectedFiles.forEach((entry) => {
     const row = document.createElement('div');
-    row.className = 'attachment-row';
+    row.className = `attachment-row status-${entry.status}`;
+    const statusIcon = entry.status === 'uploading' ? '<div class="att-icon att-spinner" aria-hidden="true"></div>' : '<div class="att-icon">📎</div>';
+    const statusText = entry.status === 'error' ? `<div class="file-error">${escapeHTML(entry.error || 'Could not read this file.')}</div>` : '';
     row.innerHTML = `
-      <div class="att-icon">📎</div>
-      <div class="file-name">${escapeHTML(file.name)}</div>
-      <button type="button" class="remove-attachment" data-key="${getFileKey(file)}" aria-label="Remove">×</button>
+      ${statusIcon}
+      <div class="file-name-wrap">
+        <div class="file-name">${escapeHTML(entry.file.name)}</div>
+        ${statusText}
+      </div>
+      <button type="button" class="remove-attachment" data-key="${entry.key}" aria-label="Remove ${escapeHTML(entry.file.name)}">×</button>
     `;
     list.appendChild(row);
   });
   preview.innerHTML = '';
   preview.appendChild(list);
   preview.style.display = 'block';
-  // attach handlers for remove buttons
   preview.querySelectorAll('.remove-attachment').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       const key = btn.getAttribute('data-key');
-      selectedFiles = selectedFiles.filter(f => getFileKey(f) !== key);
+      selectedFiles = selectedFiles.filter(entry => entry.key !== key);
       renderAttachmentPreview();
     });
   });
 }
 
+let attachmentNoticeTimeout = null;
+function flashAttachmentNotice(message) {
+  const preview = document.getElementById('attachmentPreview');
+  if (!preview) return;
+  let notice = preview.querySelector('.attachment-notice');
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.className = 'attachment-notice';
+    preview.insertBefore(notice, preview.firstChild);
+  }
+  notice.textContent = message;
+  clearTimeout(attachmentNoticeTimeout);
+  attachmentNoticeTimeout = setTimeout(() => notice.remove(), 2500);
+}
+
+async function uploadAttachment(entry) {
+  const formData = new FormData();
+  formData.append('files', entry.file, entry.file.name);
+
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/api/attachments/upload`, {
+      method: 'POST',
+      body: formData
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || 'Upload failed.');
+    }
+    const result = (data.attachments && data.attachments[0]) || null;
+    if (!result || result.status !== 'ready') {
+      throw new Error((result && result.error) || 'This file could not be processed.');
+    }
+    entry.status = 'ready';
+    entry.text = result.text;
+  } catch (error) {
+    entry.status = 'error';
+    entry.error = error.message || 'Upload failed. Please try again.';
+  }
+  renderAttachmentPreview();
+}
+
 fileUpload?.addEventListener('change', () => {
   const newFiles = Array.from(fileUpload.files || []);
   if (newFiles.length === 0) return;
-  // merge with selectedFiles, avoid duplicates, limit to 10
-  const existingKeys = new Set(selectedFiles.map(f => getFileKey(f)));
-  for (const f of newFiles) {
-    if (selectedFiles.length >= 10) break; // max limit
-    const key = getFileKey(f);
+
+  const existingKeys = new Set(selectedFiles.map(entry => entry.key));
+  for (const file of newFiles) {
+    if (selectedFiles.length >= MAX_ATTACHMENTS) break;
+    const key = getFileKey(file);
     if (existingKeys.has(key)) continue;
-    selectedFiles.push(f);
     existingKeys.add(key);
+
+    if (!isSupportedAttachmentType(file)) {
+      selectedFiles.push({ file, key, status: 'error', text: null, error: 'Only PDF and DOCX files are supported.' });
+      continue;
+    }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      selectedFiles.push({ file, key, status: 'error', text: null, error: 'File exceeds the 15MB attachment limit.' });
+      continue;
+    }
+
+    const entry = { file, key, status: 'uploading', text: null, error: null };
+    selectedFiles.push(entry);
+    uploadAttachment(entry);
   }
+
   // reset native input so same files can be selected again
   if (fileUpload) fileUpload.value = '';
   renderAttachmentPreview();

@@ -5,6 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CLA Online Legal Chatbot</title>
+  <link rel="icon" href="../assets/Images/logo.png" type="image/png">
   <link rel="stylesheet" href="../CSS/chatbot_interface.css">
 </head>
 
@@ -83,10 +84,10 @@
           <div class="input-card">
             <div id="attachmentPreview" class="attachment-preview" style="display:none"></div>
             <div class="input-box">
-              <button id="uploadBtn" type="button" class="upload-btn" aria-label="Upload file">
+              <button id="uploadBtn" type="button" class="upload-btn" aria-label="Attach PDF or DOCX file" title="Attach PDF or DOCX">
                 <img src="../assets/Images/attach-file.png" alt="Attach file" class="control-icon attachment-icon">
               </button>
-              <input type="file" id="fileUpload" hidden multiple>
+              <input type="file" id="fileUpload" hidden multiple accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
               <textarea id="messageInput" rows="1"
                 placeholder="Ask about company law, case law, circulars, FEMA, SEBI..."></textarea>
               <button id="sendBtn" type="button" class="send-btn" aria-label="Send message">Send</button>
