@@ -5,10 +5,11 @@ async function start() {
 
   await setupLogfire();
 
-  require('./index');
+  const { startServer } = require('./index');
+  await startServer();
 }
 
 start().catch((error) => {
   console.error('Backend startup failed:', error);
   process.exit(1);
-});
+});
