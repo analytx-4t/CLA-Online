@@ -1,4 +1,4 @@
-export default function DataTable({ columns, rows }) {
+export default function DataTable({ columns, rows, onRowClick }) {
   return (
     <div className="overflow-hidden rounded-[10px] border border-slate-800/80 bg-[#0B1119]/90 shadow-sm">
       <div className="overflow-x-auto">
@@ -18,7 +18,7 @@ export default function DataTable({ columns, rows }) {
           </thead>
           <tbody>
             {rows.map((row, index) => (
-              <tr key={row.id || index} className="h-12 border-b border-slate-800/80 bg-[#0B1119] transition hover:bg-slate-900/80">
+              <tr key={row.id || index} onClick={() => onRowClick?.(row)} className={`h-12 border-b border-slate-800/80 bg-[#0B1119] transition ${onRowClick ? 'cursor-pointer hover:bg-slate-900/80' : 'hover:bg-slate-900/80'}`}>
                 {columns.map((column) => (
                   <td key={column.accessor} style={column.width ? { width: column.width } : undefined} className="px-2 py-2 align-top">
                     <div className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap">

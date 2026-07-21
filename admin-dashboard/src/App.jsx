@@ -9,6 +9,7 @@ import RagasPage from './pages/RagasPage';
 import MonitoringPages from './pages/MonitoringPages';
 import SettingsPage from './pages/SettingsPage';
 import RequestDetailsPage from './pages/RequestDetailsPage';
+import GoldenDatasetPage from './pages/GoldenDatasetPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 export default function App() {
@@ -42,6 +43,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<OverviewPage />} />
               <Route path="/ragas" element={<RagasPage />} />
+              <Route path="/golden-dataset" element={<GoldenDatasetPage />} />
               <Route path="/portkey" element={<MonitoringPages page="portkey" />} />
               <Route path="/langsmith" element={<MonitoringPages page="langsmith" />} />
               <Route path="/logfire" element={<MonitoringPages page="logfire" />} />

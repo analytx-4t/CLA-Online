@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Activity, ChevronLeft, ClipboardCheck, FileText, LayoutDashboard, Settings, ShieldCheck } from 'lucide-react';
+import { Activity, ChevronLeft, ClipboardCheck, Database, FileText, LayoutDashboard, Settings, ShieldCheck } from 'lucide-react';
 
 const navItems = [
   { label: 'Overview', to: '/', icon: LayoutDashboard },
   { label: 'RAGAS', to: '/ragas', icon: ClipboardCheck },
+  { label: 'Golden Dataset', to: '/golden-dataset', icon: Database },
   { label: 'Portkey', to: '/portkey', icon: ShieldCheck },
   { label: 'LangSmith', to: '/langsmith', icon: Activity },
   { label: 'Logfire', to: '/logfire', icon: FileText },

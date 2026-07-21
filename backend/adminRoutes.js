@@ -7,8 +7,14 @@ function setJsonHeaders(res, statusCode) {
   });
 }
 
+const { handleGoldenDatasetRoutes } = require('./goldenDataset/routes');
+
 async function handleAdminRoutes(req, res, db) {
   const path = req.url.split('?')[0] || '/';
+
+  if (await handleGoldenDatasetRoutes(req, res, db)) {
+    return true;
+  }
 
   if (path === '/api/admin/overview' && req.method === 'GET') {
     try {
@@ -67,6 +73,47 @@ async function handleAdminRoutes(req, res, db) {
     } catch (error) {
       setJsonHeaders(res, 500);
       res.end(JSON.stringify({ error: 'Unable to load RAGAS evaluations.' }));
+    }
+
+    return true;
+  }
+
+  if (path === '/api/admin/golden-dataset/evaluations' && req.method === 'GET') {
+    try {
+      const goldenDatasetRunsCollection = db.collection('golden_dataset_runs');
+      const evaluations = await goldenDatasetRunsCollection.find({}).sort({ timestamp: -1 }).toArray();
+
+      const response = evaluations.map((item) => ({
+        id: item._id?.toString() || null,
+        question: item.question || null,
+        status: item.status || null,
+        faithfulness: item.ragasMetrics?.faithfulness ?? null,
+        answerRelevancy: item.ragasMetrics?.answerRelevancy ?? null,
+        contextPrecision: item.ragasMetrics?.contextPrecision ?? null,
+        contextRecall: item.ragasMetrics?.contextRecall ?? null,
+        answerCorrectness: item.ragasMetrics?.answerCorrectness ?? null,
+        retrievalTime: item.retrievalTime ?? null,
+        llmTime: item.llmTime ?? null,
+        retrievedChunks: Array.isArray(item.retrievedChunks) ? item.retrievedChunks : [],
+        retrievedChunkIds: Array.isArray(item.retrievedChunkIds) ? item.retrievedChunkIds : [],
+        similarityScores: Array.isArray(item.similarityScores) ? item.similarityScores : [],
+        chatbotAnswer: item.chatbotAnswer || null,
+        referenceAnswer: item.referenceAnswer || null,
+        timestamp: item.timestamp || null,
+        metadata: {
+          questionId: item.questionId || null,
+          datasetVersion: item.datasetVersion || null,
+          provider: item.provider || null,
+          model: item.model || null,
+          error: item.error || null,
+        },
+      }));
+
+      setJsonHeaders(res, 200);
+      res.end(JSON.stringify({ evaluations: response }));
+    } catch (error) {
+      setJsonHeaders(res, 500);
+      res.end(JSON.stringify({ error: 'Unable to load golden dataset evaluations.' }));
     }
 
     return true;

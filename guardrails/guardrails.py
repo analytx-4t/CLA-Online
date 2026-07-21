@@ -39,7 +39,7 @@ def fallback_classify(text):
             'response': "I'm sorry, but I can't assist with that request.",
             'implementation': 'fallback'
         }
-    if any(k in t for k in ('score','who won','football','cricket','movie','song','recipe','javascript','programming','how to code')):
+    if any(k in t for k in ('score','who won','football','cricket','movie','song','recipe','javascript','programming','how to code','write a poem')):
         return {
             'route': 'OFF_TOPIC', 'category': 'OFF_TOPIC', 'triggered': True,
             'response': "This assistant focuses on corporate law. For general topics, please consult another resource.",

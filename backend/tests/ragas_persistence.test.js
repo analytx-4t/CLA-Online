@@ -27,6 +27,10 @@ async function run() {
     provider: 'groq',
     model: 'llama-3.3-70b-versatile',
     contexts: ['context one', 'context two'],
+    retrievedChunks: ['context one', 'context two'],
+    retrievedChunkIds: ['chunk-1', 'chunk-2'],
+    similarityScores: [0.91, 0.84],
+    retrievalTime: 123.4,
   });
 
   assert.strictEqual(evaluationDocument.requestId, 'req-ragas-test');
@@ -38,6 +42,10 @@ async function run() {
   assert.strictEqual(evaluationDocument.contextPrecision, 0.7);
   assert.strictEqual(evaluationDocument.contextRecall, 0.6);
   assert.strictEqual(evaluationDocument.answerCorrectness, 0.5);
+  assert.deepStrictEqual(evaluationDocument.retrievedChunks, ['context one', 'context two']);
+  assert.deepStrictEqual(evaluationDocument.retrievedChunkIds, ['chunk-1', 'chunk-2']);
+  assert.deepStrictEqual(evaluationDocument.similarityScores, [0.91, 0.84]);
+  assert.strictEqual(evaluationDocument.retrievalTime, 123.4);
 
   const evaluationResultsCollection = db.collection('evaluation_results');
   await evaluationResultsCollection.deleteMany({ requestId: 'req-ragas-test' });
