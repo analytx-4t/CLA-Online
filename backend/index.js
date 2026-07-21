@@ -14,6 +14,7 @@ const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./res
 const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
 const { createRequestContext } = require('./requestContext');
 const { handleAdminRoutes } = require('./adminRoutes');
+const { Server } = require('socket.io');
 
 let logfire;
 
@@ -153,6 +154,7 @@ async function ensureIndexes(db) {
     messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
     evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
     evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
+    evaluationResultsCollection.createIndex({ sessionId: 1 }, { name: 'eval_session_id' }),
     retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
     retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
     goldenDatasetCollection.createIndex({ version: 1 }, { name: 'golden_dataset_version' }),
@@ -180,13 +182,55 @@ async function getCurrentGoldenDatasetVersion(db) {
   }
 }
 
-function buildEvaluationResultDocument({ requestContext, question, answer, goldenAnswer, evaluation, provider, model, contexts, retrievedChunks, retrievedChunkIds, similarityScores, retrievalTime, datasetVersion }) {
+function buildEvaluationResultDocument({
+  requestContext,
+  question,
+  answer,
+  goldenAnswer,
+  evaluation,
+  provider,
+  model,
+  contexts,
+  retrievedChunks,
+  retrievedChunkIds,
+  similarityScores,
+  retrievalTime,
+  datasetVersion,
+  userId = null,
+  evaluationStatus = null,
+  evaluationTimeMs = null,
+  suggestions = [],
+  metadata = {},
+  errorMessage = null,
+}) {
   const evaluationData = evaluation && typeof evaluation === 'object' ? evaluation : {};
   const timestamp = new Date().toISOString();
+  const normalizedMetadata = {
+    tokenUsage: metadata?.tokenUsage ?? null,
+    retrievalTime: Number.isFinite(metadata?.retrievalTime ?? retrievalTime) ? (metadata?.retrievalTime ?? retrievalTime) : (Number.isFinite(retrievalTime) ? retrievalTime : null),
+    llmTime: Number.isFinite(metadata?.llmTime) ? metadata.llmTime : null,
+    ragasVersion: metadata?.ragasVersion ?? null,
+  };
+  const calculatedOverallScore = (() => {
+    const candidateScores = [
+      evaluationData.faithfulness ?? evaluationData.faithfulness ?? null,
+      evaluationData.answer_relevancy ?? evaluationData.answerRelevancy ?? null,
+      evaluationData.context_precision ?? evaluationData.contextPrecision ?? null,
+      evaluationData.context_recall ?? evaluationData.contextRecall ?? null,
+      evaluationData.answer_correctness ?? evaluationData.answerCorrectness ?? null,
+    ].filter((score) => Number.isFinite(score));
+
+    if (candidateScores.length === 0) {
+      return null;
+    }
+
+    return Number((candidateScores.reduce((sum, score) => sum + score, 0) / candidateScores.length).toFixed(4));
+  })();
 
   return {
     requestId: requestContext?.requestId || null,
     sessionId: requestContext?.sessionId || null,
+    userId: userId || null,
     question: question || null,
     answer: answer || null,
     timestamp,
@@ -197,6 +241,7 @@ function buildEvaluationResultDocument({ requestContext, question, answer, golde
     contextPrecision: evaluationData.context_precision ?? evaluationData.contextPrecision ?? null,
     contextRecall: evaluationData.context_recall ?? evaluationData.contextRecall ?? null,
     answerCorrectness: evaluationData.answer_correctness ?? evaluationData.answerCorrectness ?? null,
+    overallScore: evaluationData.overall_score ?? evaluationData.overallScore ?? calculatedOverallScore,
     provider: provider || null,
     model: model || null,
     datasetVersion: datasetVersion || null,
@@ -205,19 +250,62 @@ function buildEvaluationResultDocument({ requestContext, question, answer, golde
     retrievedChunkIds: Array.isArray(retrievedChunkIds) ? retrievedChunkIds : [],
     similarityScores: Array.isArray(similarityScores) ? similarityScores : [],
     retrievalTime: Number.isFinite(retrievalTime) ? retrievalTime : null,
+    evaluationStatus: evaluationStatus || (evaluationData?.status === 'failed' || evaluationData?.error ? 'failed' : 'completed'),
+    evaluationTimeMs: Number.isFinite(evaluationTimeMs) ? evaluationTimeMs : null,
+    suggestions: Array.isArray(suggestions) ? suggestions : [],
+    errorMessage: errorMessage || (evaluationData?.error ? String(evaluationData.error) : null),
+    metadata: normalizedMetadata,
   };
 }
 
-async function persistEvaluationResult(db, document) {
+async function persistEvaluationResult(db, document, io = null) {
   if (!db) {
     return;
   }
 
   try {
     const evaluationResultsCollection = db.collection('evaluation_results');
-    await evaluationResultsCollection.insertOne(document);
+
+    if (!document?.requestId) {
+      await evaluationResultsCollection.insertOne(document);
+      console.log('[RAGAS DB] Save successful.');
+      return;
+    }
+
+    console.log('[RAGAS DB] Saving evaluation...');
+    const { requestId, ...documentWithoutRequestId } = document;
+    const result = await evaluationResultsCollection.updateOne(
+      { requestId },
+      {
+        $set: documentWithoutRequestId,
+        $setOnInsert: { requestId },
+      },
+      { upsert: true }
+    );
+
+    if (result.upsertedCount > 0) {
+      console.log(`[RAGAS DB] Saved new evaluation for requestId ${document.requestId}`);
+    } else {
+      console.log(`[RAGAS DB] Updated requestId ${document.requestId}`);
+    }
+
+    if (io && document?.requestId) {
+      const broadcastPayload = {
+        requestId: document.requestId,
+        timestamp: document.timestamp || document.evaluationTimestamp || null,
+        question: document.question || null,
+        provider: document.provider || null,
+        model: document.model || null,
+        overallScore: document.overallScore ?? null,
+        evaluationStatus: document.evaluationStatus || null,
+      };
+      io.emit('ragas-evaluation-updated', broadcastPayload);
+      console.log('[RAGAS Live] Evaluation broadcast');
+    }
+
+    console.log('[RAGAS DB] Save successful.');
   } catch (error) {
-    console.error('[RAGAS] Failed to persist evaluation result:', error);
+    console.error('[RAGAS DB] Failed to persist evaluation result:', error);
   }
 }
 
@@ -1977,6 +2065,8 @@ What is the penalty for violating this provision?`;
             console.log('[RAGAS] Background evaluation started...');
 
             (async () => {
+              const evaluationStartedAt = Date.now();
+
               try {
                 console.log(
                   `[RAGAS] Starting evaluation with ${ragasContexts.length} contexts...`
@@ -2001,16 +2091,14 @@ What is the penalty for violating this provision?`;
 
                 evaluation = {
                   status: 'failed',
-                  error: evaluationError.message
+                  error: evaluationError.message,
                 };
               }
 
-              const isSuccessfulEvaluation = evaluation && typeof evaluation === 'object' && evaluation.status !== 'failed' && !evaluation.error;
-
-              if (!isSuccessfulEvaluation) {
-                console.warn('[RAGAS] Evaluation did not complete successfully; skipping persistence.', evaluation?.error || evaluation?.status || 'No evaluation result.');
-                return;
-              }
+              const evaluationTimeMs = Date.now() - evaluationStartedAt;
+              const evaluationStatus = evaluation && typeof evaluation === 'object' && (evaluation.status === 'failed' || evaluation.error)
+                ? 'failed'
+                : 'completed';
 
               try {
                 const evaluationDocument = buildEvaluationResultDocument({
@@ -2027,9 +2115,20 @@ What is the penalty for violating this provision?`;
                   similarityScores: Array.isArray(results) ? results.map((result) => (Number.isFinite(result?.score) ? result.score : (Number.isFinite(result?.rrf_score) ? result.rrf_score : null))).filter((value) => value !== null) : [],
                   retrievalTime: retrievalTimeMs ?? null,
                   datasetVersion: currentDatasetVersion || goldenRecord?.version || null,
+                  userId: getAuthenticatedUserId(req),
+                  evaluationStatus,
+                  evaluationTimeMs,
+                  suggestions,
+                  metadata: {
+                    tokenUsage: evaluation?.tokenUsage ?? null,
+                    retrievalTime: retrievalTimeMs ?? null,
+                    llmTime: llmTimeMs ?? null,
+                    ragasVersion: evaluation?.ragasVersion ?? null,
+                  },
+                  errorMessage: evaluation?.error || null,
                 });
 
-                await persistEvaluationResult(db, evaluationDocument);
+                await persistEvaluationResult(db, evaluationDocument, io);
 
                 if (goldenRecord) {
                   const goldenRunDocument = {
@@ -2646,6 +2745,20 @@ What is the penalty for violating this provision?`;
 
       setJsonHeaders(res, 404);
       res.end(JSON.stringify({ error: 'Not found' }));
+    });
+
+    const io = new Server(server, {
+      cors: {
+        origin: '*',
+        methods: ['GET', 'POST'],
+      },
+    });
+
+    io.on('connection', (socket) => {
+      console.log('[RAGAS Live] Client connected');
+      socket.on('disconnect', () => {
+        console.log('[RAGAS Live] Client disconnected');
+      });
     });
 
     server.listen(PORT, () => {

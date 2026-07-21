@@ -9,6 +9,100 @@ function setJsonHeaders(res, statusCode) {
 
 const { handleGoldenDatasetRoutes } = require('./goldenDataset/routes');
 
+function sendJson(res, statusCode, payload) {
+  setJsonHeaders(res, statusCode);
+  res.end(JSON.stringify(payload));
+}
+
+function parseDateRange(value) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeRagasRecord(item) {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+
+  return {
+    requestId: item.requestId || null,
+    timestamp: item.timestamp || item.evaluationTimestamp || null,
+    question: item.question || null,
+    overallScore: item.overallScore ?? null,
+    evaluationStatus: item.evaluationStatus || null,
+    provider: item.provider || null,
+    model: item.model || null,
+  };
+}
+
+function buildRagasListQuery(url) {
+  const params = new URL(url, 'http://localhost');
+  const search = (params.searchParams.get('search') || '').trim().toLowerCase();
+  const status = (params.searchParams.get('status') || '').trim();
+  const provider = (params.searchParams.get('provider') || '').trim();
+  const model = (params.searchParams.get('model') || '').trim();
+  const startDate = parseDateRange(params.searchParams.get('startDate'));
+  const endDate = parseDateRange(params.searchParams.get('endDate'));
+  const page = Math.max(1, Number.parseInt(params.searchParams.get('page') || '1', 10) || 1);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(params.searchParams.get('limit') || '20', 10) || 20));
+  const sortField = (params.searchParams.get('sortField') || 'timestamp').trim();
+  const sortOrder = (params.searchParams.get('sortOrder') || 'desc').trim().toLowerCase() === 'asc' ? 1 : -1;
+
+  return {
+    search,
+    status,
+    provider,
+    model,
+    startDate,
+    endDate,
+    page,
+    limit,
+    sortField,
+    sortOrder,
+  };
+}
+
+function getRagasFilter(query) {
+  const filter = {};
+
+  if (query.search) {
+    filter.$or = [
+      { question: { $regex: query.search, $options: 'i' } },
+      { requestId: { $regex: query.search, $options: 'i' } },
+      { provider: { $regex: query.search, $options: 'i' } },
+      { model: { $regex: query.search, $options: 'i' } },
+    ];
+  }
+
+  if (query.status) {
+    filter.evaluationStatus = query.status;
+  }
+
+  if (query.provider) {
+    filter.provider = query.provider;
+  }
+
+  if (query.model) {
+    filter.model = query.model;
+  }
+
+  if (query.startDate || query.endDate) {
+    filter.timestamp = {};
+    if (query.startDate) {
+      filter.timestamp.$gte = query.startDate.toISOString();
+    }
+    if (query.endDate) {
+      filter.timestamp.$lte = query.endDate.toISOString();
+    }
+  }
+
+  return filter;
+}
+
 async function handleAdminRoutes(req, res, db) {
   const path = req.url.split('?')[0] || '/';
 
@@ -52,27 +146,68 @@ async function handleAdminRoutes(req, res, db) {
 
   if (path === '/api/admin/ragas' && req.method === 'GET') {
     try {
+      console.log('[RAGAS API] Fetching evaluations...', req.url);
       const evaluationResultsCollection = db.collection('evaluation_results');
-      const evaluations = await evaluationResultsCollection.find({}).sort({ evaluationTimestamp: -1 }).toArray();
+      const query = buildRagasListQuery(req.url);
+      const filter = getRagasFilter(query);
+      const sortField = query.sortField === 'timestamp' ? 'timestamp' : query.sortField;
+      const sortSpec = { [sortField]: query.sortOrder };
 
-      const response = evaluations.map((item) => ({
-        requestId: item.requestId || null,
-        sessionId: item.sessionId || null,
-        question: item.question || null,
-        answer: item.answer || null,
-        timestamp: item.timestamp || item.evaluationTimestamp || null,
-        faithfulness: item.faithfulness ?? null,
-        answerRelevancy: item.answerRelevancy ?? null,
-        contextPrecision: item.contextPrecision ?? null,
-        contextRecall: item.contextRecall ?? null,
-        answerCorrectness: item.answerCorrectness ?? null,
+      console.log('[RAGAS API] Mongo query', JSON.stringify({ filter, sortSpec, page: query.page, limit: query.limit }));
+
+      const total = await evaluationResultsCollection.countDocuments(filter);
+      console.log('[RAGAS API] Total documents matching filter:', total);
+
+      const evaluations = await evaluationResultsCollection
+        .find(filter)
+        .sort(sortSpec)
+        .skip((query.page - 1) * query.limit)
+        .limit(query.limit)
+        .project({
+          _id: 0,
+          requestId: 1,
+          timestamp: 1,
+          evaluationTimestamp: 1,
+          question: 1,
+          overallScore: 1,
+          evaluationStatus: 1,
+          provider: 1,
+          model: 1,
+          sessionId: 1,
+        })
+        .toArray();
+
+      console.log('[RAGAS API] Documents found:', evaluations.length);
+
+      const normalized = evaluations
+        .map(normalizeRagasRecord)
+        .filter(Boolean);
+
+      console.log('[RAGAS API] Sending response', JSON.stringify({
+        success: true,
+        dataLength: normalized.length,
+        page: query.page,
+        limit: query.limit,
+        total,
       }));
 
-      setJsonHeaders(res, 200);
-      res.end(JSON.stringify({ evaluations: response }));
+      sendJson(res, 200, {
+        success: true,
+        data: normalized,
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / query.limit)),
+        },
+      });
     } catch (error) {
-      setJsonHeaders(res, 500);
-      res.end(JSON.stringify({ error: 'Unable to load RAGAS evaluations.' }));
+      console.error('[RAGAS API] Failed to fetch evaluations', error);
+      sendJson(res, 500, {
+        success: false,
+        error: 'Unable to load RAGAS evaluations.',
+        details: error?.message || null,
+      });
     }
 
     return true;
@@ -114,6 +249,135 @@ async function handleAdminRoutes(req, res, db) {
     } catch (error) {
       setJsonHeaders(res, 500);
       res.end(JSON.stringify({ error: 'Unable to load golden dataset evaluations.' }));
+    }
+
+    return true;
+  }
+
+  if (path === '/api/admin/ragas/stats' && req.method === 'GET') {
+    try {
+      const evaluationResultsCollection = db.collection('evaluation_results');
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - 6);
+      startOfWeek.setHours(0, 0, 0, 0);
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+
+      const pipeline = [
+        {
+          $group: {
+            _id: null,
+            totalEvaluations: { $sum: 1 },
+            successCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'completed'] }, 1, 0] } },
+            failedCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'failed'] }, 1, 0] } },
+            avgFaithfulness: { $avg: '$faithfulness' },
+            avgAnswerRelevancy: { $avg: '$answerRelevancy' },
+            avgContextPrecision: { $avg: '$contextPrecision' },
+            avgContextRecall: { $avg: '$contextRecall' },
+            avgAnswerCorrectness: { $avg: '$answerCorrectness' },
+            avgOverallScore: { $avg: '$overallScore' },
+            avgEvaluationTime: { $avg: '$evaluationTimeMs' },
+          },
+        },
+      ];
+
+      const stats = await evaluationResultsCollection.aggregate(pipeline).toArray();
+      const aggregate = stats[0] || {};
+
+      const providerStats = await evaluationResultsCollection.aggregate([
+        { $group: { _id: '$provider', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]).toArray();
+
+      const modelStats = await evaluationResultsCollection.aggregate([
+        { $group: { _id: '$model', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]).toArray();
+
+      const dayCount = await evaluationResultsCollection.countDocuments({
+        timestamp: { $gte: startOfToday.toISOString() },
+      });
+      const weekCount = await evaluationResultsCollection.countDocuments({
+        timestamp: { $gte: startOfWeek.toISOString() },
+      });
+      const monthCount = await evaluationResultsCollection.countDocuments({
+        timestamp: { $gte: startOfMonth.toISOString() },
+      });
+
+      const totalEvaluations = Number(aggregate.totalEvaluations || 0);
+      const successCount = Number(aggregate.successCount || 0);
+      const failedCount = Number(aggregate.failedCount || 0);
+      const successRate = totalEvaluations > 0 ? successCount / totalEvaluations : 0;
+      const failureRate = totalEvaluations > 0 ? failedCount / totalEvaluations : 0;
+
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          totalEvaluations,
+          avgFaithfulness: aggregate.avgFaithfulness ?? null,
+          avgAnswerRelevancy: aggregate.avgAnswerRelevancy ?? null,
+          avgContextPrecision: aggregate.avgContextPrecision ?? null,
+          avgContextRecall: aggregate.avgContextRecall ?? null,
+          avgAnswerCorrectness: aggregate.avgAnswerCorrectness ?? null,
+          avgOverallScore: aggregate.avgOverallScore ?? null,
+          successRate,
+          failureRate,
+          avgEvaluationTime: aggregate.avgEvaluationTime ?? null,
+          totalFailedEvaluations: failedCount,
+          providerDistribution: providerStats.map((item) => ({ provider: item._id || null, count: item.count })),
+          modelDistribution: modelStats.map((item) => ({ model: item._id || null, count: item.count })),
+          evaluationsToday: dayCount,
+          evaluationsThisWeek: weekCount,
+          evaluationsThisMonth: monthCount,
+        },
+      });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: 'Unable to load RAGAS stats.' });
+    }
+
+    return true;
+  }
+
+  if (path.startsWith('/api/admin/ragas/') && req.method === 'GET') {
+    try {
+      const requestId = path.split('/').filter(Boolean).pop();
+      const evaluationResultsCollection = db.collection('evaluation_results');
+      const evaluationDoc = await evaluationResultsCollection.findOne({ requestId });
+
+      if (!evaluationDoc) {
+        sendJson(res, 404, { success: false, error: 'Evaluation not found.' });
+        return true;
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          requestId: evaluationDoc.requestId || null,
+          sessionId: evaluationDoc.sessionId || null,
+          question: evaluationDoc.question || null,
+          answer: evaluationDoc.answer || null,
+          retrievedContext: Array.isArray(evaluationDoc.retrievedContext)
+            ? evaluationDoc.retrievedContext
+            : (evaluationDoc.retrievedContext ? [evaluationDoc.retrievedContext] : null),
+          faithfulness: evaluationDoc.faithfulness ?? null,
+          answerRelevancy: evaluationDoc.answerRelevancy ?? null,
+          contextPrecision: evaluationDoc.contextPrecision ?? null,
+          contextRecall: evaluationDoc.contextRecall ?? null,
+          answerCorrectness: evaluationDoc.answerCorrectness ?? null,
+          overallScore: evaluationDoc.overallScore ?? null,
+          provider: evaluationDoc.provider || null,
+          model: evaluationDoc.model || null,
+          evaluationTimeMs: evaluationDoc.evaluationTimeMs ?? null,
+          metadata: evaluationDoc.metadata || null,
+          suggestions: Array.isArray(evaluationDoc.suggestions) ? evaluationDoc.suggestions : [],
+          evaluationStatus: evaluationDoc.evaluationStatus || null,
+          errorMessage: evaluationDoc.errorMessage || null,
+          timestamp: evaluationDoc.timestamp || evaluationDoc.evaluationTimestamp || null,
+        },
+      });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: 'Unable to load evaluation details.' });
     }
 
     return true;
