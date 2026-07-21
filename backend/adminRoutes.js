@@ -142,40 +142,77 @@ async function handleAdminRoutes(req, res, db) {
 
   if (path === '/api/admin/portkey' && req.method === 'GET') {
     try {
+      const portkeyLogsCollection = db.collection('portkey_logs');
       const evaluationResultsCollection = db.collection('evaluation_results');
       const retrievalLogsCollection = db.collection('retrieval_logs');
 
+      const livePortkeyLogs = await portkeyLogsCollection.find({}).sort({ timestamp: -1 }).limit(100).toArray();
       const evaluations = await evaluationResultsCollection.find({}).sort({ timestamp: -1 }).limit(100).toArray();
       const retrievalLogs = await retrievalLogsCollection.find({}).sort({ timestamp: -1 }).limit(100).toArray();
 
-      const sourceList = evaluations.length > 0 ? evaluations : Array.from({ length: 12 }, (_, i) => ({
-        requestId: `req_portkey_${i + 1}`,
-        sessionId: `CLA-SESS-${i + 1}`,
-        question: 'Section 135 Corporate Social Responsibility compliance requirements under Companies Act 2013',
-        answer: 'Companies meeting net worth or turnover thresholds must spend 2% of average net profits on CSR activities...',
-        provider: i % 3 === 0 ? 'openai' : i % 3 === 1 ? 'gemini' : 'groq',
-        model: i % 3 === 0 ? 'gpt-4.1-mini' : i % 3 === 1 ? 'gemini-3.5-flash' : 'llama-3.3-70b',
-        timestamp: new Date(Date.now() - i * 120000).toISOString(),
-      }));
-
-      const providerStats = {};
+      const providersList = ['deepseek', 'groq', 'openai', 'gemini'];
+      const providerStats = {
+        openai: { count: 0, tokens: 0, cost: 0, totalLatency: 0, avgLatency: 0 },
+        gemini: { count: 0, tokens: 0, cost: 0, totalLatency: 0, avgLatency: 0 },
+        deepseek: { count: 0, tokens: 0, cost: 0, totalLatency: 0, avgLatency: 0 },
+        groq: { count: 0, tokens: 0, cost: 0, totalLatency: 0, avgLatency: 0 },
+      };
       let totalTokens = 0;
       let totalLatencyMs = 0;
       let totalTtftMs = 0;
       let cacheHits = 0;
       let retriesCount = 0;
 
-      const recentLogs = sourceList.map((item, idx) => {
-        const provider = item.provider || (idx % 2 === 0 ? 'openai' : 'gemini');
-        const model = item.model || (provider === 'openai' ? 'gpt-4.1-mini' : 'gemini-3.5-flash');
-        const promptTokens = Math.floor(Math.random() * 400) + 250;
-        const completionTokens = Math.floor(Math.random() * 300) + 150;
-        const reqTokens = promptTokens + completionTokens;
-        const latencyMs = Math.floor(Math.random() * 550) + 320;
-        const ttftMs = Math.floor(Math.random() * 60) + 40;
-        const costUsd = (promptTokens * 0.0000015 + completionTokens * 0.000006).toFixed(6);
-        const isCache = idx % 3 === 0;
-        const hasRetry = idx % 5 === 0;
+      // Combine real logs from MongoDB (livePortkeyLogs > evaluations > retrievalLogs)
+      const sourceItems = [
+        ...livePortkeyLogs,
+        ...evaluations.map((e) => ({
+          ...e,
+          path: 'Chat Completion',
+          user: 'analytx4tlab',
+          userAvatar: 'A',
+          totalTokens: (e.promptTokens || 300) + (e.completionTokens || 150),
+          latencyMs: e.latencyMs || 350,
+          costUsd: e.costUsd || 0.00005,
+        })),
+        ...retrievalLogs.map((r) => ({
+          requestId: r.requestId,
+          sessionId: r.sessionId,
+          timestamp: r.timestamp,
+          provider: 'groq',
+          model: 'llama-3.3-70b-versatile',
+          path: 'Vector Retrieval',
+          user: 'analytx4tlab',
+          userAvatar: 'A',
+          totalTokens: (r.topK || 5) * 50,
+          latencyMs: r.retrievalTime || 180,
+          costUsd: 0.00001,
+          question: r.query,
+          answer: r.retrievedChunks?.[0]?.content || 'Context retrieved',
+        })),
+      ].sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+
+      const recentLogs = sourceItems.map((item, idx) => {
+        const rawProvider = item.provider || providersList[idx % providersList.length];
+        const provider = String(rawProvider).toLowerCase();
+        const model = item.model || (provider === 'deepseek' ? 'deepseek-v4-flash' : provider === 'groq' ? 'llama-3.3-70b-versatile' : provider === 'openai' ? 'gpt-4.1-mini' : 'gemini-3.5-flash');
+        const reqTokens = item.totalTokens ?? item.reqTokens ?? 50;
+        const latencyMs = item.latencyMs ?? 300;
+        const ttftMs = item.ttftMs ?? Math.round(latencyMs * 0.15);
+        const costUsd = item.costUsd ?? 0.00005;
+        const cents = (costUsd * 100).toFixed(2);
+        const isCache = Boolean(item.cacheHit);
+        const hasRetry = (item.retryCount || 0) > 0;
+        
+        const rawIsoDate = item.timestamp || item.evaluationTimestamp || (item._id && typeof item._id.getTimestamp === 'function' ? item._id.getTimestamp().toISOString() : '2026-07-21T12:00:00.000Z');
+        const formattedDate = item.formattedTimestamp || new Date(rawIsoDate).toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        });
 
         totalTokens += reqTokens;
         totalLatencyMs += latencyMs;
@@ -184,25 +221,33 @@ async function handleAdminRoutes(req, res, db) {
         if (hasRetry) retriesCount++;
 
         if (!providerStats[provider]) {
-          providerStats[provider] = { count: 0, tokens: 0, cost: 0, avgLatency: 0 };
+          providerStats[provider] = { count: 0, tokens: 0, cost: 0, totalLatency: 0, avgLatency: 0 };
         }
         providerStats[provider].count += 1;
         providerStats[provider].tokens += reqTokens;
         providerStats[provider].cost += parseFloat(costUsd);
-        providerStats[provider].avgLatency = Math.round(totalLatencyMs / sourceList.length);
+        providerStats[provider].totalLatency += latencyMs;
+        providerStats[provider].avgLatency = Math.round(providerStats[provider].totalLatency / providerStats[provider].count);
 
         return {
-          requestId: item.requestId || `req_${idx + 100}`,
-          traceId: `tr_portkey_${Math.random().toString(36).substring(2, 10)}`,
+          requestId: item.requestId || (item._id ? String(item._id) : `req_${idx + 100}`),
+          traceId: item.traceId || `tr_portkey_${item._id ? String(item._id).substring(0, 10) : (1000 + idx).toString(16)}`,
           sessionId: item.sessionId || `CLA-SESS-${idx + 1}`,
-          timestamp: item.timestamp || item.evaluationTimestamp || new Date(Date.now() - idx * 120000).toISOString(),
+          timestamp: rawIsoDate,
+          formattedTimestamp: formattedDate,
           provider,
           model,
-          systemPrompt: 'You are an authoritative Indian Legal Assistant specialized in statutory compliance.',
-          userPrompt: item.question || 'Corporate compliance search query',
-          outputSnippet: (item.answer || 'Detailed legal analysis provided').substring(0, 140),
-          promptTokens,
-          completionTokens,
+          path: item.path || 'Chat Completion',
+          user: item.user || 'analytx4tlab',
+          userAvatar: item.userAvatar || 'A',
+          tokensCost: item.tokensCost || `${reqTokens} tokens (~${cents > 0.01 ? cents + ' cents' : '0 cents'})`,
+          statusIcons: { lightning: isCache, retry: hasRetry, trace: true },
+          score: item.score ?? 0,
+          systemPrompt: item.systemPrompt || 'You are an authoritative Indian Legal Assistant specialized in statutory compliance.',
+          userPrompt: item.question || item.userPrompt || 'Corporate compliance search query',
+          outputSnippet: (item.answer || item.outputSnippet || 'Detailed legal analysis provided').substring(0, 140),
+          promptTokens: item.promptTokens || Math.round(reqTokens * 0.6),
+          completionTokens: item.completionTokens || Math.round(reqTokens * 0.4),
           totalTokens: reqTokens,
           latencyMs,
           ttftMs,
@@ -210,10 +255,10 @@ async function handleAdminRoutes(req, res, db) {
           status: '200 OK',
           cacheHit: isCache,
           retryCount: hasRetry ? 1 : 0,
-          guardrailAction: 'PASSED',
+          guardrailAction: item.guardrailAction || 'PASSED',
           configId: process.env.PORTKEY_CONFIG_ID || 'pc-cla-le-c9595f',
           retryConfig: process.env.PORTKEY_RETRY_CONFIG_ID || 'pc-cla-re-5f25ca',
-          userSentiment: idx % 4 === 0 ? 'POSITIVE (5/5)' : 'NEUTRAL (4/5)',
+          userSentiment: item.userSentiment || (idx % 4 === 0 ? 'POSITIVE (5/5)' : 'NEUTRAL (4/5)'),
         };
       });
 

@@ -6,8 +6,6 @@ const navItems = [
   { label: 'Overview', to: '/', icon: LayoutDashboard },
   { label: 'RAGAS', to: '/ragas', icon: ClipboardCheck },
   { label: 'Portkey', to: '/portkey', icon: ShieldCheck },
-  { label: 'LangSmith', to: '/langsmith', icon: Activity },
-  { label: 'Logfire', to: '/logfire', icon: FileText },
   { label: 'Settings', to: '/settings', icon: Settings },
 ];
 

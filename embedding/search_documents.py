@@ -5,19 +5,17 @@ of the full, untouched parent + child rows behind any hit — for citing exact
 source data (case name, HeadNote, Judge, full Filetext, etc.) when answering
 a user's question, not just the cleaned/chunked embedding text.
 
-Embedding model: gemini-embedding-2 (see embed_documents.py — same model
-MUST be used here, since embedding spaces between gemini-embedding-2 and
-gemini-embedding-001 are not comparable).
+Embedding model: text-embedding-3-large (see embed_documents.py — same model
+MUST be used here, since embedding spaces between different models are not
+comparable).
 
-Current scope: only the "Articles" source (Articles_2025 <-> Articles_data_2025)
-has real embedded chunks right now (see ACTIVE_SOURCES in embed_documents.py).
-Every other SourceTable will simply return zero rows until it's embedded too —
-this file itself doesn't need to change when that happens, since it queries
-DocumentEmbeddings generically by SourceTable, not by hardcoding "Articles".
+All 8 sources (Articles, CaseLaws, Circular, Legislation, Notifications,
+Query, CLASE_Commentary, CLASE_Procedure_Details) are embedded — see
+ACTIVE_SOURCES in embed_documents.py.
 
 Setup:
-    pip install --upgrade pyodbc google-genai python-dotenv numpy
-    Reuses the same .env as embed_documents.py (GEMINI_API_KEY, SQL_CONN_STR).
+    pip install --upgrade pyodbc openai python-dotenv numpy
+    Reuses the same .env as embed_documents.py (OPENAI_API_KEY, SQL_CONN_STR).
 
 Run:
     python search_documents.py
@@ -28,44 +26,26 @@ import re
 import struct
 import json
 import sys
-import urllib.request
 import numpy as np
 import pyodbc
 from dotenv import load_dotenv
+from openai import OpenAI
 
 load_dotenv()
 
 SQL_CONN_STR = os.environ["SQL_CONN_STR"]
-GEMINI_MODEL = "gemini-embedding-2"
+EMBEDDING_MODEL = "text-embedding-3-large"
+
+_openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 # ---------- EMBEDDING THE USER'S QUERY ----------
 
 def embed_query(query_text):
-    """gemini-embedding-2 asymmetric-retrieval query format using built-in urllib.request."""
-    formatted = f"task: search result | query: {query_text}"
-    api_key = os.environ["GEMINI_API_KEY"]
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:embedContent?key={api_key}"
-    
-    payload = {
-        "model": f"models/{GEMINI_MODEL}",
-        "content": {
-            "parts": [
-                {"text": formatted}
-            ]
-        }
-    }
-    
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
-    
-    with urllib.request.urlopen(req) as response:
-        res_data = json.loads(response.read().decode("utf-8"))
-        values = res_data["embedding"]["values"]
-        return np.array(values, dtype=np.float32)
+    """text-embedding-3-large has no asymmetric-retrieval task format (unlike
+    gemini-embedding-2) — the query text is embedded as-is, same as a document
+    chunk (see prepare_document_text() in embed_documents.py)."""
+    result = _openai_client.embeddings.create(model=EMBEDDING_MODEL, input=[query_text])
+    return np.array(result.data[0].embedding, dtype=np.float32)
 
 
 def _bytes_to_vector(b):

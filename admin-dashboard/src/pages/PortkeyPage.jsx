@@ -10,8 +10,8 @@ export default function PortkeyPage() {
   const [selectedProvider, setSelectedProvider] = useState('ALL');
   const [expandedRow, setExpandedRow] = useState(null);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/admin/portkey').catch(() => fetch('http://localhost:3000/api/admin/portkey'));
@@ -22,12 +22,16 @@ export default function PortkeyPage() {
       console.error('Failed to load Portkey API data:', err);
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
+    fetchData(true);
+    const interval = setInterval(() => {
+      fetchData(false);
+    }, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   const filteredLogs = useMemo(() => {
@@ -196,12 +200,61 @@ export default function PortkeyPage() {
             </div>
           </div>
 
+          {/* Multi-Provider Telemetry & Health Cards */}
+          {data.providerStats && (
+            <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-5">
+              <h3 className="text-xs uppercase tracking-[0.2em] text-slate-400 mb-3">LLM Provider Gateway Breakdown</h3>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {['openai', 'gemini', 'deepseek', 'groq'].map((pName) => {
+                  const pStat = data.providerStats[pName] || { count: 0, tokens: 0, cost: 0, avgLatency: 0 };
+                  const isDeepseek = pName === 'deepseek';
+                  return (
+                    <div
+                      key={pName}
+                      onClick={() => setSelectedProvider(selectedProvider === pName ? 'ALL' : pName)}
+                      className={`cursor-pointer rounded-lg border p-3.5 transition ${
+                        selectedProvider === pName
+                          ? 'border-emerald-500 bg-emerald-500/10'
+                          : 'border-slate-800 bg-[#070A0F] hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-white uppercase text-xs tracking-wider flex items-center gap-1.5">
+                          {pName}
+                          {isDeepseek && <span className="rounded bg-sky-500/20 text-sky-400 text-[10px] px-1.5 py-0.2">ACTIVE MODEL</span>}
+                        </span>
+                        <span className="text-[11px] text-emerald-400 font-mono">{pStat.count} reqs</span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <p className="text-[10px] text-slate-500">Tokens</p>
+                          <p className="font-mono text-sky-400 font-semibold">{pStat.tokens.toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500">Avg Latency</p>
+                          <p className="font-mono text-amber-400 font-semibold">{pStat.avgLatency || 0} ms</p>
+                        </div>
+                        <div className="col-span-2 mt-1 pt-1.5 border-t border-slate-800/60 flex justify-between text-[11px]">
+                          <span className="text-slate-400">Est. Cost:</span>
+                          <span className="text-purple-400 font-mono font-semibold">${pStat.cost ? pStat.cost.toFixed(4) : '0.0000'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Request Logs Table */}
           <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-5">
-            <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-              <div>
-                <h2 className="text-base font-semibold text-white">Live Portkey Gateway Logs</h2>
-                <p className="text-xs text-slate-400">Showing {filteredLogs.length} request logs</p>
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-4 border-b border-slate-800/80 pb-4">
+              <div className="flex items-center gap-3">
+                <h2 className="text-base font-semibold text-white">Logs</h2>
+                <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-[#070A0F] p-1 text-xs">
+                  <button className="rounded px-3 py-1 font-medium bg-slate-800 text-white">Logs</button>
+                  <button className="rounded px-3 py-1 font-medium text-slate-400 hover:text-white">Traces</button>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
@@ -211,13 +264,19 @@ export default function PortkeyPage() {
                     type="text"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search requestId or model..."
+                    placeholder="Search Filter..."
                     className="w-56 rounded-lg border border-slate-800 bg-[#070A0F] pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
 
+                <select className="rounded-lg border border-slate-800 bg-[#070A0F] px-3 py-1.5 text-xs text-slate-300 focus:border-emerald-500 focus:outline-none">
+                  <option>Last 24 hours</option>
+                  <option>Last 7 days</option>
+                  <option>Last 30 days</option>
+                </select>
+
                 <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-[#070A0F] p-1">
-                  {['ALL', 'openai', 'gemini', 'groq'].map((prov) => (
+                  {['ALL', 'openai', 'gemini', 'deepseek', 'groq'].map((prov) => (
                     <button
                       key={prov}
                       onClick={() => setSelectedProvider(prov)}
@@ -229,51 +288,59 @@ export default function PortkeyPage() {
                     </button>
                   ))}
                 </div>
+
+                <button className="rounded-lg bg-sky-600 hover:bg-sky-500 px-3 py-1.5 text-xs font-semibold text-white transition flex items-center gap-1">
+                  <ExternalLink size={13} /> Export Logs
+                </button>
               </div>
             </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-300">
-                <thead className="border-b border-slate-800 bg-[#070A0F] uppercase tracking-wider text-slate-500">
+                <thead className="border-b border-slate-800 bg-[#070A0F] uppercase tracking-wider text-[11px] text-slate-500">
                   <tr>
-                    <th className="px-4 py-3">Request ID</th>
-                    <th className="px-4 py-3">Provider / Model</th>
-                    <th className="px-4 py-3">Tokens</th>
-                    <th className="px-4 py-3">Latency / TTFT</th>
-                    <th className="px-4 py-3">Cost (USD)</th>
-                    <th className="px-4 py-3">Cache</th>
-                    <th className="px-4 py-3">Guardrail</th>
-                    <th className="px-4 py-3">Action</th>
+                    <th className="px-4 py-3 font-semibold">Timestamp</th>
+                    <th className="px-4 py-3 font-semibold">Model</th>
+                    <th className="px-4 py-3 font-semibold">Path</th>
+                    <th className="px-4 py-3 font-semibold">User</th>
+                    <th className="px-4 py-3 font-semibold">Tokens (Cost)</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold">Score</th>
+                    <th className="px-4 py-3 font-semibold">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {filteredLogs.map((log) => {
                     const isExpanded = expandedRow === log.requestId;
+                    const dateStr = log.formattedTimestamp || (log.timestamp ? new Date(log.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : new Date().toLocaleString());
+                    const cents = (log.costUsd ? log.costUsd * 100 : 0).toFixed(2);
+                    const tokenCostText = log.tokensCost || `${log.totalTokens || 50} tokens (~${cents > 0.01 ? cents + ' cents' : '0 cents'})`;
+
                     return (
                       <tbody key={log.requestId} className="contents">
                         <tr className="hover:bg-slate-900/50 transition">
-                          <td className="px-4 py-3 font-mono text-emerald-400 font-medium">{log.requestId}</td>
+                          <td className="px-4 py-3 font-mono text-slate-300 text-[11px] whitespace-nowrap">{dateStr}</td>
+                          <td className="px-4 py-3 font-mono text-white font-medium">{log.model || 'deepseek-v4-flash'}</td>
+                          <td className="px-4 py-3 text-slate-300">{log.path || 'Chat Completion'}</td>
                           <td className="px-4 py-3">
-                            <span className="font-semibold text-white">{log.provider}</span>
-                            <span className="ml-1 text-[11px] text-slate-400">({log.model})</span>
-                          </td>
-                          <td className="px-4 py-3 font-medium text-sky-400">{log.totalTokens}</td>
-                          <td className="px-4 py-3 font-medium text-amber-400">{log.latencyMs} ms <span className="text-[10px] text-slate-500">({log.ttftMs}ms TTFT)</span></td>
-                          <td className="px-4 py-3 text-slate-300">${log.costUsd}</td>
-                          <td className="px-4 py-3">
-                            {log.cacheHit ? (
-                              <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
-                                HIT
+                            <div className="flex items-center gap-1.5">
+                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/20 text-[10px] font-bold text-rose-400">
+                                {log.userAvatar || 'A'}
                               </span>
-                            ) : (
-                              <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">MISS</span>
-                            )}
+                              <span className="text-slate-300 font-medium text-[11px]">{log.user || 'analytx4tlab'}</span>
+                            </div>
                           </td>
+                          <td className="px-4 py-3 font-mono text-slate-300 text-[11px]">{tokenCostText}</td>
                           <td className="px-4 py-3">
-                            <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
-                              {log.guardrailAction}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="inline-flex items-center gap-1 rounded bg-slate-800/80 px-2 py-0.5 text-[10px] text-slate-300 border border-slate-700/50">
+                                <Zap size={11} className="text-emerald-400" />
+                                {log.retryCount > 0 && <RefreshCw size={11} className="text-amber-400" />}
+                                <Cpu size={11} className="text-sky-400" />
+                              </span>
+                            </div>
                           </td>
+                          <td className="px-4 py-3 font-mono text-slate-400">{log.score ?? 0}</td>
                           <td className="px-4 py-3">
                             <button
                               onClick={() => setExpandedRow(isExpanded ? null : log.requestId)}
@@ -331,6 +398,14 @@ export default function PortkeyPage() {
                   })}
                 </tbody>
               </table>
+            </div>
+
+            {/* Portkey Pagination Footer */}
+            <div className="mt-4 flex items-center justify-center gap-2 border-t border-slate-800/80 pt-3 text-xs">
+              <button className="px-2 py-1 text-slate-500 hover:text-white transition">&lt;</button>
+              <button className="rounded bg-sky-600/30 px-2.5 py-1 text-sky-400 font-bold border border-sky-500/30">1</button>
+              <button className="rounded px-2.5 py-1 text-slate-400 hover:text-white transition">2</button>
+              <button className="px-2 py-1 text-slate-400 hover:text-white transition">&gt;</button>
             </div>
           </div>
         </>

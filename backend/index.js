@@ -1356,19 +1356,29 @@ function runRagasEvaluation(question, answer, contexts) {
       'evaluation',
       'live_evaluator.py'
     );
-    const evaluationPython = path.join(
-      __dirname,
-      '..',
-      'evaluation',
-      '.venv',
-      'Scripts',
-      'python.exe'
-    );
+    const fs = require('fs');
+    const candidatePythons = [
+      path.join(__dirname, '..', 'evaluation', '.venv', 'Scripts', 'python.exe'),
+      path.join(__dirname, '..', 'evaluation', '.venv', 'bin', 'python'),
+      path.join(__dirname, '..', 'embedding', 'venv', 'Scripts', 'python.exe'),
+      path.join(__dirname, '..', 'embedding', 'venv', 'bin', 'python'),
+      process.platform === 'win32' ? 'python' : 'python3'
+    ];
+    let evaluationPython = candidatePythons.find(p => fs.existsSync(p)) || (process.platform === 'win32' ? 'python' : 'python3');
 
-    const pythonProcess = spawn(evaluationPython, [evaluationScript], {
-      cwd: path.join(__dirname, '..'),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    let pythonProcess;
+    try {
+      pythonProcess = spawn(evaluationPython, [evaluationScript], {
+        cwd: path.join(__dirname, '..'),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      console.error('[RAGAS] Failed to spawn evaluator process:', err.message);
+      return resolve({
+        status: 'failed',
+        error: err.message,
+      });
+    }
 
     let stdout = '';
     let stderr = '';
