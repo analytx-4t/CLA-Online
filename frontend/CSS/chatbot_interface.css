@@ -407,10 +407,10 @@ html[data-theme="dark"] .session-more-icon{
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 14px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.02);
   transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   min-width: 0;
@@ -476,13 +476,13 @@ html[data-theme="dark"] .session-more-icon{
   text-overflow: clip;
 }
 .citation-details {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 10px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
   font-size: 0.8rem;
   color: var(--muted);
   border-top: 1px solid rgba(0,0,0,0.03);
-  padding-top: 10px;
+  padding-top: 8px;
 }
 html[data-theme="dark"] .citation-details {
   border-top: 1px solid rgba(255,255,255,0.03);
@@ -492,11 +492,13 @@ html[data-theme="dark"] .citation-details {
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+  flex: 0 0 auto;
 }
 /* Title field spans full width and scrolls horizontally so it stays on one line */
 .citation-detail-item.is-title {
-  grid-column: 1 / -1;
-  min-width: 0;
+  width: 100%;
+  flex: 0 0 100%;
+  margin-bottom: 2px;
 }
 .citation-detail-item.is-title .citation-detail-value {
   white-space: nowrap;
@@ -506,6 +508,7 @@ html[data-theme="dark"] .citation-details {
   scrollbar-width: thin;
   scrollbar-color: rgba(0,0,0,0.18) transparent;
   padding-bottom: 2px;
+  max-width: 100%;
 }
 .citation-detail-item.is-title .citation-detail-value::-webkit-scrollbar {
   height: 4px;
@@ -527,8 +530,10 @@ html[data-theme="dark"] .citation-detail-item.is-title .citation-detail-value::-
 .citation-detail-value {
   color: var(--text);
   font-weight: 600;
-  overflow-wrap: break-word;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
   line-height: 1.4;
 }
 

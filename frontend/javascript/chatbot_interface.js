@@ -752,7 +752,7 @@ function renderSourceCitations(container, message) {
       detailsHtml += `<span class="citation-detail-item${extraClass ? ' ' + extraClass : ''}"><strong class="citation-detail-label">${label}</strong><span class="citation-detail-value">${safeValue}</span></span>`;
     };
 
-    if (s.title) addDetail('Title', s.title, 'is-title');
+    if (s.title || !s.category) addDetail('Title', s.title || 'Untitled Document', 'is-title');
     if (s.category) addDetail('Category', s.category);
     if (s.subject) addDetail('Subject', s.subject);
     if (s.author) addDetail('Author', s.author);
@@ -782,7 +782,6 @@ function renderSourceCitations(container, message) {
         <span class="citation-badge">Source [${sourceNum}]</span>
         ${openLinkHtml}
       </div>
-      <div class="citation-title" title="${escapeHTML(s.title || 'Untitled Document')}">${escapeHTML(s.title || 'Untitled Document')}</div>
       ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
     `;
     return card;
