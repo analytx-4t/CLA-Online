@@ -146,6 +146,35 @@ export default function LogfirePage() {
             </div>
           </div>
 
+          {/* System Runtime Telemetry Badges */}
+          {data.systemTelemetry && (
+            <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-5">
+              <h3 className="text-xs uppercase tracking-[0.2em] text-slate-400 mb-3">Backend Process & Memory Performance Telemetry</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Heap Used</p>
+                  <p className="text-lg font-bold text-emerald-400 mt-1">{data.systemTelemetry.heapUsedMb} MB</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Heap Allocated</p>
+                  <p className="text-lg font-bold text-sky-400 mt-1">{data.systemTelemetry.heapTotalMb} MB</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">RSS Memory</p>
+                  <p className="text-lg font-bold text-purple-400 mt-1">{data.systemTelemetry.rssMb} MB</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Event Loop Lag</p>
+                  <p className="text-lg font-bold text-amber-400 mt-1">{data.systemTelemetry.eventLoopLagMs} ms</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Process Uptime</p>
+                  <p className="text-lg font-bold text-emerald-400 mt-1">{Math.floor(data.systemTelemetry.uptimeSeconds / 60)}m {data.systemTelemetry.uptimeSeconds % 60}s</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Log Stream Table */}
           <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-5">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
@@ -236,7 +265,14 @@ export default function LogfirePage() {
                         </tr>
                         {isExpanded && (
                           <tr className="bg-[#070A0F]">
-                            <td colSpan={6} className="p-4 border-t border-b border-slate-800">
+                            <td colSpan={6} className="p-4 border-t border-b border-slate-800 space-y-3">
+                              {log.traceId && (
+                                <div className="flex flex-wrap items-center gap-4 text-xs font-mono">
+                                  <div><span className="text-slate-500">Trace ID:</span> <span className="text-orange-400">{log.traceId}</span></div>
+                                  {log.spanId && <div><span className="text-slate-500">Span ID:</span> <span className="text-sky-400">{log.spanId}</span></div>}
+                                  {log.parentSpanId && <div><span className="text-slate-500">Parent Span ID:</span> <span className="text-purple-400">{log.parentSpanId}</span></div>}
+                                </div>
+                              )}
                               <div className="rounded border border-slate-800 p-3 bg-slate-950">
                                 <p className="text-[10px] font-semibold uppercase text-orange-400 mb-1">Span Context & Attributes</p>
                                 <pre className="overflow-x-auto text-[11px] text-slate-300 font-mono">

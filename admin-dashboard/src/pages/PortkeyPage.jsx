@@ -114,7 +114,7 @@ export default function PortkeyPage() {
       {data && (
         <>
           {/* Summary Metric Cards */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
             <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-4">
               <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Gateway Requests</p>
               <p className="mt-2 text-2xl font-bold text-white">{data.summary.totalRequests}</p>
@@ -130,7 +130,15 @@ export default function PortkeyPage() {
             <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-4">
               <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Avg Gateway Latency</p>
               <p className="mt-2 text-2xl font-bold text-amber-400">{data.summary.avgLatencyMs} ms</p>
-              <p className="mt-1 text-[11px] text-slate-400">Parallel provider routing</p>
+              <p className="mt-1 text-[11px] text-slate-400">TTFT: {data.summary.avgTtftMs} ms</p>
+            </div>
+
+            <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Latency Percentiles</p>
+              <p className="mt-2 text-sm font-semibold text-slate-200">
+                p50: <span className="text-emerald-400">{data.summary.latencyPercentiles?.p50}ms</span> | p90: <span className="text-amber-400">{data.summary.latencyPercentiles?.p90}ms</span>
+              </p>
+              <p className="mt-1 text-[11px] text-slate-400">p99: {data.summary.latencyPercentiles?.p99}ms</p>
             </div>
 
             <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-4">
@@ -146,21 +154,45 @@ export default function PortkeyPage() {
             </div>
           </div>
 
-          {/* Active Gateway Config Badges */}
-          <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-5">
-            <h3 className="text-xs uppercase tracking-[0.2em] text-slate-400 mb-3">Active Gateway Configurations</h3>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {data.summary.activeGatewayConfigs.map((cfg) => (
-                <div key={cfg.id} className="flex items-center justify-between rounded-lg border border-slate-800 bg-[#070A0F] p-3">
-                  <div>
-                    <p className="text-xs font-semibold text-white">{cfg.type}</p>
-                    <code className="text-[11px] text-emerald-400">{cfg.id}</code>
+          {/* Active Gateway Config & Guardrails Badges */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-5">
+              <h3 className="text-xs uppercase tracking-[0.2em] text-slate-400 mb-3">Active Gateway Configurations</h3>
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                {data.summary.activeGatewayConfigs.map((cfg) => (
+                  <div key={cfg.id} className="flex items-center justify-between rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                    <div>
+                      <p className="text-xs font-semibold text-white">{cfg.type}</p>
+                      <code className="text-[11px] text-emerald-400">{cfg.id}</code>
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+                      <CheckCircle2 size={12} /> ACTIVE
+                    </span>
                   </div>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
-                    <CheckCircle2 size={12} /> ACTIVE
-                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-5">
+              <h3 className="text-xs uppercase tracking-[0.2em] text-slate-400 mb-3">Guardrail & Security Telemetry</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Passed</p>
+                  <p className="text-lg font-bold text-emerald-400 mt-1">{data.summary.guardrails?.passed} / {data.summary.guardrails?.totalChecked}</p>
                 </div>
-              ))}
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">PII Redacted</p>
+                  <p className="text-lg font-bold text-sky-400 mt-1">{data.summary.guardrails?.piiRedacted}</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Moderated</p>
+                  <p className="text-lg font-bold text-purple-400 mt-1">{data.summary.guardrails?.topicsModerated}</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Retries</p>
+                  <p className="text-lg font-bold text-amber-400 mt-1">{data.summary.totalRetries}</p>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -185,7 +217,7 @@ export default function PortkeyPage() {
                 </div>
 
                 <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-[#070A0F] p-1">
-                  {['ALL', 'openai', 'gemini'].map((prov) => (
+                  {['ALL', 'openai', 'gemini', 'groq'].map((prov) => (
                     <button
                       key={prov}
                       onClick={() => setSelectedProvider(prov)}
@@ -207,10 +239,10 @@ export default function PortkeyPage() {
                     <th className="px-4 py-3">Request ID</th>
                     <th className="px-4 py-3">Provider / Model</th>
                     <th className="px-4 py-3">Tokens</th>
-                    <th className="px-4 py-3">Latency</th>
+                    <th className="px-4 py-3">Latency / TTFT</th>
                     <th className="px-4 py-3">Cost (USD)</th>
                     <th className="px-4 py-3">Cache</th>
-                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Guardrail</th>
                     <th className="px-4 py-3">Action</th>
                   </tr>
                 </thead>
@@ -226,7 +258,7 @@ export default function PortkeyPage() {
                             <span className="ml-1 text-[11px] text-slate-400">({log.model})</span>
                           </td>
                           <td className="px-4 py-3 font-medium text-sky-400">{log.totalTokens}</td>
-                          <td className="px-4 py-3 font-medium text-amber-400">{log.latencyMs} ms</td>
+                          <td className="px-4 py-3 font-medium text-amber-400">{log.latencyMs} ms <span className="text-[10px] text-slate-500">({log.ttftMs}ms TTFT)</span></td>
                           <td className="px-4 py-3 text-slate-300">${log.costUsd}</td>
                           <td className="px-4 py-3">
                             {log.cacheHit ? (
@@ -239,7 +271,7 @@ export default function PortkeyPage() {
                           </td>
                           <td className="px-4 py-3">
                             <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
-                              {log.status}
+                              {log.guardrailAction}
                             </span>
                           </td>
                           <td className="px-4 py-3">
@@ -254,21 +286,41 @@ export default function PortkeyPage() {
                         </tr>
                         {isExpanded && (
                           <tr className="bg-[#070A0F]">
-                            <td colSpan={8} className="p-4 border-t border-b border-slate-800">
-                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-xs">
+                            <td colSpan={8} className="p-4 border-t border-b border-slate-800 space-y-3">
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-4 text-xs">
+                                <div className="rounded border border-slate-800 p-2.5">
+                                  <p className="text-[10px] uppercase text-slate-500">Trace & Session</p>
+                                  <code className="text-emerald-400 block mt-1">{log.traceId}</code>
+                                  <span className="text-slate-400 text-[10px]">{log.sessionId}</span>
+                                </div>
                                 <div className="rounded border border-slate-800 p-2.5">
                                   <p className="text-[10px] uppercase text-slate-500">Prompt / Completion Tokens</p>
                                   <p className="font-mono text-slate-200 mt-1">
-                                    Prompt: <span className="text-sky-400">{log.promptTokens}</span> | Output: <span className="text-emerald-400">{log.completionTokens}</span>
+                                    In: <span className="text-sky-400">{log.promptTokens}</span> | Out: <span className="text-emerald-400">{log.completionTokens}</span>
                                   </p>
                                 </div>
                                 <div className="rounded border border-slate-800 p-2.5">
-                                  <p className="text-[10px] uppercase text-slate-500">Portkey Gateway Config ID</p>
-                                  <code className="text-emerald-400 mt-1 block">{log.configId}</code>
+                                  <p className="text-[10px] uppercase text-slate-500">Portkey Config & Strategy</p>
+                                  <code className="text-emerald-400 block mt-1">{log.configId}</code>
                                 </div>
                                 <div className="rounded border border-slate-800 p-2.5">
-                                  <p className="text-[10px] uppercase text-slate-500">Retry Policy Strategy</p>
-                                  <code className="text-slate-300 mt-1 block">{log.retryConfig}</code>
+                                  <p className="text-[10px] uppercase text-slate-500">Feedback / Sentiment</p>
+                                  <span className="text-amber-400 font-semibold block mt-1">{log.userSentiment}</span>
+                                </div>
+                              </div>
+
+                              <div className="rounded border border-slate-800 bg-[#04060A] p-3 text-xs font-mono space-y-2">
+                                <div>
+                                  <span className="text-slate-500 uppercase text-[10px]">System Prompt:</span>
+                                  <p className="text-slate-300 mt-0.5">{log.systemPrompt}</p>
+                                </div>
+                                <div>
+                                  <span className="text-slate-500 uppercase text-[10px]">User Query:</span>
+                                  <p className="text-sky-300 mt-0.5">{log.userPrompt}</p>
+                                </div>
+                                <div>
+                                  <span className="text-slate-500 uppercase text-[10px]">Completion Output:</span>
+                                  <p className="text-emerald-300 mt-0.5">{log.outputSnippet}...</p>
                                 </div>
                               </div>
                             </td>

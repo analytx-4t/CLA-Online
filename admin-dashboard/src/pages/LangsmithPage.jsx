@@ -140,6 +140,35 @@ export default function LangsmithPage() {
             </div>
           </div>
 
+          {/* RAGAS Evaluation Benchmarks */}
+          {data.summary.evaluations && (
+            <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-5">
+              <h3 className="text-xs uppercase tracking-[0.2em] text-slate-400 mb-3">LangSmith Evaluator & RAGAS Quality Metrics</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Faithfulness</p>
+                  <p className="text-lg font-bold text-emerald-400 mt-1">{data.summary.evaluations.faithfulness * 100}%</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Answer Relevancy</p>
+                  <p className="text-lg font-bold text-sky-400 mt-1">{data.summary.evaluations.answerRelevancy * 100}%</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Context Precision</p>
+                  <p className="text-lg font-bold text-purple-400 mt-1">{data.summary.evaluations.contextPrecision * 100}%</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Context Recall</p>
+                  <p className="text-lg font-bold text-amber-400 mt-1">{data.summary.evaluations.contextRecall * 100}%</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#070A0F] p-3">
+                  <p className="text-[10px] text-slate-400 uppercase">Hallucination Rate</p>
+                  <p className="text-lg font-bold text-emerald-400 mt-1">{data.summary.evaluations.hallucinationRate * 100}%</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Agent Runs Table */}
           <div className="rounded-xl border border-slate-800/80 bg-[#0B1220] p-5">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
@@ -161,7 +190,7 @@ export default function LangsmithPage() {
                 </div>
 
                 <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-[#070A0F] p-1">
-                  {['ALL', 'llm', 'retrieval'].map((type) => (
+                  {['ALL', 'agent', 'retrieval', 'tool', 'llm'].map((type) => (
                     <button
                       key={type}
                       onClick={() => setSelectedRunType(type)}
@@ -237,7 +266,13 @@ export default function LangsmithPage() {
                         </tr>
                         {isExpanded && (
                           <tr className="bg-[#070A0F]">
-                            <td colSpan={8} className="p-4 border-t border-b border-slate-800">
+                            <td colSpan={8} className="p-4 border-t border-b border-slate-800 space-y-3">
+                              {run.parameters && (
+                                <div className="rounded border border-slate-800 bg-[#04060A] p-2.5 text-xs">
+                                  <span className="text-[10px] font-semibold uppercase text-slate-500 block mb-1">Model Parameters:</span>
+                                  <code className="text-amber-400 font-mono">{JSON.stringify(run.parameters)}</code>
+                                </div>
+                              )}
                               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 text-xs">
                                 <div className="rounded border border-slate-800 p-3 bg-slate-950">
                                   <p className="text-[10px] font-semibold uppercase text-sky-400 mb-1">Input Payload</p>
