@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-feature-settings: 'cv11';
+  background: #0B0F14;
+  color: #FFFFFF;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #0B0F14;
+  color: #F8FAFC;
+}
+
+html.dark body {
+  background: #0B0F14;
+  color: #F8FAFC;
+}
+
+body.light {
+  background: #F5F7FA;
+  color: #0F172A;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(15, 157, 88, 0.30);
+}
+
+button,
+input,
+select,
+textarea,
+a {
+  transition: all 180ms ease-in-out;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid rgba(15, 157, 88, 0.45);
+  outline-offset: 2px;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: url('/assets/chatbackground_image.png') center/cover no-repeat;
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: -1;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at top left, rgba(15, 157, 88, 0.06), transparent 36%),
+    radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.04), transparent 28%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.text-muted {
+  color: #9CA3AF;
+}
+
+.bg-surface {
+  background: #151C26;
+}
+
+.border-soft {
+  border-color: rgba(148, 163, 184, 0.16);
+}
+
+.shadow-panel {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
+}
+
+.card {
+  background: rgba(17, 24, 39, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 12px;
+}
+
+.glass-panel {
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 12px;
+}
+
+.shadow-panel {
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(226, 232, 240, 0.16);
+  border-radius: 9999px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}

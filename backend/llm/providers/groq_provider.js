@@ -29,6 +29,7 @@ class GroqProvider extends BaseLLMProvider {
       family = 'llama',
       metadata = {},
       traceId,
+      requestContext,
     } = request;
 
     const model =
@@ -54,6 +55,7 @@ class GroqProvider extends BaseLLMProvider {
         maxTokens,
         metadata,
         traceId,
+        requestContext,
       });
 
       return {

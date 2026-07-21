@@ -10,6 +10,8 @@ from openai import AsyncOpenAI
 from ragas.llms import llm_factory
 from ragas.metrics.collections import Faithfulness
 
+from ragas_config import get_ragas_llm_config
+
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -86,20 +88,21 @@ async def main():
     ) as file:
         dataset = json.load(file)
 
-    groq_api_key = os.getenv("GROQ_API_KEY")
+    ragas_config = get_ragas_llm_config()
+    groq_api_key = ragas_config["api_key"]
 
     if not groq_api_key:
         raise ValueError(
-            "GROQ_API_KEY is not configured in .env"
+            "No RAGAS evaluator API key is configured. Set GROQ_API_KEY_RAGAS or GROQ_API_KEY."
         )
 
     client = AsyncOpenAI(
         api_key=groq_api_key,
-        base_url="https://api.groq.com/openai/v1",
+        base_url=ragas_config["base_url"],
     )
 
     evaluator_llm = llm_factory(
-        "llama-3.3-70b-versatile",
+        ragas_config["model"],
         client=client,
     )
 

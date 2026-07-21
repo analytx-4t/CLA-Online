@@ -7,6 +7,7 @@ const tracePortkeyLLMCall = traceable(
     temperature,
     maxTokens,
     call,
+    requestContext,
   }) {
     const response = await call();
 
@@ -35,6 +36,7 @@ const traceLLMGeneration = traceable(
     model,
     messageCount,
     generate,
+    requestContext,
   }) {
     return generate();
   },

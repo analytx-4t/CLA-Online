@@ -30,6 +30,7 @@ class DeepSeekProvider extends BaseLLMProvider {
       variant = 'pro',
       metadata = {},
       traceId,
+      requestContext,
     } = request;
 
     const model =
@@ -55,6 +56,7 @@ class DeepSeekProvider extends BaseLLMProvider {
         maxTokens,
         metadata,
         traceId,
+        requestContext,
       });
 
       return {

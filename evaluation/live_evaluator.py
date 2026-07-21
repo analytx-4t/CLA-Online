@@ -16,6 +16,8 @@ from ragas.metrics.collections import (
     ContextPrecisionWithoutReference,
 )
 
+from ragas_config import get_ragas_llm_config
+
 
 # ============================================================
 # ENVIRONMENT SETUP
@@ -164,14 +166,15 @@ async def evaluate_live(question, answer, contexts):
     # API KEYS
     # ========================================================
 
-    groq_api_key = os.getenv("GROQ_API_KEY")
+    ragas_config = get_ragas_llm_config()
+    groq_api_key = ragas_config["api_key"]
     openai_api_key = os.getenv("OPENAI_API_KEY")
     gemini_api_key = os.getenv("GEMINI_API_KEY")
 
     if not groq_api_key and not openai_api_key:
         raise ValueError(
             "At least one evaluator LLM provider must be configured: "
-            "GROQ_API_KEY or OPENAI_API_KEY"
+            "GROQ_API_KEY_RAGAS, GROQ_API_KEY, or OPENAI_API_KEY"
         )
 
     if not gemini_api_key:
@@ -202,7 +205,7 @@ async def evaluate_live(question, answer, contexts):
         )
 
         groq_llm = llm_factory(
-            "llama-3.3-70b-versatile",
+            ragas_config["model"],
             client=groq_client,
         )
 

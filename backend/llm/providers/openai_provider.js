@@ -27,6 +27,7 @@ class OpenAIProvider extends BaseLLMProvider {
       modelOverride,
       metadata = {},
       traceId,
+      requestContext,
     } = request;
 
     const model = modelOverride || this.model;
@@ -47,6 +48,7 @@ class OpenAIProvider extends BaseLLMProvider {
         maxTokens,
         metadata,
         traceId,
+        requestContext,
       });
 
       return {

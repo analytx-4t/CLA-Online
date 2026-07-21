@@ -12,7 +12,9 @@ const settings = {
   GEMINI_MODEL: process.env.GEMINI_MODEL || '',
 
   GROQ_API_KEY: process.env.GROQ_API_KEY || '',
+  GROQ_API_KEY_RAGAS: process.env.GROQ_API_KEY_RAGAS || '',
   GROQ_LLAMA_MODEL: process.env.GROQ_LLAMA_MODEL || '',
+  GROQ_MODEL_RAGAS: process.env.GROQ_MODEL_RAGAS || '',
   GROQ_MISTRAL_MODEL: process.env.GROQ_MISTRAL_MODEL || '',
 
   DEFAULT_LLM_PROVIDER: process.env.DEFAULT_LLM_PROVIDER || 'openai',

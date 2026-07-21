@@ -12,6 +12,8 @@ const { getLLMProvider } = require('./llm/factory');
 const { traceLLMGeneration } = require('./langsmith');
 const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./responseParser');
 const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
+const { createRequestContext } = require('./requestContext');
+const { handleAdminRoutes } = require('./adminRoutes');
 
 let logfire;
 
@@ -106,14 +108,108 @@ async function findOwnedSession(sessionsCollection, sessionId, userId) {
 async function ensureIndexes(db) {
   const sessionsCollection = db.collection('chat_sessions');
   const messagesCollection = db.collection('chat_messages');
+  const evaluationResultsCollection = db.collection('evaluation_results');
+  const retrievalLogsCollection = db.collection('retrieval_logs');
+
+  try {
+    await db.createCollection('evaluation_results');
+  } catch (error) {
+    if (error?.codeName !== 'NamespaceExists' && error?.code !== 48) {
+      throw error;
+    }
+  }
+
+  try {
+    await db.createCollection('retrieval_logs');
+  } catch (error) {
+    if (error?.codeName !== 'NamespaceExists' && error?.code !== 48) {
+      throw error;
+    }
+  }
 
   await Promise.all([
     sessionsCollection.createIndex({ session_id: 1, user_id: 1 }, { unique: true, name: 'uniq_session_user' }),
     sessionsCollection.createIndex({ user_id: 1, last_message_at: -1 }, { name: 'user_last_message' }),
     messagesCollection.createIndex({ message_id: 1 }, { unique: true, name: 'uniq_message_id' }),
     messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
+    evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
+    evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
+    retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
+    retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
   ]);
 }
+
+function buildEvaluationResultDocument({ requestContext, question, answer, goldenAnswer, evaluation, provider, model, contexts }) {
+  const evaluationData = evaluation && typeof evaluation === 'object' ? evaluation : {};
+  const timestamp = new Date().toISOString();
+
+  return {
+    requestId: requestContext?.requestId || null,
+    sessionId: requestContext?.sessionId || null,
+    question: question || null,
+    answer: answer || null,
+    timestamp,
+    evaluationTimestamp: timestamp,
+    goldenAnswer: goldenAnswer ?? null,
+    faithfulness: evaluationData.faithfulness ?? null,
+    answerRelevancy: evaluationData.answer_relevancy ?? evaluationData.answerRelevancy ?? null,
+    contextPrecision: evaluationData.context_precision ?? evaluationData.contextPrecision ?? null,
+    contextRecall: evaluationData.context_recall ?? evaluationData.contextRecall ?? null,
+    answerCorrectness: evaluationData.answer_correctness ?? evaluationData.answerCorrectness ?? null,
+    provider: provider || null,
+    model: model || null,
+    retrievedContext: Array.isArray(contexts) ? contexts : null,
+  };
+}
+
+async function persistEvaluationResult(db, document) {
+  if (!db) {
+    return;
+  }
+
+  try {
+    const evaluationResultsCollection = db.collection('evaluation_results');
+    await evaluationResultsCollection.insertOne(document);
+  } catch (error) {
+    console.error('[RAGAS] Failed to persist evaluation result:', error);
+  }
+}
+
+function buildRetrievalLogDocument({ requestContext, query, retrievalTime, topK, retrievedChunks }) {
+  const timestamp = new Date().toISOString();
+
+  return {
+    requestId: requestContext?.requestId || null,
+    sessionId: requestContext?.sessionId || null,
+    query: query || null,
+    timestamp,
+    retrievalTime: Number.isFinite(retrievalTime) ? retrievalTime : null,
+    topK: Number.isFinite(topK) ? topK : null,
+    retrievedChunks: Array.isArray(retrievedChunks)
+      ? retrievedChunks.map((chunk) => ({
+          chunkId: chunk?.chunkId || chunk?.chunk_id || null,
+          documentId: chunk?.documentId || chunk?.document_id || chunk?.source || chunk?.sourceId || chunk?.source_id || null,
+          rank: chunk?.rank ?? null,
+          similarityScore: chunk?.similarityScore ?? chunk?.similarity_score ?? null,
+          content: chunk?.content || chunk?.chunk_text || chunk?.text || null,
+        }))
+      : [],
+  };
+}
+
+async function persistRetrievalLog(db, document) {
+  if (!db) {
+    return;
+  }
+
+  try {
+    const retrievalLogsCollection = db.collection('retrieval_logs');
+    await retrievalLogsCollection.insertOne(document);
+  } catch (error) {
+    console.error('[Retrieval] Failed to persist retrieval metadata:', error);
+  }
+}
+
 function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
   return new Promise((resolve, reject) => {
     let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
@@ -1354,6 +1450,10 @@ async function startServer() {
         return;
       }
 
+      if (await handleAdminRoutes(req, res, db)) {
+        return;
+      }
+
       // Serve static files from frontend directory
       if (req.method === 'GET' && (path.startsWith('/assets/') || path.startsWith('/CSS/') || path.startsWith('/javascript/') || path.startsWith('/HTML/'))) {
         const fs = require('fs');
@@ -1452,38 +1552,51 @@ async function startServer() {
           const provider = payload.provider || settings.DEFAULT_LLM_PROVIDER;
           const model = payload.model || 'default';
 
+          const requestMetadata = req.requestContext ? {
+            requestId: req.requestContext.requestId,
+            sessionId: req.requestContext.sessionId,
+            messageId: req.requestContext.messageId,
+          } : {};
+
           const response = await lf.span(
             'LLM generation request',
             {
               provider,
               model,
               message_count: payload.messages?.length || 0,
+              ...requestMetadata,
             },
             {},
             async () => {
               const llm = getLLMProvider(provider, payload.model);
 
-              return traceLLMGeneration({
-                provider,
-                model: payload.model || llm.defaultModel || 'default',
-                messageCount: payload.messages?.length || 0,
+              return traceLLMGeneration(
+                {
+                  provider,
+                  model: payload.model || llm.defaultModel || 'default',
+                  messageCount: payload.messages?.length || 0,
+                  requestContext: req.requestContext,
 
-                generate: async () => {
-                  return llm.generate({
-                    systemPrompt: payload.systemPrompt || '',
-                    messages: payload.messages || [],
-                    temperature: payload.temperature,
-                    maxTokens: payload.maxTokens,
-                    modelOverride: payload.modelOverride,
-                  });
+                  generate: async () => {
+                    return llm.generate({
+                      systemPrompt: payload.systemPrompt || '',
+                      messages: payload.messages || [],
+                      temperature: payload.temperature,
+                      maxTokens: payload.maxTokens,
+                      modelOverride: payload.modelOverride,
+                      requestContext: req.requestContext,
+                    });
+                  },
                 },
-              });
+                { metadata: requestMetadata }
+              );
             }
           );
 
           lf.info('LLM generation completed', {
             provider,
             model,
+            ...requestMetadata,
           });
 
           setJsonHeaders(res, 200);
@@ -1506,6 +1619,10 @@ async function startServer() {
       if (path === '/api/ask' && req.method === 'POST') {
         try {
           const payload = await getRequestBody(req);
+          req.requestContext = createRequestContext({
+            sessionId: payload?.session_id || null,
+            messageId: null,
+          });
           const question = payload.question;
 
           if (!question || typeof question !== 'string' || !question.trim()) {
@@ -1616,6 +1733,26 @@ async function startServer() {
             console.log(
               `[RAG Endpoint] Retrieved ${candidateResults.length} candidates and reranked to ${results.length} results.`
             );
+
+            const retrievalLogDocument = buildRetrievalLogDocument({
+              requestContext: req.requestContext,
+              query: retrievalQuery,
+              retrievalTime: null,
+              topK: Array.isArray(results) ? results.length : null,
+              retrievedChunks: Array.isArray(results)
+                ? results.map((result, index) => ({
+                    chunkId: result?.chunk_id || result?.chunkId || null,
+                    documentId: result?.doc_id || result?.documentId || result?.source || null,
+                    rank: index + 1,
+                    similarityScore: result?.score ?? result?.similarity_score ?? null,
+                    content: result?.chunk_text || result?.content || result?.text || null,
+                  }))
+                : [],
+            });
+
+            persistRetrievalLog(db, retrievalLogDocument).catch((error) => {
+              console.error('[Retrieval] Background logging failed:', error);
+            });
 
             console.log(
               '[RAG Endpoint] Backend reranked results:',
@@ -1791,6 +1928,29 @@ What is the penalty for violating this provision?`;
               error: evaluationError.message
             };
           }
+
+          const isSuccessfulEvaluation = evaluation && typeof evaluation === 'object' && evaluation.status !== 'failed' && !evaluation.error;
+
+          if (!isSuccessfulEvaluation) {
+            console.warn('[RAGAS] Evaluation did not complete successfully; skipping persistence.', evaluation?.error || evaluation?.status || 'No evaluation result.');
+          } else {
+            try {
+              const evaluationDocument = buildEvaluationResultDocument({
+                requestContext: req.requestContext,
+                question,
+                answer: answerText,
+                goldenAnswer: payload?.goldenAnswer || payload?.golden_answer || null,
+                evaluation,
+                provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+                model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
+                contexts: ragasContexts,
+              });
+
+              await persistEvaluationResult(db, evaluationDocument);
+            } catch (persistError) {
+              console.error('[RAGAS] Persist evaluation document failed:', persistError);
+            }
+          }
           // Find all bracketed citation numbers, e.g., [1], [2]
           const citationRegex = /\[([1-9])\]/g;
           let match;
@@ -1914,6 +2074,10 @@ What is the penalty for violating this provision?`;
           console.log(`[MongoDB] Creating session: ${sessionId}`);
           const now = new Date().toISOString();
           console.log(`[AI Chatbot] Received message for session ${sessionId} from user ${userId}`);
+          const requestContextMetadata = req.requestContext ? {
+            requestId: req.requestContext.requestId,
+            timestamp: req.requestContext.timestamp,
+          } : {};
           const sessionDocument = {
             session_id: sessionId,
             user_id: userId,
@@ -1924,6 +2088,7 @@ What is the penalty for violating this provision?`;
             last_message_at: payload.last_message_at || now,
             message_count: payload.message_count || 0,
             status: payload.status || 'active',
+            ...requestContextMetadata,
           };
 
           await sessionsCollection.updateOne(
@@ -1982,6 +2147,10 @@ What is the penalty for violating this provision?`;
       if (sessionMessagesMatch && req.method === 'GET') {
         try {
           const sessionId = sessionMessagesMatch[1];
+          req.requestContext = createRequestContext({
+            sessionId,
+            messageId: null,
+          });
           const userId = getAuthenticatedUserId(req);
           const sessionsCollection = db.collection('chat_sessions');
           const messagesCollection = db.collection('chat_messages');
@@ -2014,6 +2183,10 @@ What is the penalty for violating this provision?`;
         try {
           const sessionId = sessionMessagesMatch[1];
           const payload = await getRequestBody(req);
+          req.requestContext = createRequestContext({
+            sessionId,
+            messageId: null,
+          });
           const userId = getAuthenticatedUserId(req);
 
           const sessionsCollection = db.collection('chat_sessions');
@@ -2027,6 +2200,10 @@ What is the penalty for violating this provision?`;
           }
 
           const now = new Date().toISOString();
+          const requestContextMetadata = req.requestContext ? {
+            requestId: req.requestContext.requestId,
+            timestamp: req.requestContext.timestamp,
+          } : {};
           const userMsgDoc = {
             message_id: payload.message_id || randomUUID(),
             session_id: session.session_id,
@@ -2035,7 +2212,8 @@ What is the penalty for violating this provision?`;
             content: payload.content || '',
             created_at: now,
             sequence_number: session.message_count + 1,
-            metadata: payload.metadata || {}
+            metadata: payload.metadata || {},
+            ...requestContextMetadata,
           };
           await messagesCollection.insertOne(userMsgDoc);
 
@@ -2057,7 +2235,8 @@ What is the penalty for violating this provision?`;
               content: assistantContent,
               created_at: new Date().toISOString(),
               sequence_number: session.message_count + 2,
-              metadata: assistantMetadata
+              metadata: assistantMetadata,
+              ...requestContextMetadata,
             };
           } else if (session.mode === 'rag') {
             console.log(`[RAG Session Flow] Executing search for question: "${payload.content}"`);
@@ -2117,7 +2296,8 @@ What is the penalty for violating this provision?`;
                   systemPrompt: systemPrompt,
                   messages: [{ role: 'user', content: `Question: ${payload.content}\n\nSearch Context:\n${contextBlock}` }],
                   temperature: 0.1,
-                  maxTokens: 2048
+                  maxTokens: 2048,
+                  requestContext: req.requestContext,
                 });
                 answerText = llmResponse.content || '';
               } catch (llmErr) {
@@ -2373,5 +2553,17 @@ What is the penalty for violating this provision?`;
   }
 }
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  buildEvaluationResultDocument,
+  persistEvaluationResult,
+  buildRetrievalLogDocument,
+  persistRetrievalLog,
+  ensureIndexes,
+  runRagasEvaluation,
+  startServer,
+};
 

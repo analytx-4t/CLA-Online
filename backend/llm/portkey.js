@@ -9,7 +9,7 @@ async function getLogfire() {
 }
 
 const Portkey = require('portkey-ai').default;
-const { buildPortkeyMetadata } = require('./metadata');
+const { buildPortkeyMetadata, buildPortkeyRequestContextOptions } = require('./metadata');
 const { tracePortkeyLLMCall } = require('../langsmith');
 
 if (!process.env.PORTKEY_API_KEY) {
@@ -54,9 +54,15 @@ async function executeChatCompletionDirect({
   maxTokens = 512,
   metadata = {},
   traceId,
+  requestContext,
 }) {
   const lf = await getLogfire();
   const portkeyModel = getPortkeyModel(provider, model);
+  const { metadata: requestContextMetadata, traceId: requestContextTraceId } = buildPortkeyRequestContextOptions(
+    requestContext,
+    metadata,
+    traceId
+  );
 
   const finalMessages = [
     ...(systemPrompt
@@ -64,6 +70,12 @@ async function executeChatCompletionDirect({
       : []),
     ...messages,
   ];
+
+  const requestMetadata = requestContext ? {
+    requestId: requestContext.requestId,
+    sessionId: requestContext.sessionId,
+    messageId: requestContext.messageId,
+  } : {};
 
   return lf.span(
     'Portkey completion',
@@ -75,30 +87,35 @@ async function executeChatCompletionDirect({
       message_count: messages.length,
       has_system_prompt: Boolean(systemPrompt),
       max_tokens: maxTokens,
+      ...requestMetadata,
     },
     {},
     async () => {
-      const response = await tracePortkeyLLMCall({
-        provider,
-        model,
-        temperature,
-        maxTokens,
+      const response = await tracePortkeyLLMCall(
+        {
+          provider,
+          model,
+          temperature,
+          maxTokens,
+          requestContext,
 
-        call: async () => {
-          return portkey.chat.completions.create(
-            {
-              model: portkeyModel,
-              messages: finalMessages,
-              temperature,
-              max_tokens: maxTokens,
-            },
-            {
-              ...(traceId ? { traceId } : {}),
-              metadata: buildPortkeyMetadata(metadata),
-            }
-          );
+          call: async () => {
+            return portkey.chat.completions.create(
+              {
+                model: portkeyModel,
+                messages: finalMessages,
+                temperature,
+                max_tokens: maxTokens,
+              },
+              {
+                ...(requestContextTraceId ? { traceId: requestContextTraceId } : {}),
+                metadata: buildPortkeyMetadata(requestContextMetadata),
+              }
+            );
+          },
         },
-      });
+        { metadata: requestMetadata }
+      );
 
       lf.info('Portkey completion succeeded', {
         provider,
@@ -106,6 +123,7 @@ async function executeChatCompletionDirect({
         input_tokens: response.usage?.prompt_tokens ?? 0,
         output_tokens: response.usage?.completion_tokens ?? 0,
         total_tokens: response.usage?.total_tokens ?? 0,
+        ...requestMetadata,
       });
 
       return response;
@@ -122,6 +140,7 @@ async function createChatCompletion({
   maxTokens = 512,
   metadata = {},
   traceId,
+  requestContext,
 }) {
   try {
     return await executeChatCompletionDirect({
@@ -133,6 +152,7 @@ async function createChatCompletion({
       maxTokens,
       metadata,
       traceId,
+      requestContext,
     });
   } catch (error) {
     console.warn(`Primary provider ${provider} failed: ${error.message || error}. Initiating fallback chain...`);
@@ -160,6 +180,7 @@ async function createChatCompletion({
           maxTokens,
           metadata,
           traceId,
+          requestContext,
         });
         console.log(`Fallback to ${fallback.provider} successful.`);
         return response;
@@ -179,6 +200,7 @@ async function createFallbackChatCompletion({
   maxTokens = 512,
   metadata = {},
   traceId,
+  requestContext,
   configId = process.env.PORTKEY_CONFIG_ID,
 }) {
   if (!configId) {
@@ -192,6 +214,12 @@ async function createFallbackChatCompletion({
     ...messages,
   ];
 
+  const { metadata: requestContextMetadata, traceId: requestContextTraceId } = buildPortkeyRequestContextOptions(
+    requestContext,
+    metadata,
+    traceId
+  );
+
   return portkey.chat.completions.create(
     {
       model: 'llama-3.3-70b-versatile',
@@ -201,9 +229,9 @@ async function createFallbackChatCompletion({
     },
     {
       config: configId,
-      ...(traceId ? { traceId } : {}),
+      ...(requestContextTraceId ? { traceId: requestContextTraceId } : {}),
       metadata: buildPortkeyMetadata({
-        ...metadata,
+        ...requestContextMetadata,
         routing_mode: 'fallback',
       }),
     }

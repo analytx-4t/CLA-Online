@@ -17,6 +17,36 @@ function buildPortkeyMetadata(metadata = {}) {
   );
 }
 
+function buildPortkeyRequestContextOptions(requestContext, metadata = {}, traceId) {
+  if (!requestContext) {
+    return {
+      metadata: metadata || {},
+      traceId,
+    };
+  }
+
+  const nextMetadata = { ...(metadata || {}) };
+  const { requestId, sessionId, messageId } = requestContext;
+
+  if (requestId !== undefined && requestId !== null) {
+    nextMetadata.requestId = requestId;
+  }
+
+  if (sessionId !== undefined && sessionId !== null) {
+    nextMetadata.sessionId = sessionId;
+  }
+
+  if (messageId !== undefined && messageId !== null) {
+    nextMetadata.messageId = messageId;
+  }
+
+  return {
+    metadata: nextMetadata,
+    traceId: traceId || requestId,
+  };
+}
+
 module.exports = {
   buildPortkeyMetadata,
+  buildPortkeyRequestContextOptions,
 };
