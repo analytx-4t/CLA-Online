@@ -14,6 +14,8 @@ from ragas.metrics.collections import (
     Faithfulness,
     AnswerRelevancy,
     ContextPrecisionWithoutReference,
+    ContextRecall,
+    AnswerCorrectness,
 )
 
 from ragas_config import get_ragas_llm_config
@@ -119,7 +121,7 @@ async def run_metric_with_fallback(
         "provider": None,
         "errors": provider_errors,
     }
-async def evaluate_live(question, answer, contexts):
+async def evaluate_live(question, answer, contexts, reference=None):
     # ========================================================
     # VALIDATE INPUT
     # ========================================================
@@ -252,6 +254,8 @@ async def evaluate_live(question, answer, contexts):
         "faithfulness": None,
         "answer_relevancy": None,
         "context_precision": None,
+        "context_recall": None,
+        "answer_correctness": None,
         "hallucination_score": None,
         "overall_score": None,
         "status": "completed",
@@ -332,15 +336,26 @@ async def evaluate_live(question, answer, contexts):
     # This version does not require a golden reference answer.
     # ========================================================
 
+    context_precision_result = {
+        "score": None,
+        "provider": None,
+        "errors": {},
+    }
+
+    try:
         context_precision_result = await run_metric_with_fallback(
-        metric_class=ContextPrecisionWithoutReference,
-        evaluator_providers=evaluator_providers,
-        score_kwargs={
-            "user_input": question,
-            "response": answer,
-            "retrieved_contexts": contexts,
-        },
-    )
+            metric_class=ContextPrecisionWithoutReference,
+            evaluator_providers=evaluator_providers,
+            score_kwargs={
+                "user_input": question,
+                "response": answer,
+                "retrieved_contexts": contexts,
+            },
+        )
+    except Exception as error:
+        context_precision_result["errors"] = {
+            "context_precision": str(error),
+        }
 
     evaluation["context_precision"] = (
         context_precision_result["score"]
@@ -356,7 +371,72 @@ async def evaluate_live(question, answer, contexts):
         )
 
     # ========================================================
-    # 4. HALLUCINATION SCORE
+    # 4. CONTEXT RECALL
+    #
+    # Measures whether the retrieved contexts cover the
+    # reference answer content.
+    # ========================================================
+
+    if reference:
+        context_recall_result = await run_metric_with_fallback(
+            metric_class=ContextRecall,
+            evaluator_providers=evaluator_providers,
+            score_kwargs={
+                "user_input": question,
+                "retrieved_contexts": contexts,
+                "reference": reference,
+            },
+        )
+
+        evaluation["context_recall"] = (
+            context_recall_result["score"]
+        )
+
+        providers_used["context_recall"] = (
+            context_recall_result["provider"]
+        )
+
+        if context_recall_result["score"] is None:
+            errors["context_recall"] = (
+                context_recall_result["errors"]
+            )
+
+    # ========================================================
+    # 5. ANSWER CORRECTNESS
+    #
+    # Measures how correct the generated answer is relative
+    # to the reference answer.
+    # ========================================================
+
+    if reference:
+        answer_correctness_result = await run_metric_with_fallback(
+            metric_class=AnswerCorrectness,
+            evaluator_providers=evaluator_providers,
+            metric_kwargs={
+                "embeddings": evaluator_embeddings,
+            },
+            score_kwargs={
+                "user_input": question,
+                "response": answer,
+                "reference": reference,
+            },
+        )
+
+        evaluation["answer_correctness"] = (
+            answer_correctness_result["score"]
+        )
+
+        providers_used["answer_correctness"] = (
+            answer_correctness_result["provider"]
+        )
+
+        if answer_correctness_result["score"] is None:
+            errors["answer_correctness"] = (
+                answer_correctness_result["errors"]
+            )
+
+    # ========================================================
+    # 6. HALLUCINATION SCORE
     #
     # Derived from Faithfulness:
     #
@@ -372,7 +452,7 @@ async def evaluate_live(question, answer, contexts):
         )
 
     # ========================================================
-    # 5. OVERALL SCORE
+    # 7. OVERALL SCORE
     #
     # Average of all successfully calculated
     # positive quality metrics.
@@ -386,6 +466,8 @@ async def evaluate_live(question, answer, contexts):
         evaluation["faithfulness"],
         evaluation["answer_relevancy"],
         evaluation["context_precision"],
+        evaluation["context_recall"],
+        evaluation["answer_correctness"],
     ]
 
     available_scores = [
@@ -426,11 +508,13 @@ async def main():
             "contexts",
             []
         )
+        reference = payload.get("reference")
 
         result = await evaluate_live(
             question=question,
             answer=answer,
             contexts=contexts,
+            reference=reference,
         )
 
         # IMPORTANT:

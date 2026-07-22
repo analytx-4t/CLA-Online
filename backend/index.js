@@ -14,6 +14,7 @@ const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./res
 const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
 const { createRequestContext } = require('./requestContext');
 const { handleAdminRoutes } = require('./adminRoutes');
+const { Server } = require('socket.io');
 
 let logfire;
 
@@ -110,6 +111,9 @@ async function ensureIndexes(db) {
   const messagesCollection = db.collection('chat_messages');
   const evaluationResultsCollection = db.collection('evaluation_results');
   const retrievalLogsCollection = db.collection('retrieval_logs');
+  const goldenDatasetRunsCollection = db.collection('golden_dataset_runs');
+  const goldenDatasetCollection = db.collection('golden_dataset');
+  const goldenDatasetStateCollection = db.collection('golden_dataset_state');
 
   try {
     await db.createCollection('evaluation_results');
@@ -127,6 +131,22 @@ async function ensureIndexes(db) {
     }
   }
 
+  try {
+    await db.createCollection('golden_dataset_runs');
+  } catch (error) {
+    if (error?.codeName !== 'NamespaceExists' && error?.code !== 48) {
+      throw error;
+    }
+  }
+
+  try {
+    await db.createCollection('golden_dataset_state');
+  } catch (error) {
+    if (error?.codeName !== 'NamespaceExists' && error?.code !== 48) {
+      throw error;
+    }
+  }
+
   await Promise.all([
     sessionsCollection.createIndex({ session_id: 1, user_id: 1 }, { unique: true, name: 'uniq_session_user' }),
     sessionsCollection.createIndex({ user_id: 1, last_message_at: -1 }, { name: 'user_last_message' }),
@@ -134,18 +154,83 @@ async function ensureIndexes(db) {
     messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
     evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
     evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
+    evaluationResultsCollection.createIndex({ sessionId: 1 }, { name: 'eval_session_id' }),
     retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
     retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
+    goldenDatasetCollection.createIndex({ version: 1 }, { name: 'golden_dataset_version' }),
+    goldenDatasetCollection.createIndex({ question: 1 }, { name: 'golden_dataset_question' }),
+    goldenDatasetCollection.createIndex({ id: 1 }, { name: 'golden_dataset_id' }),
+    goldenDatasetRunsCollection.createIndex({ questionId: 1 }, { name: 'golden_dataset_run_question_id' }),
+    goldenDatasetRunsCollection.createIndex({ timestamp: 1 }, { name: 'golden_dataset_run_timestamp' }),
+    goldenDatasetRunsCollection.createIndex({ datasetVersion: 1 }, { name: 'golden_dataset_run_dataset_version' }),
+    evaluationResultsCollection.createIndex({ datasetVersion: 1 }, { name: 'eval_dataset_version' }),
+    goldenDatasetStateCollection.createIndex({ _id: 1 }, { name: 'golden_dataset_state_id' }),
   ]);
 }
 
-function buildEvaluationResultDocument({ requestContext, question, answer, goldenAnswer, evaluation, provider, model, contexts }) {
+async function getCurrentGoldenDatasetVersion(db) {
+  if (!db) {
+    return null;
+  }
+
+  try {
+    const stateCollection = db.collection('golden_dataset_state');
+    const state = await stateCollection.findOne({ _id: 'current' });
+    return state?.version || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function buildEvaluationResultDocument({
+  requestContext,
+  question,
+  answer,
+  goldenAnswer,
+  evaluation,
+  provider,
+  model,
+  contexts,
+  retrievedChunks,
+  retrievedChunkIds,
+  similarityScores,
+  retrievalTime,
+  datasetVersion,
+  userId = null,
+  evaluationStatus = null,
+  evaluationTimeMs = null,
+  suggestions = [],
+  metadata = {},
+  errorMessage = null,
+}) {
   const evaluationData = evaluation && typeof evaluation === 'object' ? evaluation : {};
   const timestamp = new Date().toISOString();
+  const normalizedMetadata = {
+    tokenUsage: metadata?.tokenUsage ?? null,
+    retrievalTime: Number.isFinite(metadata?.retrievalTime ?? retrievalTime) ? (metadata?.retrievalTime ?? retrievalTime) : (Number.isFinite(retrievalTime) ? retrievalTime : null),
+    llmTime: Number.isFinite(metadata?.llmTime) ? metadata.llmTime : null,
+    ragasVersion: metadata?.ragasVersion ?? null,
+  };
+  const calculatedOverallScore = (() => {
+    const candidateScores = [
+      evaluationData.faithfulness ?? evaluationData.faithfulness ?? null,
+      evaluationData.answer_relevancy ?? evaluationData.answerRelevancy ?? null,
+      evaluationData.context_precision ?? evaluationData.contextPrecision ?? null,
+      evaluationData.context_recall ?? evaluationData.contextRecall ?? null,
+      evaluationData.answer_correctness ?? evaluationData.answerCorrectness ?? null,
+    ].filter((score) => Number.isFinite(score));
+
+    if (candidateScores.length === 0) {
+      return null;
+    }
+
+    return Number((candidateScores.reduce((sum, score) => sum + score, 0) / candidateScores.length).toFixed(4));
+  })();
 
   return {
     requestId: requestContext?.requestId || null,
     sessionId: requestContext?.sessionId || null,
+    userId: userId || null,
     question: question || null,
     answer: answer || null,
     timestamp,
@@ -156,22 +241,84 @@ function buildEvaluationResultDocument({ requestContext, question, answer, golde
     contextPrecision: evaluationData.context_precision ?? evaluationData.contextPrecision ?? null,
     contextRecall: evaluationData.context_recall ?? evaluationData.contextRecall ?? null,
     answerCorrectness: evaluationData.answer_correctness ?? evaluationData.answerCorrectness ?? null,
+    overallScore: evaluationData.overall_score ?? evaluationData.overallScore ?? calculatedOverallScore,
     provider: provider || null,
     model: model || null,
+    datasetVersion: datasetVersion || null,
     retrievedContext: Array.isArray(contexts) ? contexts : null,
+    retrievedChunks: Array.isArray(retrievedChunks) ? retrievedChunks : [],
+    retrievedChunkIds: Array.isArray(retrievedChunkIds) ? retrievedChunkIds : [],
+    similarityScores: Array.isArray(similarityScores) ? similarityScores : [],
+    retrievalTime: Number.isFinite(retrievalTime) ? retrievalTime : null,
+    evaluationStatus: evaluationStatus || (evaluationData?.status === 'failed' || evaluationData?.error ? 'failed' : 'completed'),
+    evaluationTimeMs: Number.isFinite(evaluationTimeMs) ? evaluationTimeMs : null,
+    suggestions: Array.isArray(suggestions) ? suggestions : [],
+    errorMessage: errorMessage || (evaluationData?.error ? String(evaluationData.error) : null),
+    metadata: normalizedMetadata,
   };
 }
 
-async function persistEvaluationResult(db, document) {
+async function persistEvaluationResult(db, document, io = null) {
   if (!db) {
     return;
   }
 
   try {
     const evaluationResultsCollection = db.collection('evaluation_results');
-    await evaluationResultsCollection.insertOne(document);
+
+    if (!document?.requestId) {
+      await evaluationResultsCollection.insertOne(document);
+      console.log('[RAGAS DB] Save successful.');
+      return;
+    }
+
+    console.log('[RAGAS DB] Saving evaluation...');
+    const { requestId, ...documentWithoutRequestId } = document;
+    const result = await evaluationResultsCollection.updateOne(
+      { requestId },
+      {
+        $set: documentWithoutRequestId,
+        $setOnInsert: { requestId },
+      },
+      { upsert: true }
+    );
+
+    if (result.upsertedCount > 0) {
+      console.log(`[RAGAS DB] Saved new evaluation for requestId ${document.requestId}`);
+    } else {
+      console.log(`[RAGAS DB] Updated requestId ${document.requestId}`);
+    }
+
+    if (io && document?.requestId) {
+      const broadcastPayload = {
+        requestId: document.requestId,
+        timestamp: document.timestamp || document.evaluationTimestamp || null,
+        question: document.question || null,
+        provider: document.provider || null,
+        model: document.model || null,
+        overallScore: document.overallScore ?? null,
+        evaluationStatus: document.evaluationStatus || null,
+      };
+      io.emit('ragas-evaluation-updated', broadcastPayload);
+      console.log('[RAGAS Live] Evaluation broadcast');
+    }
+
+    console.log('[RAGAS DB] Save successful.');
   } catch (error) {
-    console.error('[RAGAS] Failed to persist evaluation result:', error);
+    console.error('[RAGAS DB] Failed to persist evaluation result:', error);
+  }
+}
+
+async function persistGoldenDatasetRun(db, document) {
+  if (!db) {
+    return;
+  }
+
+  try {
+    const goldenDatasetRunsCollection = db.collection('golden_dataset_runs');
+    await goldenDatasetRunsCollection.insertOne(document);
+  } catch (error) {
+    console.error('[RAGAS] Failed to persist golden dataset run:', error);
   }
 }
 
@@ -1348,7 +1495,7 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
 </body>
 </html>`;
 }
-function runRagasEvaluation(question, answer, contexts) {
+function runRagasEvaluation(question, answer, contexts, referenceAnswer = null) {
   return new Promise((resolve) => {
     const evaluationScript = path.join(
       __dirname,
@@ -1430,6 +1577,7 @@ function runRagasEvaluation(question, answer, contexts) {
       question,
       answer,
       contexts,
+      reference: referenceAnswer || null,
     };
 
     pythonProcess.stdin.write(JSON.stringify(payload));
@@ -1679,6 +1827,8 @@ async function startServer() {
             return;
           }
           let results;
+          let retrievalStartedAt = null;
+          let retrievalTimeMs = null;
 
           try {
             // ----------------------------------------------------------
@@ -1726,11 +1876,13 @@ async function startServer() {
             );
 
             // Existing embedding search remains completely unchanged.
+            retrievalStartedAt = Date.now();
             const candidateResults = await runPythonSearch(
               retrievalQuery,
               15,
               true
             );
+            retrievalTimeMs = Date.now() - retrievalStartedAt;
 
             // Rerank against the ORIGINAL user question.
             // This prevents query expansion from changing the user's intent.
@@ -1845,13 +1997,17 @@ What is the penalty for violating this provision?`;
           }
 
           let llmResponse;
+          let llmStartedAt = null;
+          let llmTimeMs = null;
           try {
+            llmStartedAt = Date.now();
             llmResponse = await llm.generate({
               systemPrompt: systemPrompt,
               messages: [{ role: 'user', content: userContentParts.join('\n\n') }],
               temperature: 0.1,
               maxTokens: 2048
             });
+            llmTimeMs = Date.now() - llmStartedAt;
           } catch (llmErr) {
             console.error('[RAG Endpoint] LLM generation failed:', llmErr);
             setJsonHeaders(res, 500);
@@ -1909,58 +2065,116 @@ What is the penalty for violating this provision?`;
             .map(r => r.chunk_text || r.content || r.text || '')
             .filter(context => context && context.trim());
 
-          // Run live RAGAS evaluation
-          let evaluation;
+          const goldenDataset = db.collection('golden_dataset');
+          const goldenRecord = await goldenDataset.findOne({ question });
+          const currentDatasetVersion = await getCurrentGoldenDatasetVersion(db);
 
-          try {
-            console.log(
-              `[RAGAS] Starting evaluation with ${ragasContexts.length} contexts...`
-            );
+          let evaluation = { status: 'pending' };
 
-            evaluation = await runRagasEvaluation(
-              question,
-              answerText,
-              ragasContexts
-            );
+          setImmediate(() => {
+            console.log('[RAGAS] Background evaluation started...');
 
-            console.log(
-              '[RAGAS] Evaluation completed:',
-              JSON.stringify(evaluation, null, 2)
-            );
-          } catch (evaluationError) {
-            console.error(
-              '[RAGAS] Evaluation failed:',
-              evaluationError
-            );
+            (async () => {
+              const evaluationStartedAt = Date.now();
 
-            evaluation = {
-              status: 'failed',
-              error: evaluationError.message
-            };
-          }
+              try {
+                console.log(
+                  `[RAGAS] Starting evaluation with ${ragasContexts.length} contexts...`
+                );
 
-          const isSuccessfulEvaluation = evaluation && typeof evaluation === 'object' && evaluation.status !== 'failed' && !evaluation.error;
+                evaluation = await runRagasEvaluation(
+                  question,
+                  answerText,
+                  ragasContexts,
+                  goldenRecord?.answer || null
+                );
 
-          if (!isSuccessfulEvaluation) {
-            console.warn('[RAGAS] Evaluation did not complete successfully; skipping persistence.', evaluation?.error || evaluation?.status || 'No evaluation result.');
-          } else {
-            try {
-              const evaluationDocument = buildEvaluationResultDocument({
-                requestContext: req.requestContext,
-                question,
-                answer: answerText,
-                goldenAnswer: payload?.goldenAnswer || payload?.golden_answer || null,
-                evaluation,
-                provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
-                model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
-                contexts: ragasContexts,
-              });
+                console.log(
+                  '[RAGAS] Evaluation completed:',
+                  JSON.stringify(evaluation, null, 2)
+                );
+              } catch (evaluationError) {
+                console.error(
+                  '[RAGAS] Evaluation failed:',
+                  evaluationError
+                );
 
-              await persistEvaluationResult(db, evaluationDocument);
-            } catch (persistError) {
-              console.error('[RAGAS] Persist evaluation document failed:', persistError);
-            }
-          }
+                evaluation = {
+                  status: 'failed',
+                  error: evaluationError.message,
+                };
+              }
+
+              const evaluationTimeMs = Date.now() - evaluationStartedAt;
+              const evaluationStatus = evaluation && typeof evaluation === 'object' && (evaluation.status === 'failed' || evaluation.error)
+                ? 'failed'
+                : 'completed';
+
+              try {
+                const evaluationDocument = buildEvaluationResultDocument({
+                  requestContext: req.requestContext,
+                  question,
+                  answer: answerText,
+                  goldenAnswer: payload?.goldenAnswer || payload?.golden_answer || null,
+                  evaluation,
+                  provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+                  model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
+                  contexts: ragasContexts,
+                  retrievedChunks: ragasContexts,
+                  retrievedChunkIds: Array.isArray(results) ? results.map((result) => result.embedding_id || result.record_id || result.parent_id || null).filter(Boolean) : [],
+                  similarityScores: Array.isArray(results) ? results.map((result) => (Number.isFinite(result?.score) ? result.score : (Number.isFinite(result?.rrf_score) ? result.rrf_score : null))).filter((value) => value !== null) : [],
+                  retrievalTime: retrievalTimeMs ?? null,
+                  datasetVersion: currentDatasetVersion || goldenRecord?.version || null,
+                  userId: getAuthenticatedUserId(req),
+                  evaluationStatus,
+                  evaluationTimeMs,
+                  suggestions,
+                  metadata: {
+                    tokenUsage: evaluation?.tokenUsage ?? null,
+                    retrievalTime: retrievalTimeMs ?? null,
+                    llmTime: llmTimeMs ?? null,
+                    ragasVersion: evaluation?.ragasVersion ?? null,
+                  },
+                  errorMessage: evaluation?.error || null,
+                });
+
+                await persistEvaluationResult(db, evaluationDocument, io);
+
+                if (goldenRecord) {
+                  const goldenRunDocument = {
+                    datasetVersion: goldenRecord.version || null,
+                    questionId: goldenRecord.id || null,
+                    question: goldenRecord.question || question,
+                    chatbotAnswer: answerText,
+                    referenceAnswer: goldenRecord.answer || null,
+                    retrievedChunks: ragasContexts,
+                    retrievedChunkIds: Array.isArray(results) ? results.map((result) => result.embedding_id || result.record_id || result.parent_id || null).filter(Boolean) : [],
+                    similarityScores: Array.isArray(results) ? results.map((result) => (Number.isFinite(result?.score) ? result.score : (Number.isFinite(result?.rrf_score) ? result.rrf_score : null))).filter((value) => value !== null) : [],
+                    ragasMetrics: {
+                      faithfulness: evaluation.faithfulness ?? null,
+                      answerRelevancy: evaluation.answer_relevancy ?? evaluation.answerRelevancy ?? null,
+                      contextPrecision: evaluation.context_precision ?? evaluation.contextPrecision ?? null,
+                      contextRecall: evaluation.context_recall ?? evaluation.contextRecall ?? null,
+                      answerCorrectness: evaluation.answer_correctness ?? evaluation.answerCorrectness ?? null,
+                    },
+                    retrievalTime: retrievalTimeMs ?? null,
+                    llmTime: llmTimeMs ?? null,
+                    datasetVersion: currentDatasetVersion || goldenRecord?.version || null,
+                    provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER || null,
+                    model: llmResponse?.model || settings.DEFAULT_LLM_MODEL || null,
+                    timestamp: new Date().toISOString(),
+                    status: 'completed',
+                  };
+
+                  await persistGoldenDatasetRun(db, goldenRunDocument);
+                }
+              } catch (persistError) {
+                console.error('[RAGAS] Persist evaluation document failed:', persistError);
+              }
+            })().catch((backgroundError) => {
+              console.error('[RAGAS] Background evaluation crashed:', backgroundError);
+            });
+          });
           // Find all bracketed citation numbers, e.g., [1], [2]
           const citationRegex = /\[([1-9])\]/g;
           let match;
@@ -2541,6 +2755,20 @@ What is the penalty for violating this provision?`;
 
       setJsonHeaders(res, 404);
       res.end(JSON.stringify({ error: 'Not found' }));
+    });
+
+    const io = new Server(server, {
+      cors: {
+        origin: '*',
+        methods: ['GET', 'POST'],
+      },
+    });
+
+    io.on('connection', (socket) => {
+      console.log('[RAGAS Live] Client connected');
+      socket.on('disconnect', () => {
+        console.log('[RAGAS Live] Client disconnected');
+      });
     });
 
     server.listen(PORT, () => {
