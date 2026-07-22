@@ -4,24 +4,49 @@ define user ask guardrail check
 define flow scripted dialog
   # Greetings
   if "hello" in $user_request
-    "{\"allowed\": false, \"category\": \"DIALOG\", \"response\": \"Hello — I am CLA, your corporate legal assistant. Ask me about company law, case law, circulars, or corporate compliance.\"}"
+    "{\"allowed\": false, \"category\": \"DIALOG\", \"response\": \"Hello! I'm CLA, your Corporate Law Advisor. I can assist with Company Law, SEBI, FEMA, RBI regulations, taxation, labour laws, MCA compliance, contracts, insolvency, and other Indian corporate legal matters. How can I help you today?\"}"
+
   else if "hi" in $user_request
-    "{\"allowed\": false, \"category\": \"DIALOG\", \"response\": \"Hi — I'm CLA, here to help with corporate legal questions.\"}"
+    "{\"allowed\": false, \"category\": \"DIALOG\", \"response\": \"Hi! Welcome to CLA. I'm here to help with your Indian corporate and legal questions, including Company Law, SEBI, FEMA, taxation, labour laws, contracts, and compliance matters.\"}"
 
   # Goodbyes
   else if "bye" in $user_request
-    "{\"allowed\": false, \"category\": \"GOODBYE\", \"response\": \"Goodbye. Feel free to return whenever you need help with a corporate legal query.\"}"
+    "{\"allowed\": false, \"category\": \"GOODBYE\", \"response\": \"Goodbye! It was a pleasure assisting you. If you need help with Indian corporate law or compliance in the future, I'll be here to assist.\"}"
+
   else if "goodbye" in $user_request
-    "{\"allowed\": false, \"category\": \"GOODBYE\", \"response\": \"Goodbye. Feel free to return whenever you need help with a corporate legal query.\"}"
+    "{\"allowed\": false, \"category\": \"GOODBYE\", \"response\": \"Goodbye! It was a pleasure assisting you. If you need help with Indian corporate law or compliance in the future, I'll be here to assist.\"}"
+
   else if "see you" in $user_request
-    "{\"allowed\": false, \"category\": \"GOODBYE\", \"response\": \"See you — feel free to come back with more legal questions.\"}"
+    "{\"allowed\": false, \"category\": \"GOODBYE\", \"response\": \"See you soon! Whenever you have questions about Indian corporate law or regulatory compliance, feel free to return.\"}"
 
   # Help / identity
   else if "who are you" in $user_request
-    "{\"allowed\": false, \"category\": \"DIALOG\", \"response\": \"I am CLA, a corporate law research assistant focused on Indian corporate and commercial law.\"}"
-  else if "help" in $user_request
-    "{\"allowed\": false, \"category\": \"DIALOG\", \"response\": \"Ask me about company law, case law, circulars, or compliance matters.\"}"
+    "{\"allowed\": false, \"category\": \"DIALOG\", \"response\": \"I'm CLA (Corporate Law Advisor), an AI assistant specializing in Indian corporate and commercial law. I can help explain legal provisions, compliance requirements, SEBI regulations, FEMA, taxation, labour laws, MCA filings, contracts, and related legal topics.\"}"
 
+  else if "help" in $user_request
+    "{\"allowed\": false, \"category\": \"DIALOG\", \"response\": \"I can help with Company Law, Insolvency & Bankruptcy Code (IBC), SEBI regulations, FEMA, RBI guidelines, MCA compliance, taxation, labour laws, contracts, corporate governance, and legal circulars. Please ask your legal question.\"}"
+
+define flow safety checks
+  # Prompt injection / jailbreak patterns
+  if "ignore previous instructions" in $user_request
+    "{\"allowed\": false, \"category\": \"JAILBREAK\", \"response\": \"I can't assist with requests to bypass safety measures, reveal internal instructions, or override my operating guidelines. If you have a question related to Indian corporate or legal matters, I'll be happy to help.\"}"
+
+  else if "reveal your system prompt" in $user_request
+    "{\"allowed\": false, \"category\": \"JAILBREAK\", \"response\": \"My internal instructions and system configuration aren't available to share. However, I'd be happy to assist with any questions related to Indian corporate law or regulatory compliance.\"}"
+
+  # Sensitive / illegal topics
+  else if "how to hack" in $user_request
+    "{\"allowed\": false, \"category\": \"SENSITIVE_TOPIC\", \"response\": \"I'm unable to assist with requests involving illegal or harmful activities. If you have questions about Indian corporate law, regulations, or compliance, feel free to ask.\"}"
+
+  else if "make explosives" in $user_request
+    "{\"allowed\": false, \"category\": \"SENSITIVE_TOPIC\", \"response\": \"I'm unable to assist with requests involving illegal or harmful activities. If you have questions about Indian corporate law, regulations, or compliance, feel free to ask.\"}"
+
+  # Off-topic examples
+  else if "who won" in $user_request
+    "{\"allowed\": false, \"category\": \"OFF_TOPIC\", \"response\": \"I'm specialized in Indian corporate and commercial law, so I can't assist with that topic. If you have questions about Company Law, SEBI, FEMA, RBI, taxation, labour law, contracts, insolvency, or corporate compliance, I'd be happy to help.\"}"
+
+  else if "cricket" in $user_request
+    "{\"allowed\": false, \"category\": \"OFF_TOPIC\", \"response\": \"I'm specialized in Indian corporate and commercial law, so I can't assist with that topic. If you have questions about Company Law, SEBI, FEMA, RBI, taxation, labour law, contracts, insolvency, or corporate compliance, I'd be happy to help.\"}"
 define flow safety checks
   # Prompt injection / jailbreak patterns
   if "ignore previous instructions" in $user_request
