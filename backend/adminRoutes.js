@@ -67,8 +67,16 @@ function buildRagasListQuery(url) {
   };
 }
 
+// Online Eval only ever shows real end-user chatbot traffic — golden-dataset
+// benchmark runs go through the same /api/ask endpoint but are tagged with
+// source: 'golden_dataset' and have their own view (the Golden Dataset page,
+// backed by golden_dataset_runs). Documents predating this field have no
+// `source` at all, which $ne treats as a match (correct: they're real chat
+// history, not benchmark runs).
+const EXCLUDE_GOLDEN_DATASET_SOURCE = { source: { $ne: 'golden_dataset' } };
+
 function getRagasFilter(query) {
-  const filter = {};
+  const filter = { ...EXCLUDE_GOLDEN_DATASET_SOURCE };
 
   if (query.search) {
     filter.$or = [
@@ -112,18 +120,36 @@ async function handleAdminRoutes(req, res, db) {
   }
 
   if (path === '/api/admin/overview' && req.method === 'GET') {
-    sendJson(res, 200, {
-      success: true,
-      data: {
-        totalRequests: 0,
-        totalEvaluations: 0,
-        avgFaithfulness: null,
-        avgAnswerRelevancy: null,
-        avgContextPrecision: null,
-        avgContextRecall: null,
-        avgAnswerCorrectness: null,
-      },
-    });
+    try {
+      const evaluationResultsCollection = db.collection('evaluation_results');
+      const evaluations = await evaluationResultsCollection.find(EXCLUDE_GOLDEN_DATASET_SOURCE).toArray();
+
+      const numericFields = ['faithfulness', 'answerRelevancy', 'contextPrecision', 'contextRecall', 'piiLeakage'];
+      const averages = {};
+
+      numericFields.forEach((field) => {
+        const values = evaluations
+          .map(item => Number(item[field]))
+          .filter((value) => Number.isFinite(value));
+
+        averages[field] = values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+      });
+
+      setJsonHeaders(res, 200);
+      res.end(JSON.stringify({
+        totalRequests: evaluations.length,
+        totalEvaluations: evaluations.length,
+        avgFaithfulness: averages.faithfulness,
+        avgAnswerRelevancy: averages.answerRelevancy,
+        avgContextPrecision: averages.contextPrecision,
+        avgContextRecall: averages.contextRecall,
+        avgPiiLeakage: averages.piiLeakage,
+      }));
+    } catch (error) {
+      setJsonHeaders(res, 500);
+      res.end(JSON.stringify({ error: 'Unable to load admin overview.' }));
+    }
+
     return true;
   }
 
@@ -173,57 +199,343 @@ async function handleAdminRoutes(req, res, db) {
   }
 
   if (path === '/api/admin/ragas' && req.method === 'GET') {
-    sendJson(res, 200, {
-      success: true,
-      data: [],
-      pagination: {
-        page: 1,
-        limit: 20,
-        total: 0,
-        totalPages: 1,
-      },
-    });
+    try {
+      console.log('[RAGAS API] Fetching evaluations...', req.url);
+      const evaluationResultsCollection = db.collection('evaluation_results');
+      const query = buildRagasListQuery(req.url);
+      const filter = getRagasFilter(query);
+      const sortField = query.sortField === 'timestamp' ? 'timestamp' : query.sortField;
+      const sortSpec = { [sortField]: query.sortOrder };
+
+      console.log('[RAGAS API] Mongo query', JSON.stringify({ filter, sortSpec, page: query.page, limit: query.limit }));
+
+      const total = await evaluationResultsCollection.countDocuments(filter);
+      console.log('[RAGAS API] Total documents matching filter:', total);
+
+      const evaluations = await evaluationResultsCollection
+        .find(filter)
+        .sort(sortSpec)
+        .skip((query.page - 1) * query.limit)
+        .limit(query.limit)
+        .project({
+          _id: 0,
+          requestId: 1,
+          timestamp: 1,
+          evaluationTimestamp: 1,
+          question: 1,
+          overallScore: 1,
+          evaluationStatus: 1,
+          provider: 1,
+          model: 1,
+          sessionId: 1,
+        })
+        .toArray();
+
+      console.log('[RAGAS API] Documents found:', evaluations.length);
+
+      const normalized = evaluations
+        .map(normalizeRagasRecord)
+        .filter(Boolean);
+
+      console.log('[RAGAS API] Sending response', JSON.stringify({
+        success: true,
+        dataLength: normalized.length,
+        page: query.page,
+        limit: query.limit,
+        total,
+      }));
+
+      sendJson(res, 200, {
+        success: true,
+        data: normalized,
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / query.limit)),
+        },
+      });
+    } catch (error) {
+      console.error('[RAGAS API] Failed to fetch evaluations', error);
+      sendJson(res, 500, {
+        success: false,
+        error: 'Unable to load RAGAS evaluations.',
+        details: error?.message || null,
+      });
+    }
+
+    return true;
+  }
+
+  if (path === '/api/admin/golden-dataset/evaluations' && req.method === 'GET') {
+    try {
+      const goldenDatasetRunsCollection = db.collection('golden_dataset_runs');
+      const evaluations = await goldenDatasetRunsCollection.find({}).sort({ timestamp: -1 }).toArray();
+
+      const response = evaluations.map((item) => ({
+        id: item._id?.toString() || null,
+        question: item.question || null,
+        status: item.status || null,
+        faithfulness: item.ragasMetrics?.faithfulness ?? null,
+        answerRelevancy: item.ragasMetrics?.answerRelevancy ?? null,
+        contextPrecision: item.ragasMetrics?.contextPrecision ?? null,
+        contextRecall: item.ragasMetrics?.contextRecall ?? null,
+        piiLeakage: item.ragasMetrics?.piiLeakage ?? null,
+        retrievalTime: item.retrievalTime ?? null,
+        llmTime: item.llmTime ?? null,
+        retrievedChunks: Array.isArray(item.retrievedChunks) ? item.retrievedChunks : [],
+        retrievedChunkIds: Array.isArray(item.retrievedChunkIds) ? item.retrievedChunkIds : [],
+        similarityScores: Array.isArray(item.similarityScores) ? item.similarityScores : [],
+        chatbotAnswer: item.chatbotAnswer || null,
+        referenceAnswer: item.referenceAnswer || null,
+        timestamp: item.timestamp || null,
+        metadata: {
+          questionId: item.questionId || null,
+          datasetVersion: item.datasetVersion || null,
+          provider: item.provider || null,
+          model: item.model || null,
+          error: item.error || null,
+        },
+      }));
+
+      setJsonHeaders(res, 200);
+      res.end(JSON.stringify({ evaluations: response }));
+    } catch (error) {
+      setJsonHeaders(res, 500);
+      res.end(JSON.stringify({ error: 'Unable to load golden dataset evaluations.' }));
+    }
+
     return true;
   }
 
   if (path === '/api/admin/ragas/stats' && req.method === 'GET') {
-    sendJson(res, 200, {
-      success: true,
-      data: {
-        totalEvaluations: 0,
-        avgFaithfulness: null,
-        avgAnswerRelevancy: null,
-        avgContextPrecision: null,
-        avgContextRecall: null,
-        avgAnswerCorrectness: null,
-        avgOverallScore: null,
-        successRate: 0,
-        failureRate: 0,
-        avgEvaluationTime: null,
-        totalFailedEvaluations: 0,
-        providerDistribution: [],
-        modelDistribution: [],
-        evaluationsToday: 0,
-        evaluationsThisWeek: 0,
-        evaluationsThisMonth: 0,
-      },
-    });
+    try {
+      const evaluationResultsCollection = db.collection('evaluation_results');
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - 6);
+      startOfWeek.setHours(0, 0, 0, 0);
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+
+      // Score averages (overall/faithfulness/relevancy/precision/recall/PII) are
+      // computed only from non-failed rows — a failed evaluation has no real
+      // metric values to average in, and mixing it in would understate scores
+      // that were never actually produced. Counts (total/success/failed/time)
+      // still reflect every row so the failure rate itself stays accurate.
+      const pipeline = [
+        { $match: EXCLUDE_GOLDEN_DATASET_SOURCE },
+        {
+          $facet: {
+            totals: [
+              {
+                $group: {
+                  _id: null,
+                  totalEvaluations: { $sum: 1 },
+                  successCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'completed'] }, 1, 0] } },
+                  failedCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'failed'] }, 1, 0] } },
+                  avgEvaluationTime: { $avg: '$evaluationTimeMs' },
+                },
+              },
+            ],
+            scores: [
+              { $match: { evaluationStatus: { $ne: 'failed' } } },
+              {
+                $group: {
+                  _id: null,
+                  avgFaithfulness: { $avg: '$faithfulness' },
+                  avgAnswerRelevancy: { $avg: '$answerRelevancy' },
+                  avgContextPrecision: { $avg: '$contextPrecision' },
+                  avgContextRecall: { $avg: '$contextRecall' },
+                  avgPiiLeakage: { $avg: '$piiLeakage' },
+                  avgOverallScore: { $avg: '$overallScore' },
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const facetResult = await evaluationResultsCollection.aggregate(pipeline).toArray();
+      const aggregate = {
+        ...(facetResult[0]?.totals?.[0] || {}),
+        ...(facetResult[0]?.scores?.[0] || {}),
+      };
+
+      const providerStats = await evaluationResultsCollection.aggregate([
+        { $match: EXCLUDE_GOLDEN_DATASET_SOURCE },
+        { $group: { _id: '$provider', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]).toArray();
+
+      const modelStats = await evaluationResultsCollection.aggregate([
+        { $match: EXCLUDE_GOLDEN_DATASET_SOURCE },
+        { $group: { _id: '$model', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]).toArray();
+
+      const dayCount = await evaluationResultsCollection.countDocuments({
+        ...EXCLUDE_GOLDEN_DATASET_SOURCE,
+        timestamp: { $gte: startOfToday.toISOString() },
+      });
+      const weekCount = await evaluationResultsCollection.countDocuments({
+        ...EXCLUDE_GOLDEN_DATASET_SOURCE,
+        timestamp: { $gte: startOfWeek.toISOString() },
+      });
+      const monthCount = await evaluationResultsCollection.countDocuments({
+        ...EXCLUDE_GOLDEN_DATASET_SOURCE,
+        timestamp: { $gte: startOfMonth.toISOString() },
+      });
+
+      const totalEvaluations = Number(aggregate.totalEvaluations || 0);
+      const successCount = Number(aggregate.successCount || 0);
+      const failedCount = Number(aggregate.failedCount || 0);
+      const successRate = totalEvaluations > 0 ? successCount / totalEvaluations : 0;
+      const failureRate = totalEvaluations > 0 ? failedCount / totalEvaluations : 0;
+
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          totalEvaluations,
+          avgFaithfulness: aggregate.avgFaithfulness ?? null,
+          avgAnswerRelevancy: aggregate.avgAnswerRelevancy ?? null,
+          avgContextPrecision: aggregate.avgContextPrecision ?? null,
+          avgContextRecall: aggregate.avgContextRecall ?? null,
+          avgPiiLeakage: aggregate.avgPiiLeakage ?? null,
+          avgOverallScore: aggregate.avgOverallScore ?? null,
+          successRate,
+          failureRate,
+          avgEvaluationTime: aggregate.avgEvaluationTime ?? null,
+          totalFailedEvaluations: failedCount,
+          providerDistribution: providerStats.map((item) => ({ provider: item._id || null, count: item.count })),
+          modelDistribution: modelStats.map((item) => ({ model: item._id || null, count: item.count })),
+          evaluationsToday: dayCount,
+          evaluationsThisWeek: weekCount,
+          evaluationsThisMonth: monthCount,
+        },
+      });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: 'Unable to load RAGAS stats.' });
+    }
+
     return true;
   }
 
   if (path.startsWith('/api/admin/ragas/') && req.method === 'GET') {
-    sendJson(res, 200, {
-      success: true,
-      data: null,
-    });
+    try {
+      const requestId = path.split('/').filter(Boolean).pop();
+      const evaluationResultsCollection = db.collection('evaluation_results');
+      const evaluationDoc = await evaluationResultsCollection.findOne({ requestId });
+
+      if (!evaluationDoc) {
+        sendJson(res, 404, { success: false, error: 'Evaluation not found.' });
+        return true;
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          requestId: evaluationDoc.requestId || null,
+          sessionId: evaluationDoc.sessionId || null,
+          question: evaluationDoc.question || null,
+          answer: evaluationDoc.answer || null,
+          retrievedContext: Array.isArray(evaluationDoc.retrievedContext)
+            ? evaluationDoc.retrievedContext
+            : (evaluationDoc.retrievedContext ? [evaluationDoc.retrievedContext] : null),
+          faithfulness: evaluationDoc.faithfulness ?? null,
+          faithfulnessReason: evaluationDoc.faithfulnessReason ?? null,
+          answerRelevancy: evaluationDoc.answerRelevancy ?? null,
+          answerRelevancyReason: evaluationDoc.answerRelevancyReason ?? null,
+          contextPrecision: evaluationDoc.contextPrecision ?? null,
+          contextPrecisionReason: evaluationDoc.contextPrecisionReason ?? null,
+          contextRecall: evaluationDoc.contextRecall ?? null,
+          contextRecallReason: evaluationDoc.contextRecallReason ?? null,
+          piiLeakage: evaluationDoc.piiLeakage ?? null,
+          piiLeakageReason: evaluationDoc.piiLeakageReason ?? null,
+          overallScore: evaluationDoc.overallScore ?? null,
+          provider: evaluationDoc.provider || null,
+          model: evaluationDoc.model || null,
+          evaluationTimeMs: evaluationDoc.evaluationTimeMs ?? null,
+          metadata: evaluationDoc.metadata || null,
+          suggestions: Array.isArray(evaluationDoc.suggestions) ? evaluationDoc.suggestions : [],
+          evaluationStatus: evaluationDoc.evaluationStatus || null,
+          errorMessage: evaluationDoc.errorMessage || null,
+          timestamp: evaluationDoc.timestamp || evaluationDoc.evaluationTimestamp || null,
+        },
+      });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: 'Unable to load evaluation details.' });
+    }
+
     return true;
   }
 
   if (path.startsWith('/api/admin/request/') && req.method === 'GET') {
-    sendJson(res, 200, {
-      success: true,
-      data: null,
-    });
+    try {
+      const requestId = path.split('/').filter(Boolean).pop();
+      const evaluationResultsCollection = db.collection('evaluation_results');
+      const evaluationDoc = await evaluationResultsCollection.findOne({ requestId });
+
+      if (!evaluationDoc) {
+        setJsonHeaders(res, 404);
+        res.end(JSON.stringify({ error: 'Request not found.' }));
+        return true;
+      }
+
+      const sessionsCollection = db.collection('chat_sessions');
+      const messagesCollection = db.collection('chat_messages');
+
+      const session = evaluationDoc.sessionId
+        ? await sessionsCollection.findOne({ session_id: evaluationDoc.sessionId }) || null
+        : null;
+      const messages = evaluationDoc.sessionId
+        ? await messagesCollection.find({ session_id: evaluationDoc.sessionId }).toArray()
+        : [];
+
+      const response = {
+        request: {
+          requestId: evaluationDoc.requestId || null,
+          sessionId: evaluationDoc.sessionId || null,
+          question: evaluationDoc.question || null,
+          answer: evaluationDoc.answer || null,
+          timestamp: evaluationDoc.timestamp || evaluationDoc.evaluationTimestamp || null,
+        },
+        evaluation: {
+          faithfulness: evaluationDoc.faithfulness ?? null,
+          answerRelevancy: evaluationDoc.answerRelevancy ?? null,
+          contextPrecision: evaluationDoc.contextPrecision ?? null,
+          contextRecall: evaluationDoc.contextRecall ?? null,
+          piiLeakage: evaluationDoc.piiLeakage ?? null,
+          overallScore: evaluationDoc.overallScore ?? null,
+          provider: evaluationDoc.provider || null,
+          model: evaluationDoc.model || null,
+        },
+        session: session ? {
+          session_id: session.session_id || null,
+          user_id: session.user_id || null,
+          mode: session.mode || null,
+          created_at: session.created_at || null,
+        } : null,
+        messages: messages.map((message) => ({
+          message_id: message.message_id || null,
+          role: message.role || null,
+          content: message.content || null,
+          created_at: message.created_at || null,
+        })),
+        retrievedContext: Array.isArray(evaluationDoc.retrievedContext)
+          ? evaluationDoc.retrievedContext
+          : (evaluationDoc.retrievedContext ? [evaluationDoc.retrievedContext] : null),
+        provider: evaluationDoc.provider || null,
+        model: evaluationDoc.model || null,
+      };
+
+      setJsonHeaders(res, 200);
+      res.end(JSON.stringify(response));
+    } catch (error) {
+      setJsonHeaders(res, 500);
+      res.end(JSON.stringify({ error: 'Unable to load request details.' }));
+    }
+
     return true;
   }
 

@@ -138,7 +138,11 @@ async function handleGoldenDatasetRoutes(req, res, db) {
 
   if (path.startsWith('/api/admin/golden-dataset/') && req.method === 'GET') {
     const id = path.split('/').filter(Boolean).pop();
-    if (id && id !== 'golden-dataset' && id !== 'evaluations' && id !== 'evaluate') {
+    // 'evaluations' is a named sub-route (handled in adminRoutes.js), not a
+    // record id — without this exclusion it was being swallowed here as a
+    // lookup for a record literally named "evaluations", which always 404s
+    // and meant the Evaluation Results table could never load real data.
+    if (id && id !== 'golden-dataset' && id !== 'evaluations') {
       try {
         const record = await getGoldenDatasetById(id);
         if (!record) {
@@ -171,35 +175,35 @@ async function handleGoldenDatasetRoutes(req, res, db) {
     }
   }
 
-  if (path === '/api/admin/golden-dataset/evaluate' && (req.method === 'POST' || (stream && req.method === 'GET'))) {
-    if (stream) {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
+  if (path === '/api/admin/golden-dataset/evaluate' && req.method === 'POST') {
+    try {
+      const questionCount = await db.collection('golden_dataset').countDocuments({});
+
+      // Each question here runs a full answer generation plus a 5-metric
+      // LLM-judge evaluation (the same one Online Eval uses) — realistically
+      // a minute or more per question. Awaiting the whole batch in this
+      // request used to hold the HTTP connection open for the entire run,
+      // which reads as "stuck" (and risks hitting browser/proxy idle
+      // timeouts long before it's actually done). Run it in the background
+      // instead and let the dataset table pick up rows as they land.
+      setImmediate(async () => {
+        try {
+          const result = await runGoldenDatasetEvaluation({ baseUrl: process.env.GOLDEN_DATASET_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`, db });
+          console.log('[Golden Dataset] Evaluation run finished:', JSON.stringify({ status: result.status, count: result.count }));
+        } catch (error) {
+          console.error('[Golden Dataset] Evaluation run failed:', error);
+        }
       });
-      res.write('retry: 10000\n\n');
 
-      try {
-        const evaluationSessionId = requestUrl.searchParams.get('evaluationSessionId') || null;
-        const summary = await evaluatePreparedDataset({
-          evaluationSessionId,
-          onProgress: (payload) => writeSseEvent(res, 'row', payload),
-        });
-
-        writeSseEvent(res, 'completion', summary);
-        res.end();
-      } catch (error) {
-        writeSseEvent(res, 'completion', {
-          status: 'failed',
-          total: 0,
-          success: 0,
-          failed: 0,
-          error: error.message || 'Golden dataset evaluation failed.',
-        });
-        res.end();
-      }
+      setJsonHeaders(res, 202);
+      res.end(JSON.stringify({
+        message: `Evaluation started for ${questionCount} question${questionCount === 1 ? '' : 's'}. This runs in the background — results will appear in the table below as each question finishes (roughly a minute or more per question).`,
+        questionCount,
+      }));
+      return true;
+    } catch (error) {
+      setJsonHeaders(res, 500);
+      res.end(JSON.stringify({ error: error.message || 'Unable to run evaluation.' }));
       return true;
     }
 

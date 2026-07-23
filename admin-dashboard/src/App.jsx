@@ -24,7 +24,7 @@ export default function App() {
 
         <AnimatePresence>
           {mobileMenuOpen && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-30 bg-ink/45 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-30 bg-overlay/55 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
           )}
         </AnimatePresence>
 
@@ -36,9 +36,9 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <div className="flex min-h-screen flex-1 flex-col">
+        <div className="flex min-h-screen min-w-0 flex-1 flex-col">
           <Navbar onMenuToggle={() => setMobileMenuOpen(true)} />
-          <main className="mx-auto flex-1 w-full max-w-[1680px] p-4 sm:p-5 lg:p-6">
+          <main className="mx-auto min-w-0 flex-1 w-full max-w-[1680px] p-4 sm:p-5 lg:p-6">
             <Routes>
               <Route path="/" element={<OverviewPage />} />
               <Route path="/online-eval" element={<OnlineEvalPage />} />

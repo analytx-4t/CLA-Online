@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileUp, Loader2, Search, RefreshCw, UploadCloud } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { FileUp, Search, RefreshCw, UploadCloud } from 'lucide-react';
 import DataTable from '../components/DataTable';
 import Drawer from '../components/Drawer';
 import MetricCard from '../components/MetricCard';
+import MarkdownContent from '../components/MarkdownContent';
 
 const PAGE_SIZE = 10;
 
@@ -40,7 +43,7 @@ export default function GoldenDatasetPage() {
     lastUpload: '—',
     lastEvaluation: '—',
     avgFaithfulness: '—',
-    avgAnswerCorrectness: '—',
+    avgPiiLeakage: '—',
   });
   const [evaluations, setEvaluations] = useState([]);
   const [evaluationSessionId, setEvaluationSessionId] = useState(null);
@@ -68,6 +71,8 @@ export default function GoldenDatasetPage() {
   const generationPollRef = useRef(null);
   const lastDatasetSignatureRef = useRef('');
   const lastEvaluationsSignatureRef = useRef('');
+  const [evaluationRunning, setEvaluationRunning] = useState(false);
+  const evaluationPollRef = useRef(null);
 
   const stopGenerationPolling = useCallback(() => {
     if (generationPollRef.current) {
@@ -110,13 +115,6 @@ export default function GoldenDatasetPage() {
       setGenerationStatus(payload.generationStatus || 'idle');
 
       const versions = dataset.map((item) => item.version).filter(Boolean);
-      const evaluations = dataset.filter((item) => item.lastEvaluation || item.last_evaluation);
-      const faithfulnessValues = dataset
-        .map((item) => Number(item.avgFaithfulness ?? item.avg_faithfulness))
-        .filter((value) => Number.isFinite(value));
-      const correctnessValues = dataset
-        .map((item) => Number(item.avgAnswerCorrectness ?? item.avg_answer_correctness))
-        .filter((value) => Number.isFinite(value));
 
       setSummaryMeta({
         version: payload.version || versions[0] || '—',
@@ -137,6 +135,12 @@ export default function GoldenDatasetPage() {
       if (payload.generationStatus === 'completed' || payload.generationStatus === 'failed' || payload.generationStatus === 'idle') {
         stopGenerationPolling();
       }
+      setSummary((prev) => ({
+        ...prev,
+        version: payload.version || versions[0] || '—',
+        totalQuestions: dataset.length,
+        lastUpload: payload.uploadedAt || dataset[0]?.uploadedAt || dataset[0]?.uploaded_at || '—',
+      }));
     } catch (error) {
       console.error(error);
     } finally {
@@ -151,24 +155,31 @@ export default function GoldenDatasetPage() {
       setEvaluationsLoading(true);
       const response = await fetch('http://127.0.0.1:3000/api/admin/golden-dataset/evaluations');
       const payload = await response.json();
+      const list = Array.isArray(payload.evaluations) ? payload.evaluations : [];
+      setEvaluations(list);
 
-      const parsedRows = Array.isArray(payload.evaluations)
-        ? payload.evaluations
-        : Array.isArray(payload.data)
-          ? payload.data
-          : [];
-      const dedupedRows = mergeUniqueRows(parsedRows);
-      const nextSignature = JSON.stringify(dedupedRows.map((row) => ({
-        question: row?.question || '',
-        timestamp: row?.timestamp || '',
-        status: row?.status || '',
-      })));
+      // Summary averages are derived here, from real completed runs, rather
+      // than from a per-record field that's never actually written on
+      // upload — that field was always empty, so these cards always showed
+      // "—" regardless of how many evaluations had actually run.
+      const completedRuns = list.filter((item) => item.status === 'completed' || item.status === 'partial');
+      const faithfulnessValues = completedRuns.map((item) => Number(item.faithfulness)).filter(Number.isFinite);
+      const piiLeakageValues = completedRuns.map((item) => Number(item.piiLeakage)).filter(Number.isFinite);
+      const latestTimestamp = list.reduce((latest, item) => {
+        if (!item.timestamp) return latest;
+        return !latest || item.timestamp > latest ? item.timestamp : latest;
+      }, null);
 
-      if (lastEvaluationsSignatureRef.current === nextSignature) {
-        return;
-      }
-      lastEvaluationsSignatureRef.current = nextSignature;
-      setEvaluations(dedupedRows);
+      setSummary((prev) => ({
+        ...prev,
+        lastEvaluation: latestTimestamp || '—',
+        avgFaithfulness: faithfulnessValues.length
+          ? `${((faithfulnessValues.reduce((sum, value) => sum + value, 0) / faithfulnessValues.length) * 100).toFixed(1)}%`
+          : '—',
+        avgPiiLeakage: piiLeakageValues.length
+          ? `${((piiLeakageValues.reduce((sum, value) => sum + value, 0) / piiLeakageValues.length) * 100).toFixed(1)}%`
+          : '—',
+      }));
     } catch (error) {
       console.error('[Golden Dataset] Failed to load evaluations', error);
     } finally {
@@ -180,6 +191,13 @@ export default function GoldenDatasetPage() {
     loadDataset({ shouldShowLoading: true });
     loadEvaluations();
   }, [loadDataset, loadEvaluations]);
+    return () => {
+      if (evaluationPollRef.current) {
+        window.clearInterval(evaluationPollRef.current);
+        evaluationPollRef.current = null;
+      }
+    };
+  }, []);
 
   const filteredRecords = useMemo(() => {
     const query = search.toLowerCase();
@@ -223,8 +241,25 @@ export default function GoldenDatasetPage() {
     }
   }, [sortKey]);
 
-  const handleUpload = useCallback(async (event) => {
-    if (uploading || streamingEvaluation || generationStatus === 'processing') return;
+  const startEvaluationPolling = () => {
+    setEvaluationRunning(true);
+    if (evaluationPollRef.current) {
+      window.clearInterval(evaluationPollRef.current);
+    }
+    let pollCount = 0;
+    const maxPolls = 80; // ~20 minutes at 15s intervals
+    evaluationPollRef.current = window.setInterval(() => {
+      pollCount += 1;
+      loadEvaluations();
+      if (pollCount >= maxPolls) {
+        window.clearInterval(evaluationPollRef.current);
+        evaluationPollRef.current = null;
+        setEvaluationRunning(false);
+      }
+    }, 15000);
+  };
+
+  const handleUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -268,6 +303,10 @@ export default function GoldenDatasetPage() {
       }
       await loadDataset();
       alert(payload.message || 'Dataset uploaded');
+
+      // Upload auto-triggers a background evaluation run server-side —
+      // poll so newly evaluated rows show up without a manual refresh.
+      startEvaluationPolling();
     } catch (error) {
       alert(error.message || 'Upload failed');
     } finally {
@@ -316,10 +355,26 @@ export default function GoldenDatasetPage() {
     }
   }, [loadDataset, loadEvaluations]);
 
-  const startEvaluationStreaming = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+  const handleRunEvaluation = async () => {
+    try {
+      setUploading(true);
+      const response = await fetch('http://127.0.0.1:3000/api/admin/golden-dataset/evaluate', {
+        method: 'POST',
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Evaluation failed');
+
+      // The run itself happens server-side in the background — each question
+      // is a full answer generation plus a 5-metric LLM-judge evaluation, so
+      // realistically a minute or more per question. Poll for fresh rows
+      // instead of waiting on one long request (which used to make this
+      // button look stuck).
+      alert(payload.message || 'Evaluation started');
+      startEvaluationPolling();
+    } catch (error) {
+      alert(error.message || 'Evaluation failed');
+    } finally {
+      setUploading(false);
     }
 
     const source = new EventSource('http://127.0.0.1:3000/api/admin/golden-dataset/evaluate?stream=true');
@@ -513,20 +568,33 @@ export default function GoldenDatasetPage() {
 
   const evaluationColumns = useMemo(() => [
     { header: 'Question', accessor: 'question', width: '220px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.question || '—'}</span> },
-    { header: 'Generated Answer', accessor: 'generatedAnswer', width: '220px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{formatShortText(row.generatedAnswer || row.chatbotAnswer)}</span> },
-    { header: 'Reference', accessor: 'referenceAnswer', width: '220px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{formatShortText(row.referenceAnswer || row.reference)}</span> },
-    { header: 'Context', accessor: 'contexts', width: '220px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{formatShortText(Array.isArray(row.contexts) ? row.contexts.join(' | ') : row.retrievedChunks?.join(' | ') || row.context || '—')}</span> },
-    { header: 'Faithfulness', accessor: 'faithfulness', width: '110px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.faithfulness != null ? row.faithfulness : 'N/A'}</span> },
-    { header: 'Answer Relevancy', accessor: 'answerRelevancy', width: '130px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.answerRelevancy != null ? row.answerRelevancy : 'N/A'}</span> },
-    { header: 'Context Precision', accessor: 'contextPrecision', width: '130px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.contextPrecision != null ? row.contextPrecision : 'N/A'}</span> },
-    { header: 'Context Recall', accessor: 'contextRecall', width: '120px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.contextRecall != null ? row.contextRecall : 'N/A'}</span> },
-    { header: 'Answer Correctness', accessor: 'answerCorrectness', width: '130px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.answerCorrectness != null ? row.answerCorrectness : 'N/A'}</span> },
-  ], []);
+    { header: 'Status', accessor: 'status', width: '100px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.status || '—'}</span> },
+    { header: 'Faithfulness', accessor: 'faithfulness', width: '110px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.faithfulness ?? '—'}</span> },
+    { header: 'Answer Relevancy', accessor: 'answerRelevancy', width: '130px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.answerRelevancy ?? '—'}</span> },
+    { header: 'Context Precision', accessor: 'contextPrecision', width: '130px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.contextPrecision ?? '—'}</span> },
+    { header: 'Context Recall', accessor: 'contextRecall', width: '120px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.contextRecall ?? '—'}</span> },
+    { header: 'PII Leakage', accessor: 'piiLeakage', width: '110px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.piiLeakage ?? '—'}</span> },
+    { header: 'Retrieved Chunks', accessor: 'retrievedChunks', width: '160px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{(row.retrievedChunks || []).join(', ') || '—'}</span> },
+    { header: 'Chunk IDs', accessor: 'retrievedChunkIds', width: '140px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{(row.retrievedChunkIds || []).join(', ') || '—'}</span> },
+    { header: 'Similarity Scores', accessor: 'similarityScores', width: '140px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{(row.similarityScores || []).join(', ') || '—'}</span> },
+    { header: 'Generated Answer', accessor: 'chatbotAnswer', width: '220px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.chatbotAnswer || '—'}</span> },
+    { header: 'Reference Answer', accessor: 'referenceAnswer', width: '220px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.referenceAnswer || '—'}</span> },
+    { header: 'Timestamp', accessor: 'timestamp', width: '140px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.timestamp || '—'}</span> },
+  ];
 
   const renderDetailSection = (label, value) => (
     <div className="rounded-lg border border-line bg-surface-muted p-3">
       <p className="text-[10px] uppercase tracking-[0.24em] text-muted">{label}</p>
       <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{value || '—'}</p>
+    </div>
+  );
+
+  const renderMarkdownSection = (label, value) => (
+    <div className="rounded-lg border border-line bg-surface-muted p-3">
+      <p className="text-[10px] uppercase tracking-[0.24em] text-muted">{label}</p>
+      <div className="mt-2">
+        <MarkdownContent content={value} />
+      </div>
     </div>
   );
 
@@ -545,74 +613,47 @@ export default function GoldenDatasetPage() {
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-3 divide-x divide-line">
-          <MetricCard compact title="Version" value={summaryMeta.version} />
-          <div className="pl-4">
-            <MetricCard title="Questions" value={summaryMeta.totalQuestions} />
+          <MetricCard compact title="Version" value={summary.version} />
+          <div className="pl-4"><MetricCard title="Questions" value={summary.totalQuestions} /></div>
+          <div className="pl-4"><MetricCard compact title="Last Upload" value={formatDate(summary.lastUpload)} /></div>
+          <div className="pl-4"><MetricCard compact title="Last Eval" value={formatDate(summary.lastEvaluation)} /></div>
+          <div className="pl-4"><MetricCard title="Avg Faithfulness" value={summary.avgFaithfulness} /></div>
+          <div className="pl-4"><MetricCard title="Avg PII Leakage" value={summary.avgPiiLeakage} /></div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-line bg-surface p-3 ">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-muted">Upload and evaluation</p>
+            <h3 className="mt-1 text-lg font-semibold text-ink">Dataset controls</h3>
           </div>
-          <div className="pl-4">
-            <MetricCard compact title="Last Upload" value={formatDate(summaryMeta.lastUpload)} />
-          </div>
-          <div className="pl-4">
-            <MetricCard compact title="Last Eval" value={formatDate(summaryMeta.lastEvaluation)} />
-          </div>
-          <div className="pl-4">
-            <MetricCard title="Avg Faithfulness" value={summaryMeta.avgFaithfulness} />
-          </div>
-          <div className="pl-4">
-            <MetricCard title="Avg Correctness" value={summaryMeta.avgAnswerCorrectness} />
+          <div className="flex flex-wrap gap-2">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2 text-sm font-medium text-ink transition hover:border-accent">
+              <UploadCloud size={16} />
+              {uploading ? 'Uploading…' : 'Upload Excel'}
+              <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleUpload} />
+            </label>
+            <button onClick={handleReplace} className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2 text-sm font-medium text-ink transition hover:border-accent">
+              <RefreshCw size={16} />
+              Replace Dataset
+            </button>
+            <button
+              onClick={handleRunEvaluation}
+              disabled={evaluationRunning}
+              className="inline-flex items-center gap-2 rounded-lg border border-accent bg-accent/15 px-3 py-2 text-sm font-medium text-accent transition hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {evaluationRunning ? <RefreshCw size={16} className="animate-spin" /> : <FileUp size={16} />}
+              {evaluationRunning ? 'Evaluating…' : 'Run Evaluation'}
+            </button>
           </div>
         </div>
-    </div>
-      </section >
-
-    <section className="rounded-lg border border-line bg-surface p-3 ">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.24em] text-muted">Upload and evaluation</p>
-          <h3 className="mt-1 text-lg font-semibold text-ink">Dataset controls</h3>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <label
-            className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition ${uploading || streamingEvaluation || generationStatus === 'processing'
-                ? 'pointer-events-none border-line bg-surface-muted text-slate-500'
-                : 'border-line bg-surface-muted text-ink hover:border-accent'
-              }`}
-          >
-            <UploadCloud size={16} />
-            {generationStatus === 'processing' ? 'Generating…' : uploading ? 'Uploading…' : streamingEvaluation ? 'Upload disabled' : 'Upload Excel'}
-            <input disabled={uploading || streamingEvaluation || generationStatus === 'processing'} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleUpload} />
-          </label>
-          <button
-            disabled={streamingEvaluation}
-            onClick={handleReplace}
-            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${streamingEvaluation
-                ? 'border-line bg-surface-muted text-slate-500'
-                : 'border-line bg-surface-muted text-ink hover:border-accent'
-              }`}
-          >
-            <RefreshCw size={16} />
-            Replace Dataset
-          </button>
-
-          <button
-            disabled={streamingEvaluation}
-            onClick={handleRunEvaluation}
-            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${streamingEvaluation
-                ? 'border-line bg-surface-muted text-slate-500'
-                : 'border-accent bg-accent/15 text-accent hover:bg-accent/25'
-              }`}
-          >
-            {streamingEvaluation ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <FileUp size={16} />
-            )}
-            {streamingEvaluation ? 'Evaluating…' : 'Run Evaluation'}
-          </button>
-        </button>
-      </div>
-    </div>
-      </section >
+        {evaluationRunning && (
+          <p className="mt-2 text-xs text-muted">
+            Running in the background — each question takes roughly a minute or more (full answer generation plus a 5-metric evaluation). New rows will appear below as they finish.
+          </p>
+        )}
+      </section>
 
     <section className="rounded-lg border border-line bg-surface p-3 ">
       <div className="mb-3 flex items-center justify-between">
@@ -749,16 +790,14 @@ export default function GoldenDatasetPage() {
         {selectedEvaluation ? (
           <div className="space-y-3">
             {renderDetailSection('Retrieved chunks', (selectedEvaluation.retrievedChunks || []).join('\n'))}
-            {renderDetailSection('Complete chatbot answer', selectedEvaluation.chatbotAnswer)}
+            {renderMarkdownSection('Complete chatbot answer', selectedEvaluation.chatbotAnswer)}
             {renderDetailSection('Reference answer', selectedEvaluation.referenceAnswer)}
-            {renderDetailSection('RAGAS metrics', [
+            {renderDetailSection('Evaluation metrics', [
               `Faithfulness: ${selectedEvaluation.faithfulness ?? '—'}`,
               `Answer Relevancy: ${selectedEvaluation.answerRelevancy ?? '—'}`,
               `Context Precision: ${selectedEvaluation.contextPrecision ?? '—'}`,
               `Context Recall: ${selectedEvaluation.contextRecall ?? '—'}`,
-              `Answer Correctness: ${selectedEvaluation.answerCorrectness ?? '—'}`,
-              `Retrieval Time: ${selectedEvaluation.retrievalTime ?? '—'}`,
-              `LLM Time: ${selectedEvaluation.llmTime ?? '—'}`,
+              `PII Leakage: ${selectedEvaluation.piiLeakage ?? '—'}`,
             ].join('\n'))}
             {renderDetailSection('Metadata', [
               `Status: ${selectedEvaluation.status || '—'}`,

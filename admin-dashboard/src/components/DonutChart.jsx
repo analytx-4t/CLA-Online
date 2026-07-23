@@ -33,7 +33,7 @@ export default function DonutChart({ segments }) {
             />
           );
         })}
-        <circle cx={center} cy={center} r={radius - strokeWidth / 2} style={{ fill: 'var(--surface-muted)' }} />
+        <circle cx={center} cy={center} r={radius - strokeWidth / 2} style={{ fill: 'rgb(var(--surface-muted))' }} />
       </svg>
       <div className="flex flex-col gap-1 text-sm text-ink">
         {segments.map((segment) => (

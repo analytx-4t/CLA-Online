@@ -23,6 +23,8 @@ const {
   traceMongoPersistence,
   traceError,
 } = require('./langsmith');
+const { runFullEvaluation } = require('./llm/judge');
+const { traceLLMGeneration } = require('./langsmith');
 const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./responseParser');
 const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
 const { createRequestContext } = require('./requestContext');
@@ -234,6 +236,7 @@ function buildEvaluationResultDocument({
   suggestions = [],
   metadata = {},
   errorMessage = null,
+  source = 'cla_chat',
 }) {
   const evaluationData = evaluation && typeof evaluation === 'object' ? evaluation : {};
   const timestamp = new Date().toISOString();
@@ -241,7 +244,10 @@ function buildEvaluationResultDocument({
     tokenUsage: metadata?.tokenUsage ?? null,
     retrievalTime: Number.isFinite(metadata?.retrievalTime ?? retrievalTime) ? (metadata?.retrievalTime ?? retrievalTime) : (Number.isFinite(retrievalTime) ? retrievalTime : null),
     llmTime: Number.isFinite(metadata?.llmTime) ? metadata.llmTime : null,
-    ragasVersion: metadata?.ragasVersion ?? null,
+    judgeProvider: evaluationData.judgeProvider ?? null,
+    judgeModel: evaluationData.judgeModel ?? null,
+    judgeFallbackProvider: evaluationData.judgeFallbackProvider ?? null,
+    judgeFallbackModel: evaluationData.judgeFallbackModel ?? null,
   };
   const scoredFaithfulness = evaluationData.faithfulness ?? null;
   const scoredAnswerRelevancy = evaluationData.answer_relevancy ?? evaluationData.answerRelevancy ?? null;
@@ -278,13 +284,19 @@ function buildEvaluationResultDocument({
     answer: answer || null,
     timestamp,
     evaluationTimestamp: timestamp,
+    source,
     goldenAnswer: goldenAnswer ?? null,
     faithfulness: evaluationData.faithfulness ?? null,
-    answerRelevancy: evaluationData.answer_relevancy ?? evaluationData.answerRelevancy ?? null,
-    contextPrecision: evaluationData.context_precision ?? evaluationData.contextPrecision ?? null,
-    contextRecall: evaluationData.context_recall ?? evaluationData.contextRecall ?? null,
-    answerCorrectness: evaluationData.answer_correctness ?? evaluationData.answerCorrectness ?? null,
-    overallScore: evaluationData.overall_score ?? evaluationData.overallScore ?? calculatedOverallScore,
+    faithfulnessReason: evaluationData.faithfulnessReason ?? null,
+    answerRelevancy: evaluationData.answerRelevancy ?? null,
+    answerRelevancyReason: evaluationData.answerRelevancyReason ?? null,
+    contextPrecision: evaluationData.contextPrecision ?? null,
+    contextPrecisionReason: evaluationData.contextPrecisionReason ?? null,
+    contextRecall: evaluationData.contextRecall ?? null,
+    contextRecallReason: evaluationData.contextRecallReason ?? null,
+    piiLeakage: evaluationData.piiLeakage ?? null,
+    piiLeakageReason: evaluationData.piiLeakageReason ?? null,
+    overallScore: evaluationData.overallScore ?? null,
     provider: provider || null,
     model: model || null,
     datasetVersion: datasetVersion || null,
@@ -293,10 +305,10 @@ function buildEvaluationResultDocument({
     retrievedChunkIds: Array.isArray(retrievedChunkIds) ? retrievedChunkIds : [],
     similarityScores: Array.isArray(similarityScores) ? similarityScores : [],
     retrievalTime: Number.isFinite(retrievalTime) ? retrievalTime : null,
-    evaluationStatus: evaluationStatus || (evaluationData?.status === 'failed' || evaluationData?.error ? 'failed' : 'completed'),
+    evaluationStatus: evaluationStatus || (evaluationData?.status === 'failed' ? 'failed' : 'completed'),
     evaluationTimeMs: Number.isFinite(evaluationTimeMs) ? evaluationTimeMs : null,
     suggestions: Array.isArray(suggestions) ? suggestions : [],
-    errorMessage: errorMessage || (evaluationData?.error ? String(evaluationData.error) : null),
+    errorMessage: errorMessage || (Array.isArray(evaluationData?.errors) && evaluationData.errors.length ? evaluationData.errors.join('; ') : null),
     metadata: normalizedMetadata,
   };
 }
@@ -332,7 +344,11 @@ async function persistEvaluationResult(db, document, io = null) {
       console.log(`[RAGAS DB] Updated requestId ${document.requestId}`);
     }
 
-    if (io && document?.requestId) {
+    // Only broadcast real end-user chatbot evaluations to the live Online Eval
+    // view — golden-dataset benchmark runs still get written to Mongo above
+    // (and stay visible on the Golden Dataset page via golden_dataset_runs)
+    // but shouldn't flash into the "live" table.
+    if (io && document?.requestId && document?.source !== 'golden_dataset') {
       const broadcastPayload = {
         requestId: document.requestId,
         timestamp: document.timestamp || document.evaluationTimestamp || null,
@@ -1512,7 +1528,7 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
       
       <div class="footer-actions">
         <div>
-          <button class="btn btn-secondary" onclick="window.history.back()">← Back to AI Chatbot</button>
+          <button class="btn btn-secondary" onclick="closeCitationTab()">← Back to AI Chatbot</button>
         </div>
         <div class="footer-note">CLA Online - Verified Grounded Database Source</div>
         <div></div>
@@ -1521,6 +1537,19 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
   </div>
 
   <script>
+    // This page always opens in a new tab (target="_blank" / window.open), so
+    // it has no same-tab history to go "back" to — close the tab instead, and
+    // only fall back to redirecting if the browser refuses to close a tab it
+    // didn't script-open (e.g. the user opened this URL directly).
+    function closeCitationTab() {
+      window.close();
+      setTimeout(function () {
+        if (!window.closed) {
+          window.location.href = '/HTML/chatbot_interface.html';
+        }
+      }, 300);
+    }
+
     /**
      * =========================================================================
      * CITATION PAGE THEME MANAGER - COMPLETELY INDEPENDENT
@@ -1684,117 +1713,6 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
   </script>
 </body>
 </html>`;
-}
-function runRagasEvaluation(question, answer, contexts, referenceAnswer = null) {
-  return new Promise((resolve) => {
-    const evaluationScript = path.join(
-      __dirname,
-      '..',
-      'evaluation',
-      'live_evaluator.py'
-    );
-
-    const fs = require('fs');
-
-    const candidatePythons = [
-      path.join(__dirname, '..', 'evaluation', '.venv', 'Scripts', 'python.exe'),
-      path.join(__dirname, '..', 'evaluation', '.venv', 'bin', 'python'),
-      path.join(__dirname, '..', 'embedding', 'venv', 'Scripts', 'python.exe'),
-      path.join(__dirname, '..', 'embedding', 'venv', 'bin', 'python'),
-      process.platform === 'win32' ? 'python' : 'python3'
-    ];
-
-    const evaluationPython =
-      candidatePythons.find((p) => fs.existsSync(p)) ||
-      (process.platform === 'win32' ? 'python' : 'python3');
-
-    // ↓↓↓ KEEP YOUR CODE FROM HERE ↓↓↓
-
-    const payload = {
-      question,
-      answer,
-      contexts: trimmedContexts,
-      reference: referenceAnswer || null,
-    };
-
-    console.log('[RAGAS] Payload prepared for evaluator.');
-
-    let pythonProcess;
-    try {
-      pythonProcess = spawn(evaluationPython, [evaluationScript], {
-        cwd: path.join(__dirname, '..'),
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    } catch (err) {
-      console.error('[RAGAS] Failed to spawn evaluator process:', err.message);
-      return resolve({
-        status: 'failed',
-        error: err.message,
-      });
-    }
-
-    let stdout = '';
-    let stderr = '';
-    const startTime = Date.now();
-
-    pythonProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    pythonProcess.on('error', (error) => {
-      console.error('[RAGAS] FAILED AT: Launching Python evaluator');
-      console.error('[RAGAS] Python launch error:', error);
-      resolve({
-        status: 'failed',
-        error: error.message,
-      });
-    });
-
-    pythonProcess.on('close', (code) => {
-      const durationMs = Date.now() - startTime;
-      console.log('[RAGAS] Python exited with code', code, 'in', `${durationMs}ms`);
-      console.log('[RAGAS] Raw stdout:');
-      console.log(stdout.trim() || '<empty>');
-      console.log('[RAGAS] Raw stderr:');
-      console.log(stderr.trim() || '<empty>');
-
-      if (stderr.trim() && code === 0) {
-        console.warn('[RAGAS] Python emitted stderr despite successful exit.');
-      }
-
-      try {
-        const result = JSON.parse(stdout.trim());
-
-        if (code !== 0) {
-          console.error('[RAGAS] FAILED AT: Python evaluator returned non-zero exit code.');
-        }
-
-        console.log('[RAGAS] Parsed metrics:');
-        console.log('  Faithfulness:', result.faithfulness ?? null);
-        console.log('  Answer Relevancy:', result.answer_relevancy ?? result.answerRelevancy ?? null);
-        console.log('  Context Precision:', result.context_precision ?? result.contextPrecision ?? null);
-        console.log('  Context Recall:', result.context_recall ?? result.contextRecall ?? null);
-        console.log('  Answer Correctness:', result.answer_correctness ?? result.answerCorrectness ?? null);
-
-        resolve(result);
-      } catch (error) {
-        console.error('[RAGAS] FAILED AT: Parsing Python JSON');
-        console.error('[RAGAS] Python stdout (raw):', stdout);
-        console.error('[RAGAS] JSON parse error:', error.message);
-        resolve({
-          status: 'failed',
-          error: 'Failed to parse RAGAS evaluation output.',
-        });
-      }
-  });
-
-    pythonProcess.stdin.write(JSON.stringify(payload));
-    pythonProcess.stdin.end();
-  });
 }
 async function startServer() {
   try {
@@ -1997,6 +1915,12 @@ async function startServer() {
             messageId: null,
           });
           const question = payload.question;
+          // Distinguishes real end-user chatbot traffic from internal callers
+          // (currently: the Golden Dataset offline benchmark runner, which
+          // drives this same endpoint in a loop) so evaluations they produce
+          // never mix into the live Online Eval view — see requestSource use
+          // in buildEvaluationResultDocument below.
+          const requestSource = payload?.source === 'golden_dataset' ? 'golden_dataset' : 'cla_chat';
 
           if (!question || typeof question !== 'string' || !question.trim()) {
             setJsonHeaders(res, 400);
@@ -2364,10 +2288,127 @@ What is the penalty for violating this provision?`;
             .map(r => r.chunk_text || r.content || r.text || '')
             .filter(context => context && context.trim());
 
-          const evaluation = {
-            status: 'disabled',
-            message: 'RAGAS evaluation is handled by the dedicated golden dataset flow.',
+          const goldenDataset = db.collection('golden_dataset');
+          const goldenRecord = await goldenDataset.findOne({ question });
+          const currentDatasetVersion = await getCurrentGoldenDatasetVersion(db);
+
+          let evaluation = { status: 'pending' };
+
+          const runEvaluationAndPersist = async () => {
+              const evaluationStartedAt = Date.now();
+
+              try {
+                console.log(
+                  `[Eval] Starting 5-metric evaluation with ${ragasContexts.length} contexts...`
+                );
+
+                evaluation = await runFullEvaluation({
+                  question,
+                  answer: answerText,
+                  contexts: ragasContexts,
+                  groundTruth: goldenRecord?.answer || null,
+                  requestContext: req.requestContext,
+                });
+
+                console.log(
+                  '[Eval] Evaluation completed:',
+                  JSON.stringify(evaluation, null, 2)
+                );
+              } catch (evaluationError) {
+                console.error(
+                  '[Eval] Evaluation failed:',
+                  evaluationError
+                );
+
+                evaluation = {
+                  status: 'failed',
+                  errors: [evaluationError.message],
+                };
+              }
+
+              const evaluationTimeMs = Number.isFinite(evaluation?.evaluationTimeMs) ? evaluation.evaluationTimeMs : (Date.now() - evaluationStartedAt);
+              const evaluationStatus = evaluation?.status === 'failed' ? 'failed' : 'completed';
+
+              try {
+                const evaluationDocument = buildEvaluationResultDocument({
+                  requestContext: req.requestContext,
+                  question,
+                  answer: answerText,
+                  goldenAnswer: payload?.goldenAnswer || payload?.golden_answer || null,
+                  evaluation,
+                  provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+                  model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
+                  contexts: ragasContexts,
+                  retrievedChunks: ragasContexts,
+                  retrievedChunkIds: Array.isArray(results) ? results.map((result) => result.embedding_id || result.record_id || result.parent_id || null).filter(Boolean) : [],
+                  similarityScores: Array.isArray(results) ? results.map((result) => (Number.isFinite(result?.score) ? result.score : (Number.isFinite(result?.rrf_score) ? result.rrf_score : null))).filter((value) => value !== null) : [],
+                  retrievalTime: retrievalTimeMs ?? null,
+                  datasetVersion: currentDatasetVersion || goldenRecord?.version || null,
+                  userId: getAuthenticatedUserId(req),
+                  evaluationStatus,
+                  evaluationTimeMs,
+                  suggestions,
+                  metadata: {
+                    retrievalTime: retrievalTimeMs ?? null,
+                    llmTime: llmTimeMs ?? null,
+                  },
+                  source: requestSource,
+                });
+
+                await persistEvaluationResult(db, evaluationDocument, io);
+
+                if (goldenRecord) {
+                  const goldenRunDocument = {
+                    datasetVersion: goldenRecord.version || null,
+                    questionId: goldenRecord.id || null,
+                    question: goldenRecord.question || question,
+                    chatbotAnswer: answerText,
+                    referenceAnswer: goldenRecord.answer || null,
+                    retrievedChunks: ragasContexts,
+                    retrievedChunkIds: Array.isArray(results) ? results.map((result) => result.embedding_id || result.record_id || result.parent_id || null).filter(Boolean) : [],
+                    similarityScores: Array.isArray(results) ? results.map((result) => (Number.isFinite(result?.score) ? result.score : (Number.isFinite(result?.rrf_score) ? result.rrf_score : null))).filter((value) => value !== null) : [],
+                    ragasMetrics: {
+                      faithfulness: evaluation.faithfulness ?? null,
+                      answerRelevancy: evaluation.answerRelevancy ?? null,
+                      contextPrecision: evaluation.contextPrecision ?? null,
+                      contextRecall: evaluation.contextRecall ?? null,
+                      piiLeakage: evaluation.piiLeakage ?? null,
+                    },
+                    retrievalTime: retrievalTimeMs ?? null,
+                    llmTime: llmTimeMs ?? null,
+                    datasetVersion: currentDatasetVersion || goldenRecord?.version || null,
+                    provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER || null,
+                    model: llmResponse?.model || settings.DEFAULT_LLM_MODEL || null,
+                    timestamp: new Date().toISOString(),
+                    status: 'completed',
+                  };
+
+                  await persistGoldenDatasetRun(db, goldenRunDocument);
+                }
+              } catch (persistError) {
+                console.error('[Eval] Persist evaluation document failed:', persistError);
+              }
           };
+
+          // Real end-user chat traffic gets a fast response — evaluation runs
+          // in the background so it never delays the answer. The Golden
+          // Dataset benchmark runner, on the other hand, explicitly needs the
+          // finished evaluation back in this response (that's the whole point
+          // of an offline benchmark run) and already waits out the full
+          // batch — so for that source only, run and persist evaluation
+          // inline before responding, instead of via fire-and-forget
+          // setImmediate.
+          if (requestSource === 'golden_dataset') {
+            console.log('[Eval] Running evaluation synchronously (golden_dataset source)...');
+            await runEvaluationAndPersist();
+          } else {
+            setImmediate(() => {
+              console.log('[Eval] Background evaluation started...');
+              runEvaluationAndPersist().catch((backgroundError) => {
+                console.error('[Eval] Background evaluation crashed:', backgroundError);
+              });
+            });
+          }
           // Find all bracketed citation numbers, e.g., [1], [2]
           const citationRegex = /\[([1-9])\]/g;
           let match;
@@ -2456,6 +2497,7 @@ What is the penalty for violating this provision?`;
 
           setJsonHeaders(res, 200);
           res.end(JSON.stringify({
+            requestId: req.requestContext?.requestId || null,
             answer: answerText,
             suggestions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
             follow_up_questions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
@@ -3025,7 +3067,6 @@ module.exports = {
   buildRetrievalLogDocument,
   persistRetrievalLog,
   ensureIndexes,
-  runRagasEvaluation,
   startServer,
 };
 
