@@ -5,13 +5,17 @@ of the full, untouched parent + child rows behind any hit — for citing exact
 source data (case name, HeadNote, Judge, full Filetext, etc.) when answering
 a user's question, not just the cleaned/chunked embedding text.
 
-This script now uses the same shared OpenAI text-embedding-3-large embedding
-service as the production chatbot and the evaluation pipeline so retrieval
-results stay aligned across all paths.
+Embedding model: text-embedding-3-large (see embed_documents.py — same model
+MUST be used here, since embedding spaces between different models are not
+comparable).
+
+All 8 sources (Articles, CaseLaws, Circular, Legislation, Notifications,
+Query, CLASE_Commentary, CLASE_Procedure_Details) are embedded — see
+ACTIVE_SOURCES in embed_documents.py.
 
 Setup:
-    pip install --upgrade pyodbc python-dotenv numpy
-    Reuses the same .env as the chatbot (OPENAI_API_KEY, SQL_CONN_STR).
+    pip install --upgrade pyodbc openai python-dotenv numpy
+    Reuses the same .env as embed_documents.py (OPENAI_API_KEY, SQL_CONN_STR).
 
 Run:
     python search_documents.py
@@ -25,6 +29,7 @@ import sys
 import numpy as np
 import pyodbc
 from dotenv import load_dotenv
+from openai import OpenAI
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from shared_embedding_service import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, EMBEDDING_PROVIDER, embed_query as shared_embed_query, log_embedding_context
@@ -32,13 +37,18 @@ from shared_embedding_service import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, EMBE
 load_dotenv()
 
 SQL_CONN_STR = os.environ["SQL_CONN_STR"]
+EMBEDDING_MODEL = "text-embedding-3-large"
+
+_openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 # ---------- EMBEDDING THE USER'S QUERY ----------
 
 def embed_query(query_text):
-    """Use the shared OpenAI text-embedding-3-large embedding service for query embeddings."""
-    vector = shared_embed_query(query_text)
-    return np.array(vector, dtype=np.float32)
+    """text-embedding-3-large has no asymmetric-retrieval task format (unlike
+    gemini-embedding-2) — the query text is embedded as-is, same as a document
+    chunk (see prepare_document_text() in embed_documents.py)."""
+    result = _openai_client.embeddings.create(model=EMBEDDING_MODEL, input=[query_text])
+    return np.array(result.data[0].embedding, dtype=np.float32)
 
 
 def _bytes_to_vector(b):

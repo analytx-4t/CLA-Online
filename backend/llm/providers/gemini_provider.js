@@ -5,7 +5,8 @@ const {
   LLMProviderUnavailableError,
 } = require('../base');
 
-const { settings, getProviderConfig } = require('../../config');
+const { settings } = require('../../config');
+const { createChatCompletion } = require('../portkey');
 
 class GeminiProvider extends BaseLLMProvider {
   constructor({ model } = {}) {
@@ -14,83 +15,56 @@ class GeminiProvider extends BaseLLMProvider {
       defaultModel: model || settings.GEMINI_MODEL || '',
     });
 
-    this.config = getProviderConfig('gemini');
-    this.model = model || this.config.model || this.defaultModel;
+    this.model = model || this.defaultModel;
   }
 
   async generate(request = {}) {
-    if (!this.config.apiKey) {
-      throw new LLMConfigurationError(
-        'Gemini API key is not configured.'
-      );
-    }
+    const {
+      messages = [],
+      systemPrompt = '',
+      temperature = 0.2,
+      maxTokens = 512,
+      modelOverride,
+      metadata = {},
+      traceId,
+      requestContext,
+    } = request;
 
-    if (!this.model) {
+    const model = modelOverride || this.model;
+
+    if (!model) {
       throw new LLMConfigurationError(
         'Gemini model is not configured.'
       );
     }
 
     try {
-      const { GoogleGenAI } = require('@google/genai');
-
-      const ai = new GoogleGenAI({
-        apiKey: this.config.apiKey,
+      const response = await createChatCompletion({
+        provider: 'gemini',
+        model,
+        messages,
+        systemPrompt,
+        temperature,
+        maxTokens,
+        metadata,
+        traceId,
+        requestContext,
       });
-
-      const messages = request.messages || [];
-
-      const contents = messages.map((message) => ({
-        role: message.role === 'assistant' ? 'model' : 'user',
-        parts: [
-          {
-            text: String(message.content || ''),
-          },
-        ],
-      }));
-
-      const config = {};
-
-      if (request.systemPrompt) {
-        config.systemInstruction = request.systemPrompt;
-      }
-
-      if (request.temperature !== undefined) {
-        config.temperature = request.temperature;
-      }
-
-      if (request.maxTokens !== undefined) {
-        config.maxOutputTokens = request.maxTokens;
-      }
-
-      const response = await ai.models.generateContent({
-        model: this.model,
-        contents,
-        config,
-      });
-
-      const usage = response.usageMetadata || {};
 
       return {
-        content: response.text || '',
+        content: response.choices?.[0]?.message?.content || '',
         provider: 'gemini',
-        model: this.model,
+        model,
         usage: {
-          input_tokens: usage.promptTokenCount ?? null,
-          output_tokens: usage.candidatesTokenCount ?? null,
-          total_tokens: usage.totalTokenCount ?? null,
+          input_tokens: response.usage?.prompt_tokens ?? null,
+          output_tokens: response.usage?.completion_tokens ?? null,
+          total_tokens: response.usage?.total_tokens ?? null,
         },
       };
     } catch (error) {
-      console.error('[Gemini] Request failed:', {
-        status: error?.status || error?.code || null,
-        name: error?.name || null,
-        message: error?.message || 'Unknown Gemini error',
-      });
-
-      if (error?.status === 401 || error?.status === 403) {
+      if (error?.status === 401) {
         throw new LLMAuthenticationError(
-          'Gemini authentication failed.'
+          'Portkey or Gemini authentication failed.'
         );
       }
 
@@ -101,8 +75,8 @@ class GeminiProvider extends BaseLLMProvider {
       }
 
       throw new LLMProviderUnavailableError(
-        'Gemini request failed.',
-        { cause: error?.message }
+        'Gemini request through Portkey failed.',
+        { cause: error.message }
       );
     }
   }

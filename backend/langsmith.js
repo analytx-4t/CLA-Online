@@ -265,9 +265,12 @@ const traceLLMGeneration = traceable(
     model,
     temperature,
     maxTokens,
-    systemPrompt,
-    userContent,
-    generate,
+systemPrompt,
+userContent,
+messages,
+generate,
+call,
+requestContext,
   }) {
     const startTime = Date.now();
     const response = await generate();
@@ -320,11 +323,18 @@ const traceLLMGeneration = traceable(
 
 const traceRAGEvaluation = traceable(
   async function ({
-    question,
-    answer,
-    contexts,
-    reference,
-    evaluate,
+question,
+answer,
+contexts,
+reference,
+evaluate,
+provider,
+model,
+messageCount,
+messages,
+systemPrompt,
+generate,
+requestContext,
   }) {
     const startTime = Date.now();
     const evaluation = await evaluate();

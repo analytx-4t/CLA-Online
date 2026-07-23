@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileUp, Loader2, Search, RefreshCw, UploadCloud } from 'lucide-react';
 import DataTable from '../components/DataTable';
 import Drawer from '../components/Drawer';
+import MetricCard from '../components/MetricCard';
 
 const PAGE_SIZE = 10;
 
@@ -430,11 +431,64 @@ export default function GoldenDatasetPage() {
   };
 
   const datasetColumns = useMemo(() => [
-    { header: 'Question', accessor: 'question', width: '260px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.question || '—'}</span> },
-    { header: 'Generated Answer', accessor: 'answer', width: '260px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{formatShortText(row.answer)}</span> },
-    { header: 'Reference', accessor: 'reference', width: '220px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{formatShortText(row.reference)}</span> },
-    { header: 'Context', accessor: 'contexts', width: '260px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{Array.isArray(row.contexts) && row.contexts.length ? formatShortText(row.contexts.join(' | ')) : '—'}</span> },
-  ], []);
+    {
+      header: 'ID',
+      accessor: 'id',
+      width: '90px',
+      render: (row) => (
+        <button onClick={() => handleSort('id')} className="text-left text-ink">
+          {row.id || '—'}
+        </button>
+      ),
+    },
+    {
+      header: 'Question',
+      accessor: 'question',
+      width: '220px',
+      render: (row) => (
+        <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
+          {row.question || '—'}
+        </span>
+      ),
+    },
+    {
+      header: 'Generated Answer',
+      accessor: 'answer',
+      width: '260px',
+      render: (row) => (
+        <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
+          {formatShortText(row.answer)}
+        </span>
+      ),
+    },
+    {
+      header: 'Reference',
+      accessor: 'reference',
+      width: '220px',
+      render: (row) => (
+        <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
+          {formatShortText(row.reference)}
+        </span>
+      ),
+    },
+    {
+      header: 'Context',
+      accessor: 'contexts',
+      width: '260px',
+      render: (row) => (
+        <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
+          {Array.isArray(row.contexts) && row.contexts.length
+            ? formatShortText(row.contexts.join(' | '))
+            : '—'}
+        </span>
+      ),
+    },
+    { header: 'Intent', accessor: 'intent', width: '140px' },
+    { header: 'Source Table', accessor: 'sourceTable', width: '140px' },
+    { header: 'Source Column', accessor: 'sourceColumn', width: '140px' },
+    { header: 'Row Id', accessor: 'rowId', width: '100px' },
+    { header: 'Notes', accessor: 'notes', width: '180px' },
+  ], [handleSort]);
 
   const currentRunEvaluations = useMemo(() => {
     if (!evaluationState.lastEvaluatedVersion) return evaluations;
@@ -470,148 +524,222 @@ export default function GoldenDatasetPage() {
   ], []);
 
   const renderDetailSection = (label, value) => (
-    <div className="rounded-lg border border-slate-800/70 bg-[#0B1119] p-3">
-      <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{label}</p>
-      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{value || '—'}</p>
+    <div className="rounded-lg border border-line bg-surface-muted p-3">
+      <p className="text-[10px] uppercase tracking-[0.24em] text-muted">{label}</p>
+      <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{value || '—'}</p>
     </div>
   );
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-slate-800/80 bg-[#111827]/95 p-3 shadow-panel">
+      <section className="rounded-lg border border-line bg-surface p-3 ">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Golden dataset workspace</p>
-            <h2 className="mt-2 text-2xl font-semibold text-white">Golden Dataset</h2>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-muted">Golden dataset workspace</p>
+            <h2 className="mt-2 text-2xl font-semibold text-ink">Golden Dataset</h2>
           </div>
-          <div className="flex w-full max-w-md items-center gap-2 rounded-lg border border-slate-800 bg-[#0B1119] px-3 py-2 text-sm text-slate-300">
-            <Search size={16} className="text-slate-500" />
+          <div className="flex w-full max-w-md items-center gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2 text-sm text-ink">
+            <Search size={16} className="text-muted" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search dataset" className="w-full bg-transparent outline-none" />
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Dataset Version</p>
-            <p className="mt-2 text-lg font-semibold text-white">{summaryMeta.version}</p>
+        <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-3 divide-x divide-line">
+          <MetricCard compact title="Version" value={summaryMeta.version} />
+          <div className="pl-4">
+            <MetricCard title="Questions" value={summaryMeta.totalQuestions} />
           </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Total Questions</p>
-            <p className="mt-2 text-lg font-semibold text-white">{summaryMeta.totalQuestions}</p>
+          <div className="pl-4">
+            <MetricCard compact title="Last Upload" value={formatDate(summaryMeta.lastUpload)} />
           </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Last Upload</p>
-            <p className="mt-2 text-lg font-semibold text-white">{formatDate(summaryMeta.lastUpload)}</p>
+          <div className="pl-4">
+            <MetricCard compact title="Last Eval" value={formatDate(summaryMeta.lastEvaluation)} />
           </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Last Evaluation</p>
-            <p className="mt-2 text-lg font-semibold text-white">{formatDate(summaryMeta.lastEvaluation)}</p>
+          <div className="pl-4">
+            <MetricCard title="Avg Faithfulness" value={summaryMeta.avgFaithfulness} />
           </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Average Faithfulness</p>
-            <p className="mt-2 text-lg font-semibold text-white">{summaryMeta.avgFaithfulness}</p>
-          </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Average Answer Correctness</p>
-            <p className="mt-2 text-lg font-semibold text-white">{summaryMeta.avgAnswerCorrectness}</p>
+          <div className="pl-4">
+            <MetricCard title="Avg Correctness" value={summaryMeta.avgAnswerCorrectness} />
           </div>
         </div>
-      </section>
+    </div>
+      </section >
 
-      <section className="rounded-lg border border-slate-800/80 bg-[#111827]/95 p-3 shadow-panel">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Upload and evaluation</p>
-            <h3 className="mt-1 text-lg font-semibold text-white">Dataset controls</h3>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition ${uploading || streamingEvaluation || generationStatus === 'processing' ? 'border-slate-700 bg-slate-800 text-slate-500 pointer-events-none' : 'border-slate-800 bg-[#0B1119] text-slate-200 hover:border-[#0F9D58]'}`}>
-              <UploadCloud size={16} />
-              {generationStatus === 'processing' ? 'Generating…' : uploading ? 'Uploading…' : streamingEvaluation ? 'Upload disabled' : 'Upload Excel'}
-              <input disabled={uploading || streamingEvaluation || generationStatus === 'processing'} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleUpload} />
-            </label>
-            <button disabled={streamingEvaluation} onClick={handleReplace} className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-[#0B1119] px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-[#0F9D58] disabled:cursor-not-allowed disabled:opacity-50">
-              <RefreshCw size={16} />
-              Replace Dataset
-            </button>
-            <button disabled={streamingEvaluation} onClick={handleRunEvaluation} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${streamingEvaluation ? 'border-slate-700 bg-slate-800 text-slate-500' : 'border-[#0F9D58] bg-[#0F9D58]/15 text-[#9BE6B2] hover:bg-[#0F9D58]/25'}`}>
-              {streamingEvaluation ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp size={16} />}
-              {streamingEvaluation ? 'Evaluating…' : 'Run Evaluation'}
-            </button>
-          </div>
+    <section className="rounded-lg border border-line bg-surface p-3 ">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.24em] text-muted">Upload and evaluation</p>
+          <h3 className="mt-1 text-lg font-semibold text-ink">Dataset controls</h3>
         </div>
-      </section>
+        <div className="flex flex-wrap gap-2">
+          <label
+            className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition ${uploading || streamingEvaluation || generationStatus === 'processing'
+                ? 'pointer-events-none border-line bg-surface-muted text-slate-500'
+                : 'border-line bg-surface-muted text-ink hover:border-accent'
+              }`}
+          >
+            <UploadCloud size={16} />
+            {generationStatus === 'processing' ? 'Generating…' : uploading ? 'Uploading…' : streamingEvaluation ? 'Upload disabled' : 'Upload Excel'}
+            <input disabled={uploading || streamingEvaluation || generationStatus === 'processing'} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleUpload} />
+          </label>
+          <button
+            disabled={streamingEvaluation}
+            onClick={handleReplace}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${streamingEvaluation
+                ? 'border-line bg-surface-muted text-slate-500'
+                : 'border-line bg-surface-muted text-ink hover:border-accent'
+              }`}
+          >
+            <RefreshCw size={16} />
+            Replace Dataset
+          </button>
 
-      <section className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3 shadow-panel">
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Dataset table</p>
-            <p className="mt-1 text-sm text-slate-400">{sortedRecords.length} records</p>
-          </div>
+          <button
+            disabled={streamingEvaluation}
+            onClick={handleRunEvaluation}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${streamingEvaluation
+                ? 'border-line bg-surface-muted text-slate-500'
+                : 'border-accent bg-accent/15 text-accent hover:bg-accent/25'
+              }`}
+          >
+            {streamingEvaluation ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <FileUp size={16} />
+            )}
+            {streamingEvaluation ? 'Evaluating…' : 'Run Evaluation'}
+          </button>
+        </button>
+      </div>
+    </div>
+      </section >
+
+    <section className="rounded-lg border border-line bg-surface p-3 ">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.24em] text-muted">Dataset table</p>
+          <p className="mt-1 text-sm text-muted">{sortedRecords.length} records</p>
         </div>
+      </div>
 
-        {loading || generationStatus === 'processing' ? (
-          <div className="flex items-center gap-2 rounded-lg border border-slate-800/80 bg-[#0B1119] p-4 text-sm text-slate-400">
-            <Loader2 className="h-4 w-4 animate-spin text-sky-400" />
-            <span>{loading ? 'Loading dataset…' : 'Generating dataset rows…'}</span>
-          </div>
-        ) : generationStatus === 'failed' ? (
-          <div className="rounded-lg border border-rose-900/60 bg-[#0B1119] p-4 text-sm text-rose-300">Dataset generation failed. Please upload the file again.</div>
-        ) : (
+      {loading || generationStatus === 'processing' ? (
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-surface-muted p-4 text-sm text-muted">
+          <Loader2 className="h-4 w-4 animate-spin text-accent" />
+          <span>
+            {loading ? 'Loading dataset…' : 'Generating dataset rows…'}
+          </span>
+        </div>
+      ) : generationStatus === 'failed' ? (
+        <div className="rounded-lg border border-red-500/40 bg-surface-muted p-4 text-sm text-red-400">
+          Dataset generation failed. Please upload the file again.
+        </div>
+      ) : (
+      ): (
           <>
-            <DataTable columns={datasetColumns} rows={pagedRecords} />
-            <div className="mt-3 flex items-center justify-between text-sm text-slate-400">
-              <span>Page {page} of {totalPages}</span>
-              <div className="flex gap-2">
-                <button disabled={page === 1} onClick={() => setPage((prev) => Math.max(1, prev - 1))} className="rounded-lg border border-slate-800 bg-[#0B1119] px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
-                <button disabled={page === totalPages} onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} className="rounded-lg border border-slate-800 bg-[#0B1119] px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
-              </div>
-            </div>
-          </>
+            <DataTable columns = { datasetColumns } rows = { pagedRecords } />
+      <div className="mt-3 flex items-center justify-between text-sm text-muted">
+        <span>Page {page} of {totalPages}</span>
+        <div className="flex gap-2">
+          <button disabled={page === 1} onClick={() => setPage((prev) => Math.max(1, prev - 1))} className="rounded-lg border border-line bg-surface-muted px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
+          <button disabled={page === totalPages} onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} className="rounded-lg border border-line bg-surface-muted px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+        </div>
+      </div>
+    </>
+        )
+}
+      </section >
+
+<section className="rounded-lg border border-line bg-surface p-3">
+  <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <div className="flex items-center gap-2">
+        <p className="text-[11px] uppercase tracking-[0.24em] text-muted">
+          Evaluation progress
+        </p>
+        {evaluationIsActive && (
+          <Loader2 className="h-4 w-4 animate-spin text-accent" />
         )}
-      </section>
+      </div>
+      <p className="mt-1 text-sm text-muted">
+        Updates appear only after a question finishes evaluation.
+      </p>
+    </div>
 
-      <section className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3 shadow-panel">
-        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Evaluation progress</p>
-              {evaluationIsActive && <Loader2 className="h-4 w-4 animate-spin text-sky-400" />}
-            </div>
-            <p className="mt-1 text-sm text-slate-400">Updates appear only after a question finishes evaluation.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-300">
-            {streamingEvaluation && <span className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1"><Loader2 className="h-4 w-4 animate-spin" /> Evaluating</span>}
-            <span>Completed: <span className="font-semibold text-white">{progressCompletedRows}</span></span>
-            <span>Remaining: <span className="font-semibold text-white">{progressRemainingRows}</span></span>
-            <span>Current row: <span className="font-semibold text-white">{progressCurrentRow || '—'}</span></span>
-            <span>Estimated time: <span className="font-semibold text-white">{formatDuration(evaluationProgress.estimatedTimeSeconds)}</span></span>
-          </div>
-        </div>
+    <div className="flex flex-wrap items-center gap-3 text-sm text-ink">
+      {streamingEvaluation && (
+        <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface-muted px-3 py-1">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Evaluating
+        </span>
+      )}
 
-        <div className="rounded-lg border border-slate-800 bg-[#0B1119]/90 p-3">
-          <div className="flex items-center justify-between text-sm text-slate-300">
-            <span>{evaluationIsActive ? `Evaluating row ${progressCurrentRow || 0} of ${totalQuestions || 0}` : 'Waiting for evaluation to start'}</span>
-            <span className="font-semibold text-white">{evaluationIsActive ? `${progressPercentage}%` : '0%'}</span>
-          </div>
-          <div className="mt-2 h-3 overflow-hidden rounded-full bg-slate-900">
-            <div className={`h-full rounded-full transition-all duration-500 ease-out ${progressPercentage === 100 ? 'bg-emerald-500' : 'bg-sky-500'}`} style={{ width: `${Math.min(100, progressPercentage)}%` }} />
-          </div>
-        </div>
-      </section>
+      <span>
+        Completed: <span className="font-semibold">{progressCompletedRows}</span>
+      </span>
 
-      <section className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3 shadow-panel">
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Evaluation results</p>
-            <p className="mt-1 text-sm text-slate-400">One row per evaluated question.</p>
+      <span>
+        Remaining: <span className="font-semibold">{progressRemainingRows}</span>
+      </span>
+
+      <span>
+        Current row: <span className="font-semibold">{progressCurrentRow || "—"}</span>
+      </span>
+
+      <span>
+        Estimated time:{" "}
+        <span className="font-semibold">
+          {formatDuration(evaluationProgress.estimatedTimeSeconds)}
+        </span>
+      </span>
+    </div>
+  </div>
+
+  <div className="rounded-lg border border-line bg-surface-muted p-3">
+    <div className="flex items-center justify-between text-sm text-muted">
+      <span>
+        {evaluationIsActive
+          ? `Evaluating row ${progressCurrentRow || 0} of ${totalQuestions || 0}`
+          : "Waiting for evaluation to start"}
+      </span>
+
+      <span className="font-semibold">
+        {evaluationIsActive ? `${progressPercentage}%` : "0%"}
+      </span>
+    </div>
+
+    <div className="mt-2 h-3 overflow-hidden rounded-full bg-slate-800">
+      <div
+        className={`h-full rounded-full transition-all duration-500 ${
+          progressPercentage === 100 ? "bg-emerald-500" : "bg-accent"
+        }`}
+        style={{ width: `${Math.min(100, progressPercentage)}%` }}
+      />
+    </div>
+  </div>
+</section>
+
+<section className="rounded-lg border border-line bg-surface p-3">
+  <div className="mb-3 flex items-center justify-between">
+    <div>
+      <p className="text-[11px] uppercase tracking-[0.24em] text-muted">
+        Evaluation results
+      </p>
+      <p className="mt-1 text-sm text-muted">
+        One row per evaluated question
+      </p>
           </div>
         </div>
 
         {evaluationsLoading ? (
-          <div className="rounded-lg border border-slate-800/80 bg-[#0B1119] p-4 text-sm text-slate-400">Loading evaluations…</div>
-        ) : evaluations.length === 0 ? (
-          <div className="rounded-lg border border-slate-800/80 bg-[#0B1119] p-4 text-sm text-slate-400">No golden dataset evaluation results available yet.</div>
+{loadingEvaluations ? (
+  <div className="rounded-lg border border-line bg-surface-muted p-4 text-sm text-muted">
+    Loading evaluations…
+  </div>
+) : evaluations.length === 0 ? (
+  <div className="rounded-lg border border-line bg-surface-muted p-4 text-sm text-muted">
+    No golden dataset evaluation results available yet.
+  </div>
+) : (
         ) : (
           <DataTable columns={evaluationColumns} rows={evaluations} onRowClick={(row) => setSelectedEvaluation(row)} />
         )}
@@ -644,6 +772,6 @@ export default function GoldenDatasetPage() {
           </div>
         ) : null}
       </Drawer>
-    </div>
+    </div >
   );
 }

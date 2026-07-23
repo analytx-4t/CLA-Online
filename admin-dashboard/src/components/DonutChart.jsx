@@ -33,9 +33,9 @@ export default function DonutChart({ segments }) {
             />
           );
         })}
-        <circle cx={center} cy={center} r={radius - strokeWidth / 2} fill="#0B0F14" />
+        <circle cx={center} cy={center} r={radius - strokeWidth / 2} style={{ fill: 'var(--surface-muted)' }} />
       </svg>
-      <div className="flex flex-col text-sm text-slate-300">
+      <div className="flex flex-col gap-1 text-sm text-ink">
         {segments.map((segment) => (
           <div key={segment.label} className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />

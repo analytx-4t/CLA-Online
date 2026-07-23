@@ -14,13 +14,27 @@ Pipeline per row:
        before embedding, so each chunk is self-contained when retrieved alone
     5. Attach structured filter metadata (Category/Subject/Sections/DocTitle/
        LawTitle/DocDate) as real columns on DocumentEmbeddings, so a RAG app can
-       filter before or alongside the vector scan instead of re-joining parent tables
-       at query time.
+       filter (SUGGESTED_FILTERS) BEFORE or alongside the vector scan instead of
+       re-joining 8 parent tables at query time.
+
+Changes vs. the original version:
+    - SOURCE_QUERIES now return 13 columns per source (was 6) — the extra 7 are
+      the structured filter metadata described above.
+    - Uses OpenAI's text-embedding-3-large instead of Gemini. Vector spaces
+      between different embedding models are NOT comparable — DocumentEmbeddings
+      was empty when this switch was made, so no truncate/re-embed was needed.
+      If it ever has rows from another model, TRUNCATE before re-running.
+    - text-embedding-3-large returns one embedding per input string, in the
+      same order as the input list — no aggregation quirk to work around
+      (unlike gemini-embedding-2), and up to 2048 inputs per call.
+    - All 8 sources are active (see ACTIVE_SOURCES) — not just Articles.
+    - Existing (SourceRecordID, ChunkIndex) pairs are loaded once per source
+      into a Python set instead of one SELECT per chunk.
 
 Setup:
-    pip install --upgrade pyodbc python-dateutil python-dotenv
+    pip install --upgrade pyodbc openai python-dateutil python-dotenv
 
-    Create a .env file in this same folder (see .env.example) with:
+    Create a .env file in this same folder with:
         OPENAI_API_KEY=...
         SQL_CONN_STR=...
 
@@ -37,9 +51,7 @@ import time
 import pyodbc
 from dateutil import parser as dateparser
 from dotenv import load_dotenv
-
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from shared_embedding_service import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, embed_texts as shared_embed_texts, log_embedding_context
+from openai import OpenAI, RateLimitError, APIError, APIConnectionError
 
 load_dotenv()  # reads .env in the current working directory into os.environ
 
@@ -54,18 +66,25 @@ SQL_CONN_STR = os.environ.get("SQL_CONN_STR") or (
     "Encrypt=yes;TrustServerCertificate=yes;"
 )
 
-EMBEDDING_PROVIDER = EMBEDDING_PROVIDER
+EMBEDDING_MODEL = "text-embedding-3-large"
+
+# text-embedding-3-large defaults to 3072 dims (best quality). Set to a smaller
+# int (e.g. 1024, 1536) to have OpenAI truncate+renormalize server-side and
+# save storage, if you don't need max quality.
+OUTPUT_DIMENSIONALITY = None  # None = default 3072
 
 MAX_CHUNK_CHARS = 1400
 CHUNK_OVERLAP_CHARS = 200
-BATCH_SIZE = 16
+BATCH_SIZE = 100  # chunks per OpenAI call / per DB insert batch (API allows up to 2048 inputs/call)
 
-log_embedding_context("[Indexing]")
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-# Only these sources actually run. All 8 queries stay fully defined below so
-# nothing has to be rewritten later — just add names back here (e.g. "CaseLaws",
-# "Circular", ...) once Articles is confirmed working end-to-end in your product.
-ACTIVE_SOURCES = ["Articles"]
+# All 8 sources run by default now that the OpenAI switch is in place. Remove
+# a name from this list to skip that source on a given run.
+ACTIVE_SOURCES = [
+    "Articles", "CaseLaws", "Circular", "Legislation",
+    "Notifications", "Query", "CLASE_Commentary", "CLASE_Procedure_Details",
+]
 
 # ---------- SOURCE QUERIES ----------
 # Every query returns the same 13 columns, in this order:
@@ -96,7 +115,11 @@ SOURCE_QUERIES = {
                CONCAT('Versus: ', ISNULL(c.Versus,''), ' | Category: ', ISNULL(c.Category,''),
                       ' | Subject: ', ISNULL(c.Subject,''), ' | Citation: ', ISNULL(c.Citation,''),
                       ' | Judge: ', ISNULL(c.Judge,''), ' | Sections: ', ISNULL(c.Sections,''),
-                      ' | HeadNote: ', ISNULL(c.HeadNote,'')) AS ContextPrefix,
+                      -- HeadNote can run to tens of thousands of chars on some rows; this
+                      -- header is repeated on EVERY chunk of the row, so it must stay short
+                      -- (a full-length HeadNote here blew a CaseLaws batch past OpenAI's
+                      -- 300k-tokens-per-request cap). LEFT() to a short teaser only.
+                      ' | HeadNote: ', LEFT(ISNULL(c.HeadNote,''), 300)) AS ContextPrefix,
                d.Filetext AS RawText,
                c.Category, c.Subject, c.Sections, c.Versus AS DocTitle,
                CAST(NULL AS NVARCHAR(200)) AS LawTitle,
@@ -140,7 +163,7 @@ SOURCE_QUERIES = {
                d.Filetext AS RawText,
                n.Category, n.Subject, n.Sections, n.Title AS DocTitle,
                CAST(NULL AS NVARCHAR(200)) AS LawTitle,
-               n.NotificationDate_new AS DateStructured,
+               CAST(NULL AS DATETIME2) AS DateStructured,
                n.NotificationDate AS DateRaw
         FROM dbo.notifications_data_2025 d
         JOIN dbo.notifications_2025 n ON n.Id = d.Notification_ID
@@ -184,13 +207,15 @@ SOURCE_QUERIES = {
                CAST(NULL AS NVARCHAR(510)) AS Category, CAST(NULL AS NVARCHAR(510)) AS Subject,
                CAST(NULL AS NVARCHAR(200)) AS Sections, p.Title AS DocTitle,
                p.LawTitle AS LawTitle,
-               p.Inserted_Date AS DateStructured,
+               CAST(NULL AS DATETIME2) AS DateStructured,
                CAST(NULL AS NVARCHAR(200)) AS DateRaw
         FROM dbo.CLASE_Procedure_Details_2025 p
         WHERE p.[Procedure] IS NOT NULL OR p.Resolution IS NOT NULL
         -- NOTE: no IsActive filter here — the column was dropped from this
         -- table (see DATA_DICTIONARY.md open item #2). Add it back if the
         -- column is restored.
+        -- NOTE: no Inserted_Date column either on this table, unlike
+        -- CLASE_Commentary — DateStructured is always NULL for this source.
     """,
 }
 
@@ -311,9 +336,16 @@ def build_chunks(text, override_label=None):
     return final_chunks
 
 
+MAX_CONTEXT_PREFIX_CHARS = 500  # safety cap: this header is repeated on EVERY chunk of a
+# row, so one oversized metadata field (e.g. a 27k-char HeadNote seen on one CaseLaws row)
+# must never reach it uncapped, even if a future source query forgets to LEFT() it in SQL.
+
+
 def with_context_prefix(source_name, context_prefix, filename, label, chunk_body):
     parts = [source_name]
     if context_prefix:
+        if len(context_prefix) > MAX_CONTEXT_PREFIX_CHARS:
+            context_prefix = context_prefix[:MAX_CONTEXT_PREFIX_CHARS] + "..."
         parts.append(context_prefix)
     if filename:
         parts.append(f"File: {filename}")
@@ -324,59 +356,48 @@ def with_context_prefix(source_name, context_prefix, filename, label, chunk_body
 
 # ---------- EMBEDDING ----------
 
-# Free-tier gemini-embedding-2 quota is 100 embedded items/minute per project —
-# NOT 100 API calls/minute. Batching 16 chunks into one HTTP call still charges
-# 16 units against this quota (confirmed empirically: a run failed at exactly
-# 96/100 after 6 batches of 16, on the 7th call). So throttling must track
-# item count in the rolling window, not call count.
-ITEMS_PER_MINUTE_QUOTA = 90  # stay under the real 100 ceiling, leave headroom
-_usage_log = []  # list of (timestamp, item_count)
-
-
-def _throttle(n_items):
-    """Block until sending n_items more would keep the trailing-60s total <= quota."""
-    now = time.monotonic()
-    window_start = now - 60
-    while _usage_log and _usage_log[0][0] < window_start:
-        _usage_log.pop(0)
-    used = sum(n for _, n in _usage_log)
-    if used + n_items > ITEMS_PER_MINUTE_QUOTA:
-        sleep_for = (_usage_log[0][0] + 60 - now) if _usage_log else 5
-        sleep_for = max(sleep_for, 1)
-        print(f"    throttling: {used}/{ITEMS_PER_MINUTE_QUOTA} items used this minute, "
-              f"sleeping {sleep_for:.1f}s")
-        time.sleep(sleep_for)
-        return _throttle(n_items)  # re-check after sleeping
-    _usage_log.append((time.monotonic(), n_items))
-
-
-def _extract_retry_delay(error_text, default=20):
-    """Pull the server-suggested wait time out of a 429 error message
-    (e.g. "Please retry in 42.6s" or a retryDelay field like '39s')."""
-    match = re.search(r"retry(?:Delay)?['\"]?\s*[:=]?\s*'?(\d+(?:\.\d+)?)", str(error_text), re.IGNORECASE)
-    return float(match.group(1)) if match else default
-
-
 def prepare_document_text(content, title=None):
-    """Use the shared OpenAI document-prefix format for embedding consistency.
-    This is the documented asymmetric-retrieval format:
-    'title: {title} | text: {content}'. The matching query-side format belongs
-    in search_documents.py's embed_query() so both sides stay aligned."""
-    return f"title: {title or 'none'} | text: {content}"
+    """OpenAI's embedding models have no task_type / asymmetric-retrieval format
+    (unlike gemini-embedding-2) — the raw text is embedded as-is. Kept as a
+    passthrough function (instead of inlining) so search_documents.py's
+    embed_query() has an obvious symmetric counterpart to point at."""
+    return content
+
+
+def _extract_retry_delay(error, default=20):
+    """Pull the server-suggested wait time out of a 429 response if present
+    (OpenAI sends a Retry-After header), else fall back to a flat default."""
+    try:
+        retry_after = error.response.headers.get("retry-after")
+        if retry_after:
+            return float(retry_after)
+    except AttributeError:
+        pass
+    return default
 
 
 def embed_chunks_batch(texts, retries=5):
-    """Embed a list of texts through the shared OpenAI text-embedding-3-large service."""
+    """Embed a list of texts as ONE call. OpenAI's embeddings API returns one
+    embedding per input string, in the same input order — no aggregation
+    quirk to work around here (up to 2048 inputs per call)."""
+    kwargs = {"model": EMBEDDING_MODEL, "input": texts}
+    if OUTPUT_DIMENSIONALITY:
+        kwargs["dimensions"] = OUTPUT_DIMENSIONALITY
+
     for attempt in range(retries):
-        _throttle(len(texts))
         try:
-            vectors = shared_embed_texts(texts)
+            result = client.embeddings.create(**kwargs)
+            vectors = [d.embedding for d in result.data]
             if len(vectors) != len(texts):
                 raise RuntimeError(
-                    f"Expected {len(texts)} embeddings back, got {len(vectors)}"
+                    f"Expected {len(texts)} embeddings back, got {len(vectors)}."
                 )
             return vectors
-        except Exception as e:
+        except RateLimitError as e:
+            wait = _extract_retry_delay(e, default=2 ** attempt * 5)
+            print(f"    rate limited (attempt {attempt + 1}/{retries}): retrying in {wait:.0f}s")
+            time.sleep(wait)
+        except (APIError, APIConnectionError) as e:
             wait = 2 ** attempt
             print(f"    embed error (attempt {attempt + 1}/{retries}): {e} -- retrying in {wait:.0f}s")
             time.sleep(wait)
@@ -447,9 +468,9 @@ def process_source(cnx, source_name, query):
         insert_rows = []
         for item, vector in zip(batch, vectors):
             insert_rows.append((
-                # ChunkText stores the clean contextual-prefix version (no 'title: ... | text: ...'
-                # wrapper) so it reads naturally when shown to a user or fed to the LLM later.
-                # The wrapper only mattered for the embedding call itself.
+                # ChunkText stores the clean contextual-prefix version; the
+                # embed_text sent to the API (see prepare_document_text) is
+                # currently identical, but kept separate in case that changes.
                 source_name, item["record_id"], item["parent_id"], item["filename"], item["idx"],
                 item["stored_text"], vector_to_bytes(vector), EMBEDDING_MODEL, len(vector),
                 item["category"], item["subject"], item["sections"],
@@ -463,9 +484,8 @@ def process_source(cnx, source_name, query):
 
 def count_chunks_only():
     """Dry run: read + chunk everything, print exact counts per source, skip
-    embedding entirely. No rate limits apply since no API calls are made —
-    this finishes in well under a minute and tells you exactly how long the
-    real run will take at your current ITEMS_PER_MINUTE_QUOTA."""
+    embedding entirely. No API calls are made, so this finishes in well under
+    a minute and tells you exactly how many chunks the real run will embed."""
     cnx = pyodbc.connect(SQL_CONN_STR)
     try:
         grand_total = 0
@@ -484,9 +504,9 @@ def count_chunks_only():
             print(f"{source_name}: {len(rows)} rows -> {total} chunks")
             grand_total += total
         print(f"\nTOTAL: {grand_total} chunks")
-        print(f"At {ITEMS_PER_MINUTE_QUOTA} items/min throttle: "
-              f"~{grand_total / ITEMS_PER_MINUTE_QUOTA:.0f} minutes "
-              f"(~{grand_total / ITEMS_PER_MINUTE_QUOTA / 60:.1f} hours)")
+        est_calls = grand_total / BATCH_SIZE
+        print(f"At {BATCH_SIZE} chunks/call: ~{est_calls:.0f} API calls "
+              f"(actual time depends on your OpenAI rate-limit tier)")
     finally:
         cnx.close()
 

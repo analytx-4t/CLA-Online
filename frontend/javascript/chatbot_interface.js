@@ -723,6 +723,20 @@ function ensureCitationVisible(citationsContainer, cardEl) {
   cardEl.classList.add('highlight');
 }
 
+// Quiet signal for answers with no strong retrieved sources — legal answers
+// should visibly hedge rather than read with the same confidence every time.
+function renderConfidenceHedge(container, message) {
+  if (container.querySelector('.confidence-hedge')) return;
+  const sources = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
+  const content = message.content || '';
+  if (sources.length > 0 || content.length < 120) return;
+
+  const hedge = document.createElement('div');
+  hedge.className = 'confidence-hedge';
+  hedge.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>No strong matching sources were found for this answer — verify independently before relying on it.</span>`;
+  container.appendChild(hedge);
+}
+
 function renderSourceCitations(container, message) {
   if (container.querySelector('.citations-container')) {
     return;
@@ -774,7 +788,14 @@ function renderSourceCitations(container, message) {
     let openLinkHtml = '';
     if (s.source_table && s.record_id) {
       const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
-      openLinkHtml = `<a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(s.record_id)}${parentParam}&theme=${activeTheme}" target="_blank" class="open-citation-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="vertical-align: middle; margin-right: 3px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Citation</a>`;
+      const highlightParam = s.excerpt ? `&highlight=${encodeURIComponent(s.excerpt)}` : '';
+      openLinkHtml = `<a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(s.record_id)}${parentParam}&theme=${activeTheme}${highlightParam}" target="_blank" class="open-citation-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="vertical-align: middle; margin-right: 3px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Citation</a>`;
+    }
+
+    let excerptHtml = '';
+    if (s.excerpt) {
+      const preview = s.excerpt.length > 180 ? `${s.excerpt.slice(0, 180).trim()}…` : s.excerpt;
+      excerptHtml = `<p class="citation-excerpt">${escapeHTML(preview)}</p>`;
     }
 
     card.innerHTML = `
@@ -782,6 +803,7 @@ function renderSourceCitations(container, message) {
         <span class="citation-badge">Source [${sourceNum}]</span>
         ${openLinkHtml}
       </div>
+      ${excerptHtml}
       ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
     `;
     return card;
@@ -892,12 +914,13 @@ function renderMessageActions(container, message) {
     link.addEventListener('click', (e) => {
       e.preventDefault();
       const index = parseInt(link.getAttribute('data-citation-index'), 10) - 1;
-      // If the message metadata for sources contains a passage id, open citation page with passage anchor
+      // If the message metadata for this source has the retrieved excerpt, open the
+      // citation page straight to that highlighted passage instead of just the card.
       const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
       const src = sources[index];
-      if (src && src.source_table && src.record_id && src.passage_id) {
+      if (src && src.source_table && src.record_id && src.excerpt) {
         const parentParam = src.parent_id ? `&parentId=${encodeURIComponent(src.parent_id)}` : '';
-        const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(src.source_table)}&recordId=${encodeURIComponent(src.record_id)}${parentParam}&theme=${document.documentElement.getAttribute('data-theme') || 'light'}&highlight=${encodeURIComponent(src.passage_id)}`;
+        const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(src.source_table)}&recordId=${encodeURIComponent(src.record_id)}${parentParam}&theme=${document.documentElement.getAttribute('data-theme') || 'light'}&highlight=${encodeURIComponent(src.excerpt)}`;
         window.open(url, '_blank');
         return;
       }
@@ -969,6 +992,7 @@ function renderMessages() {
 
             // Render in order: Citations, Follow-up Questions, Message Actions
             renderSourceCitations(div, message);
+            renderConfidenceHedge(div, message);
             renderSuggestedFollowUps(div, message);
             renderMessageActions(div, message);
             scrollToBottom();
@@ -988,6 +1012,7 @@ function renderMessages() {
         contentDiv.innerHTML = formatMarkdown(sanitizedContent);
         // Render in order: Citations, Follow-up Questions, Message Actions
         renderSourceCitations(div, message);
+        renderConfidenceHedge(div, message);
         renderSuggestedFollowUps(div, message);
         renderMessageActions(div, message);
       }

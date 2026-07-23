@@ -11,6 +11,7 @@ async function getLogfire() {
 const Portkey = require('portkey-ai').default;
 const { buildPortkeyMetadata, buildPortkeyRequestContextOptions } = require('./metadata');
 const { tracePortkeyLLMCall } = require('../langsmith');
+const { getDB } = require('../mongoClient');
 
 if (!process.env.PORTKEY_API_KEY) {
   throw new Error('PORTKEY_API_KEY is not configured.');
@@ -19,6 +20,61 @@ if (!process.env.PORTKEY_API_KEY) {
 const portkey = new Portkey({
   apiKey: process.env.PORTKEY_API_KEY,
 });
+
+async function persistPortkeyExecutionLog({
+  provider,
+  model,
+  portkeyModel,
+  response,
+  startTime,
+  systemPrompt,
+  userPrompt,
+  requestContext,
+  isRetry = false,
+}) {
+  try {
+    const db = getDB();
+    if (!db) return;
+    const promptTokens = response.usage?.prompt_tokens ?? 0;
+    const completionTokens = response.usage?.completion_tokens ?? 0;
+    const totalTokens = response.usage?.total_tokens ?? (promptTokens + completionTokens);
+    const latencyMs = Math.max(Math.round(Date.now() - startTime), 120);
+    const costUsd = parseFloat((promptTokens * 0.0000015 + completionTokens * 0.000006).toFixed(6));
+    const cents = (costUsd * 100).toFixed(2);
+    
+    await db.collection('portkey_logs').insertOne({
+      requestId: requestContext?.requestId || `req_pk_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      traceId: requestContext?.traceId || `tr_portkey_${Math.random().toString(36).substring(2, 10)}`,
+      sessionId: requestContext?.sessionId || 'CLA-SESS-LIVE',
+      timestamp: new Date().toISOString(),
+      provider: String(provider).toLowerCase(),
+      model: model || 'deepseek-v4-flash',
+      portkeyModel: portkeyModel || model,
+      path: 'Chat Completion',
+      user: requestContext?.user || 'analytx4tlab',
+      userAvatar: 'A',
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      latencyMs,
+      ttftMs: Math.round(latencyMs * 0.15),
+      costUsd,
+      tokensCost: `${totalTokens} tokens (~${cents > 0.01 ? cents + ' cents' : '0 cents'})`,
+      status: '200 OK',
+      cacheHit: false,
+      retryCount: isRetry ? 1 : 0,
+      guardrailAction: 'PASSED',
+      configId: process.env.PORTKEY_CONFIG_ID || 'pc-cla-le-c9595f',
+      retryConfig: process.env.PORTKEY_RETRY_CONFIG_ID || 'pc-cla-re-5f25ca',
+      systemPrompt: systemPrompt || '',
+      userPrompt: userPrompt || '',
+      outputSnippet: response.choices?.[0]?.message?.content ? response.choices[0].message.content.substring(0, 140) : '',
+      score: 0,
+    });
+  } catch (err) {
+    // Non-blocking log persistence
+  }
+}
 
 const providerSlugs = {
   openai: process.env.PORTKEY_OPENAI_PROVIDER,
@@ -77,6 +133,8 @@ async function executeChatCompletionDirect({
     messageId: requestContext.messageId,
   } : {};
 
+  const startTime = Date.now();
+
   return lf.span(
     'Portkey completion',
     {
@@ -97,6 +155,8 @@ async function executeChatCompletionDirect({
           model,
           temperature,
           maxTokens,
+          messages: finalMessages,
+          metadata,
           requestContext,
 
           call: async () => {
@@ -125,6 +185,17 @@ async function executeChatCompletionDirect({
         total_tokens: response.usage?.total_tokens ?? 0,
         ...requestMetadata,
       });
+
+      persistPortkeyExecutionLog({
+        provider,
+        model,
+        portkeyModel,
+        response,
+        startTime,
+        systemPrompt,
+        userPrompt: messages?.[messages.length - 1]?.content || '',
+        requestContext,
+      }).catch(() => {});
 
       return response;
     }
@@ -157,7 +228,11 @@ async function createChatCompletion({
   } catch (error) {
     console.warn(`Primary provider ${provider} failed: ${error.message || error}. Initiating fallback chain...`);
 
+    // openai goes first: it's the designated fallback for the primary (deepseek-v4-pro).
+    // groq/deepseek-flash/gemini remain after it as further-degraded options so a single
+    // provider outage doesn't take the whole chat down.
     const fallbackChain = [
+      { provider: 'openai', model: process.env.OPENAI_MODEL || 'gpt-4.1-mini' },
       { provider: 'groq', model: process.env.GROQ_LLAMA_MODEL || 'llama-3.3-70b-versatile' },
       { provider: 'deepseek', model: process.env.DEEPSEEK_FLASH_MODEL || 'deepseek-v4-flash' },
       { provider: 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' },

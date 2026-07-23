@@ -160,42 +160,43 @@ async function ensureIndexes(db) {
     }
   }
 
-  try {
-    await Promise.all([
-      sessionsCollection.createIndex({ session_id: 1, user_id: 1 }, { unique: true, name: 'uniq_session_user' }),
-      sessionsCollection.createIndex({ user_id: 1, last_message_at: -1 }, { name: 'user_last_message' }),
-      messagesCollection.createIndex({ message_id: 1 }, { unique: true, name: 'uniq_message_id' }),
-      messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
-      evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
-      evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
-      retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
-      retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
-      goldenDatasetCollection.createIndex({ version: 1 }, { name: 'golden_dataset_version' }),
-      goldenDatasetCollection.createIndex({ question: 1 }, { name: 'golden_dataset_question' }),
-      goldenDatasetCollection.createIndex({ id: 1 }, { name: 'golden_dataset_id' }),
-      goldenDatasetRunsCollection.createIndex({ questionId: 1 }, { name: 'golden_dataset_run_question_id' }),
-      goldenDatasetRunsCollection.createIndex({ timestamp: 1 }, { name: 'golden_dataset_run_timestamp' }),
-      goldenDatasetRunsCollection.createIndex({ datasetVersion: 1 }, { name: 'golden_dataset_run_dataset_version' }),
-      evaluationResultsCollection.createIndex({ datasetVersion: 1 }, { name: 'eval_dataset_version' }),
-      evaluationResultsCollection.createIndex({ evaluationSessionId: 1 }, { name: 'eval_session_id' }),
-      goldenDatasetStateCollection.createIndex({ _id: 1 }, { name: 'golden_dataset_state_id' }),
-    ]);
-  } catch (error) {
-    // Handle index key conflict by dropping the old index
-    if (error?.codeName === 'IndexKeySpecsConflict' && error?.message?.includes('eval_session_id')) {
-      console.log('Found conflicting eval_session_id index, attempting to drop it...');
-      try {
-        await evaluationResultsCollection.dropIndex('eval_session_id');
-        console.log('Successfully dropped conflicting index');
-        // Retry creating the correct index
-        await evaluationResultsCollection.createIndex({ evaluationSessionId: 1 }, { name: 'eval_session_id' });
-      } catch (dropError) {
-        console.log('Could not drop index:', dropError.message);
-      }
-    } else {
-      throw error;
+try {
+  await Promise.all([
+    sessionsCollection.createIndex({ session_id: 1, user_id: 1 }, { unique: true, name: 'uniq_session_user' }),
+    sessionsCollection.createIndex({ user_id: 1, last_message_at: -1 }, { name: 'user_last_message' }),
+    messagesCollection.createIndex({ message_id: 1 }, { unique: true, name: 'uniq_message_id' }),
+    messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
+    evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
+    evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
+    retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
+    retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
+    goldenDatasetCollection.createIndex({ version: 1 }, { name: 'golden_dataset_version' }),
+    goldenDatasetCollection.createIndex({ question: 1 }, { name: 'golden_dataset_question' }),
+    goldenDatasetCollection.createIndex({ id: 1 }, { name: 'golden_dataset_id' }),
+    goldenDatasetRunsCollection.createIndex({ questionId: 1 }, { name: 'golden_dataset_run_question_id' }),
+    goldenDatasetRunsCollection.createIndex({ timestamp: 1 }, { name: 'golden_dataset_run_timestamp' }),
+    goldenDatasetRunsCollection.createIndex({ datasetVersion: 1 }, { name: 'golden_dataset_run_dataset_version' }),
+    evaluationResultsCollection.createIndex({ datasetVersion: 1 }, { name: 'eval_dataset_version' }),
+    evaluationResultsCollection.createIndex({ evaluationSessionId: 1 }, { name: 'eval_session_id' }),
+    goldenDatasetStateCollection.createIndex({ _id: 1 }, { name: 'golden_dataset_state_id' }),
+  ]);
+} catch (error) {
+  if (error?.codeName === 'IndexKeySpecsConflict' && error?.message?.includes('eval_session_id')) {
+    console.log('Found conflicting eval_session_id index, attempting to drop it...');
+    try {
+      await evaluationResultsCollection.dropIndex('eval_session_id');
+      console.log('Successfully dropped conflicting index');
+      await evaluationResultsCollection.createIndex(
+        { evaluationSessionId: 1 },
+        { name: 'eval_session_id' }
+      );
+    } catch (dropError) {
+      console.log('Could not drop index:', dropError.message);
     }
+  } else {
+    throw error;
   }
+}
 }
 
 async function getCurrentGoldenDatasetVersion(db) {
@@ -782,9 +783,9 @@ function formatDocumentContent(rawText) {
       // Assign a stable passage id for each paragraph so front-end can deep-link
       const passageId = `p-${idx}-${Math.abs(hashCode(line)).toString(36)}`;
       if ((line.startsWith('“') && line.endsWith('”')) || (line.startsWith('"') && line.endsWith('"')) || (line.startsWith('‘') && line.endsWith('’')) || (line.startsWith("'") && line.endsWith("'"))) {
-        htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em; font-style: italic; padding-left: 20px; border-left: 3px solid var(--primary-light);">${formattedLine}</p>`;
+        htmlResult += `<p data-passage-id="${passageId}" style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em; font-style: italic; padding-left: 20px; border-left: 3px solid var(--primary-light);">${formattedLine}</p>`;
       } else {
-        htmlResult += `<p style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em;">${formattedLine}</p>`;
+        htmlResult += `<p data-passage-id="${passageId}" style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em;">${formattedLine}</p>`;
       }
     }
   }
@@ -823,6 +824,89 @@ function highlightTextInHtml(html, query) {
   });
 }
 
+function normalizeWhitespace(str) {
+  return String(str || '').replace(/\s+/g, ' ').trim();
+}
+
+// Truncate a retrieved chunk to a citation excerpt without cutting a
+// sentence (or word) in half, so it reads cleanly and matches real
+// sentence boundaries in the source document for highlighting.
+function truncateExcerpt(text, maxLength = 500) {
+  if (!text) return null;
+  // Indexed chunks carry a leading "[Table | Title: ... | File: ...]" context
+  // header for the LLM prompt — strip it for the citation excerpt, since it
+  // never appears in the actual document body and would never highlight.
+  const trimmed = String(text).replace(/^\s*\[[^\]]*\]\s*/, '').trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= maxLength) return trimmed;
+
+  const slice = trimmed.slice(0, maxLength);
+  const lastSentenceEnd = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('! '), slice.lastIndexOf('? '));
+  if (lastSentenceEnd > maxLength * 0.4) {
+    return slice.slice(0, lastSentenceEnd + 1).trim();
+  }
+
+  const lastSpace = slice.lastIndexOf(' ');
+  return (lastSpace > 0 ? slice.slice(0, lastSpace) : slice).trim();
+}
+
+// Split a retrieved excerpt into individual sentences so each one can be
+// located and highlighted independently inside the full document — the
+// excerpt as a whole almost never appears as one contiguous run of text
+// once formatDocumentContent has re-wrapped the source into paragraphs.
+function splitIntoSentences(text) {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) return [];
+  return normalized
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'\u201c\u2018])/)
+    .map(normalizeWhitespace)
+    .filter((sentence) => sentence.length >= 15);
+}
+
+// Bold + accent a handful of "important" fragments inside an already-matched
+// sentence: quoted defined terms and statutory cross-references, the same
+// terms the chat answer view already bolds in the CLA brand green.
+function markKeyTerms(text) {
+  return text
+    .replace(/(\u201c[^\u201d]{3,80}\u201d|\u2018[^\u2019]{3,80}\u2019|"[^"]{3,80}")/g, '<span class="key-term">$1</span>')
+    .replace(/\b((?:Section|Sub-section|Clause|Rule|Regulation|Article)\s+\d+[A-Za-z]*(?:\(\d+\))?(?:\([a-z]\))?)\b/gi, (m) => `<span class="key-term">${m}</span>`);
+}
+
+// Highlight the passage that was actually retrieved and used to answer the
+// user's question, sentence by sentence, so it's obvious at a glance why
+// this document was cited — falling back to a plain literal match for
+// short, non-sentence highlight queries.
+function highlightRelevantExcerpt(html, excerptText) {
+  if (!html || !excerptText) return html;
+  const trimmedQuery = normalizeWhitespace(excerptText);
+  if (!trimmedQuery) return html;
+
+  const sentences = splitIntoSentences(trimmedQuery);
+  const phrases = sentences.length > 0 ? sentences : [trimmedQuery];
+
+  let matches = 0;
+  const highlighted = html.replace(/>([^<]+)</g, (match, content) => {
+    let updated = content;
+    for (const phrase of phrases) {
+      if (!phrase || matches >= 15) continue;
+      const fuzzyPattern = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
+      let pattern;
+      try {
+        pattern = new RegExp(`(${fuzzyPattern})`, 'i');
+      } catch (e) {
+        continue;
+      }
+      if (pattern.test(updated)) {
+        updated = updated.replace(pattern, (m) => `<mark class="cited-mark">${markKeyTerms(m)}</mark>`);
+        matches += 1;
+      }
+    }
+    return `>${updated}<`;
+  });
+
+  return matches > 0 ? highlighted : highlightTextInHtml(html, trimmedQuery.length <= 120 ? trimmedQuery : phrases[0]);
+}
+
 function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
   const title = escapeHTML(data.title || 'Untitled Document');
   const sourceTable = escapeHTML(data.source_table || '');
@@ -851,8 +935,11 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
     formattedDate = `${issueMonth} ${issueYear}`.trim();
   }
 
-  const docContent = highlightTextInHtml(formatDocumentContent(data.html), highlightQuery);
-  const highlightBanner = highlightQuery ? `<div class="highlight-banner" id="highlight-banner">Highlighted passage: <strong>${escapeHTML(highlightQuery)}</strong></div>` : '';
+  const docContent = highlightRelevantExcerpt(formatDocumentContent(data.html), highlightQuery);
+  const highlightPreview = normalizeWhitespace(highlightQuery);
+  const highlightBanner = highlightPreview
+    ? `<div class="highlight-banner" id="highlight-banner">Highlighted passage cited in the answer: <strong>${escapeHTML(highlightPreview.length > 160 ? `${highlightPreview.slice(0, 160)}…` : highlightPreview)}</strong></div>`
+    : '';
 
   const isDarkTheme = theme === 'dark';
   const bodyThemeClass = isDarkTheme ? 'dark-theme' : 'light-theme';
@@ -1182,6 +1269,30 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
     .content-body a, .content-body A {
       color: var(--primary) !important;
       text-decoration: underline !important;
+    }
+
+    /* Cited passage / keyword highlighting — same CLA green used for bolded
+       key terms in the chat answer view */
+    .content-body mark, .content-body .cited-mark {
+      background: rgba(12, 135, 66, 0.16) !important;
+      color: var(--text) !important;
+      box-shadow: inset 0 0 0 1px rgba(12, 135, 66, 0.3);
+      border-radius: 4px;
+      padding: 0 3px;
+    }
+
+    .content-body .key-term {
+      color: var(--primary) !important;
+      font-weight: 700 !important;
+    }
+
+    .content-body p[data-passage-id].persistent-highlight {
+      background: rgba(12, 135, 66, 0.1);
+      box-shadow: inset 3px 0 0 var(--primary);
+      border-radius: 6px;
+      padding: 12px 16px 12px 20px !important;
+      margin-left: -20px;
+      transition: background 1.4s ease;
     }
 
     .footer-actions {
@@ -1552,30 +1663,52 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
       const highlightBanner = document.getElementById('highlight-banner');
       if (highlightBanner) {
         highlightBanner.classList.add('is-active');
-        highlightBanner.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
 
-      // Handle passage ID highlighting from URL params
-      const urlParams = new URLSearchParams(window.location.search || '');
-      const passageId = urlParams.get('highlight') || '';
-      if (passageId) {
-        const selector = "[data-passage-id='" + passageId.replace(/[^a-zA-Z0-9-_:.]/g, '') + "']";
-        const target = document.querySelector(selector);
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          target.classList.add('persistent-highlight');
-          const removeHighlight = () => {
-            target.classList.remove('persistent-highlight');
-            window.removeEventListener('click', removeHighlight);
-          };
-          setTimeout(() => window.addEventListener('click', removeHighlight), 200);
-        }
+      // Jump straight to the first cited-passage highlight in the body, if any,
+      // and pulse its containing paragraph so it's easy to spot at a glance.
+      const firstMark = document.querySelector('.content-body .cited-mark, .content-body mark');
+      const target = firstMark ? firstMark.closest('[data-passage-id]') : null;
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.add('persistent-highlight');
+        const removeHighlight = () => {
+          target.classList.remove('persistent-highlight');
+          window.removeEventListener('click', removeHighlight);
+        };
+        setTimeout(() => window.addEventListener('click', removeHighlight), 200);
+      } else if (highlightBanner) {
+        highlightBanner.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     });
   </script>
 </body>
 </html>`;
 }
+function runRagasEvaluation(question, answer, contexts, referenceAnswer = null) {
+  return new Promise((resolve) => {
+    const evaluationScript = path.join(
+      __dirname,
+      '..',
+      'evaluation',
+      'live_evaluator.py'
+    );
+
+    const fs = require('fs');
+
+    const candidatePythons = [
+      path.join(__dirname, '..', 'evaluation', '.venv', 'Scripts', 'python.exe'),
+      path.join(__dirname, '..', 'evaluation', '.venv', 'bin', 'python'),
+      path.join(__dirname, '..', 'embedding', 'venv', 'Scripts', 'python.exe'),
+      path.join(__dirname, '..', 'embedding', 'venv', 'bin', 'python'),
+      process.platform === 'win32' ? 'python' : 'python3'
+    ];
+
+    const evaluationPython =
+      candidatePythons.find((p) => fs.existsSync(p)) ||
+      (process.platform === 'win32' ? 'python' : 'python3');
+
+    // ↓↓↓ KEEP YOUR CODE FROM HERE ↓↓↓
 
     const payload = {
       question,
@@ -1586,10 +1719,19 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
 
     console.log('[RAGAS] Payload prepared for evaluator.');
 
-    const pythonProcess = spawn(evaluationPython, [evaluationScript], {
-      cwd: path.join(__dirname, '..'),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    let pythonProcess;
+    try {
+      pythonProcess = spawn(evaluationPython, [evaluationScript], {
+        cwd: path.join(__dirname, '..'),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      console.error('[RAGAS] Failed to spawn evaluator process:', err.message);
+      return resolve({
+        status: 'failed',
+        error: err.message,
+      });
+    }
 
     let stdout = '';
     let stderr = '';
@@ -1803,6 +1945,8 @@ async function startServer() {
                   provider,
                   model: payload.model || llm.defaultModel || 'default',
                   messageCount: payload.messages?.length || 0,
+                  messages: payload.messages || [],
+                  systemPrompt: payload.systemPrompt || '',
                   requestContext: req.requestContext,
 
                   generate: async () => {
@@ -2269,6 +2413,7 @@ What is the penalty for violating this provision?`;
                 source_table: r.source_table,
                 record_id: r.record_id,
                 parent_id: r.parent_id,
+                excerpt: truncateExcerpt(r.chunk_text),
                 author: (r.original && r.original.parent && r.original.parent.Author) || null,
                 sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
                 category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
@@ -2297,6 +2442,7 @@ What is the penalty for violating this provision?`;
               source_table: r.source_table,
               record_id: r.record_id,
               parent_id: r.parent_id,
+              excerpt: truncateExcerpt(r.chunk_text),
               author: (r.original && r.original.parent && r.original.parent.Author) || null,
               sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
               category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
@@ -2649,6 +2795,7 @@ What is the penalty for violating this provision?`;
                     source_table: r.source_table,
                     record_id: r.record_id,
                     parent_id: r.parent_id,
+                    excerpt: truncateExcerpt(r.chunk_text),
                     author: (r.original && r.original.parent && r.original.parent.Author) || null,
                     sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
                     category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
@@ -2672,6 +2819,7 @@ What is the penalty for violating this provision?`;
                   source_table: r.source_table,
                   record_id: r.record_id,
                   parent_id: r.parent_id,
+                  excerpt: truncateExcerpt(r.chunk_text),
                   author: (r.original && r.original.parent && r.original.parent.Author) || null,
                   sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
                   category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,

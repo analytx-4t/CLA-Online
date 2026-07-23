@@ -95,6 +95,9 @@ temp/
 .cache/
 .cache
 
+# Regeneratable embeddings cache (too large for git; rebuild via embeded_documents.py)
+embedding/embeddings_cache.npz
+
 
 # ==============================
 # LOCAL DATABASE FILES
