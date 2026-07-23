@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const settings = {
+  // LLM Providers
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
   OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
 
@@ -19,6 +20,11 @@ const settings = {
 
   DEFAULT_LLM_PROVIDER: process.env.DEFAULT_LLM_PROVIDER || 'openai',
   DEFAULT_LLM_MODEL: process.env.DEFAULT_LLM_MODEL || 'gpt-4.1-mini',
+
+  // Embedding Configuration
+  EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || 'openai',
+  EMBEDDING_MODEL: process.env.EMBEDDING_MODEL || 'text-embedding-3-large',
+  EMBEDDING_DIMENSIONS: parseInt(process.env.EMBEDDING_DIMENSIONS || '3072', 10),
 };
 
 function getProviderConfig(provider) {
@@ -59,8 +65,17 @@ function getProviderHealth() {
   };
 }
 
+function getEmbeddingConfig() {
+  return {
+    provider: settings.EMBEDDING_PROVIDER,
+    model: settings.EMBEDDING_MODEL,
+    dimensions: settings.EMBEDDING_DIMENSIONS,
+  };
+}
+
 module.exports = {
   settings,
   getProviderConfig,
   getProviderHealth,
+  getEmbeddingConfig,
 };

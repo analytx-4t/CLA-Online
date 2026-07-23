@@ -1,11 +1,9 @@
 """
 Bulk-embed legal documents from SQL Server into DocumentEmbeddings.
 
-Covers 8 content sources across your 15 tables:
-    Articles, CaseLaws, Circular, Legislation, Notifications, Query
-    (each: a "_data" child table joined to its parent table for context)
-    CLASE_Commentary  (joined to CLASE_Commentary_Act for the Act name)
-    CLASE_Procedure_Details_2025 (Procedure + Resolution combined)
+This script now uses the same shared OpenAI text-embedding-3-large embedding
+service as the production chatbot and the evaluation pipeline so all retrieval
+paths stay consistent.
 
 Pipeline per row:
     1. Strip HTML tags (keeping the enclosed text) and decode HTML entities
@@ -16,40 +14,15 @@ Pipeline per row:
        before embedding, so each chunk is self-contained when retrieved alone
     5. Attach structured filter metadata (Category/Subject/Sections/DocTitle/
        LawTitle/DocDate) as real columns on DocumentEmbeddings, so a RAG app can
-       filter (SUGGESTED_FILTERS) BEFORE or alongside the vector scan instead of
-       re-joining 8 parent tables at query time.
-
-Changes vs. the original version:
-    - SOURCE_QUERIES now return 13 columns per source (was 6) — the extra 7 are
-      the structured filter metadata described above.
-    - Uses gemini-embedding-2, not gemini-embedding-001. The two models' vector
-      spaces are NOT comparable — if you ever embedded anything with 001, you
-      must TRUNCATE and fully re-embed, not mix the two in one table.
-    - gemini-embedding-2 has no task_type parameter; task instructions go into
-      the text itself. Documents are formatted as 'title: {title} | text: {content}'
-      before being sent to the API (see prepare_document_text()) — the stored
-      ChunkText stays clean, only the embedding call sees the wrapped version.
-    - Gemini embedding calls and DB inserts are now batched (BATCH_SIZE chunks
-      at a time). Each chunk is wrapped in its own types.Content object, because
-      gemini-embedding-2 aggregates a plain list of strings into ONE embedding
-      instead of returning one per string (see embed_chunks_batch()).
-    - Existing (SourceRecordID, ChunkIndex) pairs are loaded once per source
-      into a Python set instead of one SELECT per chunk.
+       filter before or alongside the vector scan instead of re-joining parent tables
+       at query time.
 
 Setup:
-    pip install --upgrade pyodbc google-genai python-dateutil python-dotenv
-    # --upgrade matters: gemini-embedding-2 is recent (April 2026), an older
-    # cached google-genai package may not know the model name yet.
+    pip install --upgrade pyodbc python-dateutil python-dotenv
 
     Create a .env file in this same folder (see .env.example) with:
-        GEMINI_API_KEY=...
+        OPENAI_API_KEY=...
         SQL_CONN_STR=...
-    The script loads it automatically via load_dotenv() below — no need to
-    `set`/`export` these manually, though that still works too if you'd rather
-    not use a .env file (real environment variables take priority over .env).
-
-Before running for the first time against this schema version, run
-schema_upgrade.sql once (adds the new columns + indexes).
 
 Run:
     python embed_documents.py
@@ -64,8 +37,9 @@ import time
 import pyodbc
 from dateutil import parser as dateparser
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from shared_embedding_service import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, embed_texts as shared_embed_texts, log_embedding_context
 
 load_dotenv()  # reads .env in the current working directory into os.environ
 
@@ -80,18 +54,13 @@ SQL_CONN_STR = os.environ.get("SQL_CONN_STR") or (
     "Encrypt=yes;TrustServerCertificate=yes;"
 )
 
-GEMINI_MODEL = "gemini-embedding-2"
-
-# gemini-embedding-2 defaults to 3072 dims (best quality, auto-normalized).
-# Set to 768 or 1536 to save storage if you don't need max quality —
-# both are auto-normalized by this model, unlike gemini-embedding-001.
-OUTPUT_DIMENSIONALITY = None  # None = default 3072
+EMBEDDING_PROVIDER = EMBEDDING_PROVIDER
 
 MAX_CHUNK_CHARS = 1400
 CHUNK_OVERLAP_CHARS = 200
-BATCH_SIZE = 16  # chunks per Gemini call / per DB insert batch
+BATCH_SIZE = 16
 
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+log_embedding_context("[Indexing]")
 
 # Only these sources actually run. All 8 queries stay fully defined below so
 # nothing has to be rewritten later — just add names back here (e.g. "CaseLaws",
@@ -389,44 +358,26 @@ def _extract_retry_delay(error_text, default=20):
 
 
 def prepare_document_text(content, title=None):
-    """gemini-embedding-2 has no task_type parameter (unlike gemini-embedding-001) —
-    task instructions go directly in the text instead. This is the documented
-    asymmetric-retrieval document format: 'title: {title} | text: {content}'.
-    The matching query-side format ('task: search result | query: {q}') belongs
-    in search_documents.py's embed_query(), not here — flagging so it isn't
-    forgotten when that file gets updated."""
+    """Use the shared OpenAI document-prefix format for embedding consistency.
+    This is the documented asymmetric-retrieval format:
+    'title: {title} | text: {content}'. The matching query-side format belongs
+    in search_documents.py's embed_query() so both sides stay aligned."""
     return f"title: {title or 'none'} | text: {content}"
 
 
 def embed_chunks_batch(texts, retries=5):
-    """Embed a list of texts as ONE call, one embedding per text.
-
-    IMPORTANT: gemini-embedding-2 changed behavior vs. gemini-embedding-001 here.
-    Passing a plain list of strings as `contents` makes gemini-embedding-2
-    return a single AGGREGATED embedding for the whole list, not one per string
-    (that's the documented "embedding aggregation" feature, meant for e.g.
-    combining a text+image pair into one post-level embedding). To get back to
-    "one embedding per input" — which is what a chunked-document pipeline needs —
-    each input must be wrapped in its own types.Content object.
-    """
-    contents = [types.Content(parts=[types.Part.from_text(text=t)]) for t in texts]
-    config = types.EmbedContentConfig(output_dimensionality=OUTPUT_DIMENSIONALITY) \
-        if OUTPUT_DIMENSIONALITY else None
-
+    """Embed a list of texts through the shared OpenAI text-embedding-3-large service."""
     for attempt in range(retries):
         _throttle(len(texts))
         try:
-            result = client.models.embed_content(model=GEMINI_MODEL, contents=contents, config=config)
-            vectors = [e.values for e in result.embeddings]
+            vectors = shared_embed_texts(texts)
             if len(vectors) != len(texts):
                 raise RuntimeError(
-                    f"Expected {len(texts)} embeddings back, got {len(vectors)} — "
-                    "check that each input is still wrapped in its own Content object."
+                    f"Expected {len(texts)} embeddings back, got {len(vectors)}"
                 )
             return vectors
         except Exception as e:
-            is_rate_limit = "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e)
-            wait = _extract_retry_delay(e) + 2 if is_rate_limit else 2 ** attempt
+            wait = 2 ** attempt
             print(f"    embed error (attempt {attempt + 1}/{retries}): {e} -- retrying in {wait:.0f}s")
             time.sleep(wait)
     raise RuntimeError("Embedding failed after retries")
@@ -500,7 +451,7 @@ def process_source(cnx, source_name, query):
                 # wrapper) so it reads naturally when shown to a user or fed to the LLM later.
                 # The wrapper only mattered for the embedding call itself.
                 source_name, item["record_id"], item["parent_id"], item["filename"], item["idx"],
-                item["stored_text"], vector_to_bytes(vector), GEMINI_MODEL, len(vector),
+                item["stored_text"], vector_to_bytes(vector), EMBEDDING_MODEL, len(vector),
                 item["category"], item["subject"], item["sections"],
                 item["doc_title"], item["law_title"], item["doc_date"],
             ))

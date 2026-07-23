@@ -1,15 +1,28 @@
 
 
 require('dotenv').config();
+const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { spawn } = require('child_process');
 const { randomUUID, randomBytes } = require('crypto');
 const { ObjectId } = require('mongodb');
 const { connectDB, closeDB } = require('./mongoClient');
-const { getProviderHealth, settings } = require('./config');
+const { getProviderHealth, settings, getEmbeddingConfig } = require('./config');
 const { getLLMProvider } = require('./llm/factory');
-const { traceLLMGeneration } = require('./langsmith');
+const { traceLLMGeneration, traceRequest, traceRequestStage } = require('./langsmith');
+const {
+  traceUserRequest,
+  traceGuardrails,
+  traceQueryExpansion,
+  traceEmbedding,
+  traceRetrieval,
+  traceReranking,
+  tracePromptConstruction,
+  traceRAGEvaluation,
+  traceMongoPersistence,
+  traceError,
+} = require('./langsmith');
 const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./responseParser');
 const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
 const { createRequestContext } = require('./requestContext');
@@ -147,25 +160,42 @@ async function ensureIndexes(db) {
     }
   }
 
-  await Promise.all([
-    sessionsCollection.createIndex({ session_id: 1, user_id: 1 }, { unique: true, name: 'uniq_session_user' }),
-    sessionsCollection.createIndex({ user_id: 1, last_message_at: -1 }, { name: 'user_last_message' }),
-    messagesCollection.createIndex({ message_id: 1 }, { unique: true, name: 'uniq_message_id' }),
-    messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
-    evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
-    evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
-    evaluationResultsCollection.createIndex({ sessionId: 1 }, { name: 'eval_session_id' }),
-    retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
-    retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
-    goldenDatasetCollection.createIndex({ version: 1 }, { name: 'golden_dataset_version' }),
-    goldenDatasetCollection.createIndex({ question: 1 }, { name: 'golden_dataset_question' }),
-    goldenDatasetCollection.createIndex({ id: 1 }, { name: 'golden_dataset_id' }),
-    goldenDatasetRunsCollection.createIndex({ questionId: 1 }, { name: 'golden_dataset_run_question_id' }),
-    goldenDatasetRunsCollection.createIndex({ timestamp: 1 }, { name: 'golden_dataset_run_timestamp' }),
-    goldenDatasetRunsCollection.createIndex({ datasetVersion: 1 }, { name: 'golden_dataset_run_dataset_version' }),
-    evaluationResultsCollection.createIndex({ datasetVersion: 1 }, { name: 'eval_dataset_version' }),
-    goldenDatasetStateCollection.createIndex({ _id: 1 }, { name: 'golden_dataset_state_id' }),
-  ]);
+  try {
+    await Promise.all([
+      sessionsCollection.createIndex({ session_id: 1, user_id: 1 }, { unique: true, name: 'uniq_session_user' }),
+      sessionsCollection.createIndex({ user_id: 1, last_message_at: -1 }, { name: 'user_last_message' }),
+      messagesCollection.createIndex({ message_id: 1 }, { unique: true, name: 'uniq_message_id' }),
+      messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
+      evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
+      evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
+      retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
+      retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
+      goldenDatasetCollection.createIndex({ version: 1 }, { name: 'golden_dataset_version' }),
+      goldenDatasetCollection.createIndex({ question: 1 }, { name: 'golden_dataset_question' }),
+      goldenDatasetCollection.createIndex({ id: 1 }, { name: 'golden_dataset_id' }),
+      goldenDatasetRunsCollection.createIndex({ questionId: 1 }, { name: 'golden_dataset_run_question_id' }),
+      goldenDatasetRunsCollection.createIndex({ timestamp: 1 }, { name: 'golden_dataset_run_timestamp' }),
+      goldenDatasetRunsCollection.createIndex({ datasetVersion: 1 }, { name: 'golden_dataset_run_dataset_version' }),
+      evaluationResultsCollection.createIndex({ datasetVersion: 1 }, { name: 'eval_dataset_version' }),
+      evaluationResultsCollection.createIndex({ evaluationSessionId: 1 }, { name: 'eval_session_id' }),
+      goldenDatasetStateCollection.createIndex({ _id: 1 }, { name: 'golden_dataset_state_id' }),
+    ]);
+  } catch (error) {
+    // Handle index key conflict by dropping the old index
+    if (error?.codeName === 'IndexKeySpecsConflict' && error?.message?.includes('eval_session_id')) {
+      console.log('Found conflicting eval_session_id index, attempting to drop it...');
+      try {
+        await evaluationResultsCollection.dropIndex('eval_session_id');
+        console.log('Successfully dropped conflicting index');
+        // Retry creating the correct index
+        await evaluationResultsCollection.createIndex({ evaluationSessionId: 1 }, { name: 'eval_session_id' });
+      } catch (dropError) {
+        console.log('Could not drop index:', dropError.message);
+      }
+    } else {
+      throw error;
+    }
+  }
 }
 
 async function getCurrentGoldenDatasetVersion(db) {
@@ -196,6 +226,7 @@ function buildEvaluationResultDocument({
   similarityScores,
   retrievalTime,
   datasetVersion,
+  evaluationSessionId = null,
   userId = null,
   evaluationStatus = null,
   evaluationTimeMs = null,
@@ -211,25 +242,36 @@ function buildEvaluationResultDocument({
     llmTime: Number.isFinite(metadata?.llmTime) ? metadata.llmTime : null,
     ragasVersion: metadata?.ragasVersion ?? null,
   };
-  const calculatedOverallScore = (() => {
-    const candidateScores = [
-      evaluationData.faithfulness ?? evaluationData.faithfulness ?? null,
-      evaluationData.answer_relevancy ?? evaluationData.answerRelevancy ?? null,
-      evaluationData.context_precision ?? evaluationData.contextPrecision ?? null,
-      evaluationData.context_recall ?? evaluationData.contextRecall ?? null,
-      evaluationData.answer_correctness ?? evaluationData.answerCorrectness ?? null,
-    ].filter((score) => Number.isFinite(score));
+  const scoredFaithfulness = evaluationData.faithfulness ?? null;
+  const scoredAnswerRelevancy = evaluationData.answer_relevancy ?? evaluationData.answerRelevancy ?? null;
+  const scoredContextPrecision = evaluationData.context_precision ?? evaluationData.contextPrecision ?? null;
+  const scoredContextRecall = evaluationData.context_recall ?? evaluationData.contextRecall ?? null;
+  const scoredAnswerCorrectness = evaluationData.answer_correctness ?? evaluationData.answerCorrectness ?? null;
 
-    if (candidateScores.length === 0) {
-      return null;
-    }
+  const allScoresPresent = [
+    scoredFaithfulness,
+    scoredAnswerRelevancy,
+    scoredContextPrecision,
+    scoredContextRecall,
+    scoredAnswerCorrectness,
+  ].every((score) => Number.isFinite(score));
 
-    return Number((candidateScores.reduce((sum, score) => sum + score, 0) / candidateScores.length).toFixed(4));
-  })();
+  const calculatedOverallScore = allScoresPresent
+    ? Number(
+        (
+          scoredFaithfulness +
+          scoredAnswerRelevancy +
+          scoredContextPrecision +
+          scoredContextRecall +
+          scoredAnswerCorrectness
+        ) / 5
+      ).toFixed(4)
+    : null;
 
   return {
     requestId: requestContext?.requestId || null,
     sessionId: requestContext?.sessionId || null,
+    evaluationSessionId: evaluationSessionId || null,
     userId: userId || null,
     question: question || null,
     answer: answer || null,
@@ -357,8 +399,47 @@ async function persistRetrievalLog(db, document) {
   }
 }
 
+async function validateEmbeddingConfiguration() {
+  /**
+   * Validates that the embedding model and dimensions are correctly configured.
+   * This should be called before any retrieval operation to ensure consistency
+   * between the indexed vectors and the current retrieval expectations.
+   */
+  const embeddingConfig = getEmbeddingConfig();
+  
+  // Log configuration for debugging
+  console.log(
+    `[Embedding Validation] Current Config: ${embeddingConfig.model} (${embeddingConfig.dimensions} dims)`
+  );
+  
+  // Expected configuration
+  const expectedModel = 'text-embedding-3-large';
+  const expectedDimensions = 3072;
+  
+  if (embeddingConfig.model !== expectedModel) {
+    const warning = (
+      `[Embedding Validation] WARNING: Expected embedding model '${expectedModel}' ` +
+      `but found '${embeddingConfig.model}'. This may cause retrieval failures if the indexed ` +
+      `vectors were created with a different model. Please ensure consistency.`
+    );
+    console.warn(warning);
+  }
+  
+  if (embeddingConfig.dimensions !== expectedDimensions) {
+    const warning = (
+      `[Embedding Validation] WARNING: Expected embedding dimensions ${expectedDimensions} ` +
+      `but found ${embeddingConfig.dimensions}. The vector dimensionality must match the indexed data. ` +
+      `Please verify the embeddings were generated with the correct model.`
+    );
+    console.warn(warning);
+  }
+}
+
 function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
   return new Promise((resolve, reject) => {
+    // Validate embedding configuration before retrieval
+    validateEmbeddingConfiguration();
+
     let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
     if (!require('fs').existsSync(pythonPath)) {
       pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
@@ -1495,22 +1576,15 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
 </body>
 </html>`;
 }
-function runRagasEvaluation(question, answer, contexts, referenceAnswer = null) {
-  return new Promise((resolve) => {
-    const evaluationScript = path.join(
-      __dirname,
-      '..',
-      'evaluation',
-      'live_evaluator.py'
-    );
-    const evaluationPython = path.join(
-      __dirname,
-      '..',
-      'evaluation',
-      '.venv',
-      'Scripts',
-      'python.exe'
-    );
+
+    const payload = {
+      question,
+      answer,
+      contexts: trimmedContexts,
+      reference: referenceAnswer || null,
+    };
+
+    console.log('[RAGAS] Payload prepared for evaluator.');
 
     const pythonProcess = spawn(evaluationPython, [evaluationScript], {
       cwd: path.join(__dirname, '..'),
@@ -1519,6 +1593,7 @@ function runRagasEvaluation(question, answer, contexts, referenceAnswer = null) 
 
     let stdout = '';
     let stderr = '';
+    const startTime = Date.now();
 
     pythonProcess.stdout.on('data', (data) => {
       stdout += data.toString();
@@ -1529,8 +1604,8 @@ function runRagasEvaluation(question, answer, contexts, referenceAnswer = null) 
     });
 
     pythonProcess.on('error', (error) => {
-      console.error('[RAGAS] Failed to start evaluator:', error);
-
+      console.error('[RAGAS] FAILED AT: Launching Python evaluator');
+      console.error('[RAGAS] Python launch error:', error);
       resolve({
         status: 'failed',
         error: error.message,
@@ -1538,37 +1613,42 @@ function runRagasEvaluation(question, answer, contexts, referenceAnswer = null) 
     });
 
     pythonProcess.on('close', (code) => {
-      if (stderr.trim()) {
-        console.error('[RAGAS stderr]', stderr.trim());
+      const durationMs = Date.now() - startTime;
+      console.log('[RAGAS] Python exited with code', code, 'in', `${durationMs}ms`);
+      console.log('[RAGAS] Raw stdout:');
+      console.log(stdout.trim() || '<empty>');
+      console.log('[RAGAS] Raw stderr:');
+      console.log(stderr.trim() || '<empty>');
+
+      if (stderr.trim() && code === 0) {
+        console.warn('[RAGAS] Python emitted stderr despite successful exit.');
       }
 
       try {
         const result = JSON.parse(stdout.trim());
 
         if (code !== 0) {
-          console.error('[RAGAS] Evaluator exited with code:', code);
+          console.error('[RAGAS] FAILED AT: Python evaluator returned non-zero exit code.');
         }
+
+        console.log('[RAGAS] Parsed metrics:');
+        console.log('  Faithfulness:', result.faithfulness ?? null);
+        console.log('  Answer Relevancy:', result.answer_relevancy ?? result.answerRelevancy ?? null);
+        console.log('  Context Precision:', result.context_precision ?? result.contextPrecision ?? null);
+        console.log('  Context Recall:', result.context_recall ?? result.contextRecall ?? null);
+        console.log('  Answer Correctness:', result.answer_correctness ?? result.answerCorrectness ?? null);
 
         resolve(result);
       } catch (error) {
-        console.error(
-          '[RAGAS] Failed to parse evaluator output:',
-          stdout
-        );
-
+        console.error('[RAGAS] FAILED AT: Parsing Python JSON');
+        console.error('[RAGAS] Python stdout (raw):', stdout);
+        console.error('[RAGAS] JSON parse error:', error.message);
         resolve({
           status: 'failed',
           error: 'Failed to parse RAGAS evaluation output.',
         });
       }
-    });
-
-    const payload = {
-      question,
-      answer,
-      contexts,
-      reference: referenceAnswer || null,
-    };
+  });
 
     pythonProcess.stdin.write(JSON.stringify(payload));
     pythonProcess.stdin.end();
@@ -1765,7 +1845,8 @@ async function startServer() {
       }
 
       if (path === '/api/ask' && req.method === 'POST') {
-        try {
+        // Wrap entire RAG request in comprehensive tracing
+        const executeRAGRequest = async () => {
           const payload = await getRequestBody(req);
           req.requestContext = createRequestContext({
             sessionId: payload?.session_id || null,
@@ -1787,20 +1868,33 @@ async function startServer() {
           }
 
           // Run guardrails early to avoid expensive operations for blocked requests.
+          let guardrailResult = null;
           try {
             const { checkGuardrails } = require('./guardrails');
-            const guard = await checkGuardrails(question.trim());
-            if (guard) {
-              console.log('[NeMo Guardrails] Action:', guard.action, 'Category:', guard.category);
-              if (guard.action === 'RESPOND') {
+            guardrailResult = await traceGuardrails({
+              question: question.trim(),
+              checkGuardrails: async () => {
+                return await checkGuardrails(question.trim());
+              },
+              requestContext: req.requestContext,
+              metadata: {
+                component: 'guardrails',
+                requestId: req.requestContext.requestId,
+                sessionId: req.requestContext.sessionId,
+              },
+            });
+
+            if (guardrailResult) {
+              console.log('[NeMo Guardrails] Action:', guardrailResult.action, 'Category:', guardrailResult.category);
+              if (guardrailResult.action === 'RESPOND') {
                 console.log('[RAG Endpoint] Guardrail handled request. Skipping retrieval and generation.');
                 setJsonHeaders(res, 200);
                 res.end(JSON.stringify({
-                  answer: guard.response || 'Your request cannot be processed.',
-                  route: guard.route || guard.category || 'REFUSE',
+                  answer: guardrailResult.response || 'Your request cannot be processed.',
+                  route: guardrailResult.route || guardrailResult.category || 'REFUSE',
                   guardrail: {
                     triggered: true,
-                    category: guard.category || guard.route
+                    category: guardrailResult.category || guardrailResult.route
                   },
                   suggestions: [],
                   sources: [],
@@ -1812,6 +1906,13 @@ async function startServer() {
             }
           } catch (gErr) {
             console.error('[RAG Endpoint] Guardrails error:', gErr?.message || gErr);
+            await traceError({
+              errorType: 'GuardrailsError',
+              errorMessage: gErr?.message || String(gErr),
+              component: 'guardrails',
+              requestId: req.requestContext.requestId,
+              sessionId: req.requestContext.sessionId,
+            });
             setJsonHeaders(res, 500);
             res.end(JSON.stringify({ error: 'Guardrails check failed.' }));
             return;
@@ -1829,9 +1930,18 @@ async function startServer() {
             // to the original user question.
             const { expandLegalQuery } = require('./agentSystem');
 
-            const queryExpansion = await expandLegalQuery(
-              question.trim()
-            );
+            const queryExpansion = await traceQueryExpansion({
+              originalQuestion: question.trim(),
+              expandLegalQuery: async () => {
+                return await expandLegalQuery(question.trim());
+              },
+              requestContext: req.requestContext,
+              metadata: {
+                component: 'query_expansion',
+                requestId: req.requestContext.requestId,
+                sessionId: req.requestContext.sessionId,
+              },
+            });
 
             const expandedQuery =
               queryExpansion.expandedQuery || question.trim();
@@ -1867,20 +1977,36 @@ async function startServer() {
 
             // Existing embedding search remains completely unchanged.
             retrievalStartedAt = Date.now();
-            const candidateResults = await runPythonSearch(
-              retrievalQuery,
-              15,
-              true
-            );
+            const candidateResults = await traceRetrieval({
+              query: retrievalQuery,
+              topK: 15,
+              performSearch: async () => {
+                return await runPythonSearch(retrievalQuery, 15, true);
+              },
+              requestContext: req.requestContext,
+              metadata: {
+                component: 'retrieval',
+                requestId: req.requestContext.requestId,
+                sessionId: req.requestContext.sessionId,
+              },
+            });
             retrievalTimeMs = Date.now() - retrievalStartedAt;
 
             // Rerank against the ORIGINAL user question.
             // This prevents query expansion from changing the user's intent.
-            results = rerankSearchResults(
-              question,
-              candidateResults,
-              5
-            );
+            results = await traceReranking({
+              originalQuestion: question,
+              candidateCount: Array.isArray(candidateResults) ? candidateResults.length : 0,
+              rerankResults: async () => {
+                return rerankSearchResults(question, candidateResults, 5);
+              },
+              requestContext: req.requestContext,
+              metadata: {
+                component: 'reranking',
+                requestId: req.requestContext.requestId,
+                sessionId: req.requestContext.sessionId,
+              },
+            });
 
             console.log(
               `[RAG Endpoint] Retrieved ${candidateResults.length} candidates and reranked to ${results.length} results.`
@@ -1925,7 +2051,8 @@ async function startServer() {
             return;
           }
 
-          if ((!results || results.length === 0) && !attachmentContext) {
+          try {
+            if ((!results || results.length === 0) && !attachmentContext) {
             console.log('[RAG Endpoint] No documents matched the query and no attachment context available.');
             setJsonHeaders(res, 200);
             res.end(JSON.stringify({
@@ -1986,20 +2113,59 @@ What is the penalty for violating this provision?`;
             userContentParts.push(`ATTACHED DOCUMENT CONTEXT:\n${attachmentContext}`);
           }
 
+          // Trace prompt construction
+          await tracePromptConstruction({
+            question: question,
+            systemPrompt: systemPrompt,
+            context: contextBlock || '(no retrieved context)',
+            attachmentContext: attachmentContext || '(no attachments)',
+            requestContext: req.requestContext,
+            metadata: {
+              component: 'prompt_construction',
+              requestId: req.requestContext.requestId,
+              sessionId: req.requestContext.sessionId,
+            },
+          });
+
           let llmResponse;
           let llmStartedAt = null;
           let llmTimeMs = null;
           try {
             llmStartedAt = Date.now();
-            llmResponse = await llm.generate({
+            const userContent = userContentParts.join('\n\n');
+            
+            llmResponse = await traceLLMGeneration({
+              provider: llm.constructor.name,
+              model: model,
               systemPrompt: systemPrompt,
-              messages: [{ role: 'user', content: userContentParts.join('\n\n') }],
+              userContent: userContent,
               temperature: 0.1,
-              maxTokens: 2048
+              maxTokens: 2048,
+              generate: async () => {
+                return await llm.generate({
+                  systemPrompt: systemPrompt,
+                  messages: [{ role: 'user', content: userContent }],
+                  temperature: 0.1,
+                  maxTokens: 2048
+                });
+              },
+              requestContext: req.requestContext,
+              metadata: {
+                component: 'llm_generation',
+                requestId: req.requestContext.requestId,
+                sessionId: req.requestContext.sessionId,
+              },
             });
             llmTimeMs = Date.now() - llmStartedAt;
           } catch (llmErr) {
             console.error('[RAG Endpoint] LLM generation failed:', llmErr);
+            await traceError({
+              errorType: 'LLMGenerationError',
+              errorMessage: llmErr?.message || String(llmErr),
+              component: 'llm_generation',
+              requestId: req.requestContext.requestId,
+              sessionId: req.requestContext.sessionId,
+            });
             setJsonHeaders(res, 500);
             res.end(JSON.stringify({ error: 'LLM generation failed.' }));
             return;
@@ -2050,121 +2216,14 @@ What is the penalty for violating this provision?`;
           console.log(
             `[RAG Endpoint] Extracted ${suggestions.length} suggestions.`
           );
-          // Build retrieved contexts for RAGAS evaluation
           const ragasContexts = results
             .map(r => r.chunk_text || r.content || r.text || '')
             .filter(context => context && context.trim());
 
-          const goldenDataset = db.collection('golden_dataset');
-          const goldenRecord = await goldenDataset.findOne({ question });
-          const currentDatasetVersion = await getCurrentGoldenDatasetVersion(db);
-
-          let evaluation = { status: 'pending' };
-
-          setImmediate(() => {
-            console.log('[RAGAS] Background evaluation started...');
-
-            (async () => {
-              const evaluationStartedAt = Date.now();
-
-              try {
-                console.log(
-                  `[RAGAS] Starting evaluation with ${ragasContexts.length} contexts...`
-                );
-
-                evaluation = await runRagasEvaluation(
-                  question,
-                  answerText,
-                  ragasContexts,
-                  goldenRecord?.answer || null
-                );
-
-                console.log(
-                  '[RAGAS] Evaluation completed:',
-                  JSON.stringify(evaluation, null, 2)
-                );
-              } catch (evaluationError) {
-                console.error(
-                  '[RAGAS] Evaluation failed:',
-                  evaluationError
-                );
-
-                evaluation = {
-                  status: 'failed',
-                  error: evaluationError.message,
-                };
-              }
-
-              const evaluationTimeMs = Date.now() - evaluationStartedAt;
-              const evaluationStatus = evaluation && typeof evaluation === 'object' && (evaluation.status === 'failed' || evaluation.error)
-                ? 'failed'
-                : 'completed';
-
-              try {
-                const evaluationDocument = buildEvaluationResultDocument({
-                  requestContext: req.requestContext,
-                  question,
-                  answer: answerText,
-                  goldenAnswer: payload?.goldenAnswer || payload?.golden_answer || null,
-                  evaluation,
-                  provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
-                  model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
-                  contexts: ragasContexts,
-                  retrievedChunks: ragasContexts,
-                  retrievedChunkIds: Array.isArray(results) ? results.map((result) => result.embedding_id || result.record_id || result.parent_id || null).filter(Boolean) : [],
-                  similarityScores: Array.isArray(results) ? results.map((result) => (Number.isFinite(result?.score) ? result.score : (Number.isFinite(result?.rrf_score) ? result.rrf_score : null))).filter((value) => value !== null) : [],
-                  retrievalTime: retrievalTimeMs ?? null,
-                  datasetVersion: currentDatasetVersion || goldenRecord?.version || null,
-                  userId: getAuthenticatedUserId(req),
-                  evaluationStatus,
-                  evaluationTimeMs,
-                  suggestions,
-                  metadata: {
-                    tokenUsage: evaluation?.tokenUsage ?? null,
-                    retrievalTime: retrievalTimeMs ?? null,
-                    llmTime: llmTimeMs ?? null,
-                    ragasVersion: evaluation?.ragasVersion ?? null,
-                  },
-                  errorMessage: evaluation?.error || null,
-                });
-
-                await persistEvaluationResult(db, evaluationDocument, io);
-
-                if (goldenRecord) {
-                  const goldenRunDocument = {
-                    datasetVersion: goldenRecord.version || null,
-                    questionId: goldenRecord.id || null,
-                    question: goldenRecord.question || question,
-                    chatbotAnswer: answerText,
-                    referenceAnswer: goldenRecord.answer || null,
-                    retrievedChunks: ragasContexts,
-                    retrievedChunkIds: Array.isArray(results) ? results.map((result) => result.embedding_id || result.record_id || result.parent_id || null).filter(Boolean) : [],
-                    similarityScores: Array.isArray(results) ? results.map((result) => (Number.isFinite(result?.score) ? result.score : (Number.isFinite(result?.rrf_score) ? result.rrf_score : null))).filter((value) => value !== null) : [],
-                    ragasMetrics: {
-                      faithfulness: evaluation.faithfulness ?? null,
-                      answerRelevancy: evaluation.answer_relevancy ?? evaluation.answerRelevancy ?? null,
-                      contextPrecision: evaluation.context_precision ?? evaluation.contextPrecision ?? null,
-                      contextRecall: evaluation.context_recall ?? evaluation.contextRecall ?? null,
-                      answerCorrectness: evaluation.answer_correctness ?? evaluation.answerCorrectness ?? null,
-                    },
-                    retrievalTime: retrievalTimeMs ?? null,
-                    llmTime: llmTimeMs ?? null,
-                    datasetVersion: currentDatasetVersion || goldenRecord?.version || null,
-                    provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER || null,
-                    model: llmResponse?.model || settings.DEFAULT_LLM_MODEL || null,
-                    timestamp: new Date().toISOString(),
-                    status: 'completed',
-                  };
-
-                  await persistGoldenDatasetRun(db, goldenRunDocument);
-                }
-              } catch (persistError) {
-                console.error('[RAGAS] Persist evaluation document failed:', persistError);
-              }
-            })().catch((backgroundError) => {
-              console.error('[RAGAS] Background evaluation crashed:', backgroundError);
-            });
-          });
+          const evaluation = {
+            status: 'disabled',
+            message: 'RAGAS evaluation is handled by the dedicated golden dataset flow.',
+          };
           // Find all bracketed citation numbers, e.g., [1], [2]
           const citationRegex = /\[([1-9])\]/g;
           let match;
@@ -2267,14 +2326,37 @@ What is the penalty for violating this provision?`;
               doc_title: r.doc_title,
               law_title: r.law_title,
               doc_date: r.doc_date,
-              score: r.score || r.rrf_score
+              score: r.score || r.rrf_score,
             })),
             evaluation: evaluation
           }));
         } catch (err) {
           console.error('[RAG Endpoint] Request handler failed:', err);
+          await traceError({
+            errorType: err?.name || 'UnknownError',
+            errorMessage: err?.message || String(err),
+            component: 'rag-endpoint',
+            requestId: req.requestContext?.requestId,
+            sessionId: req.requestContext?.sessionId,
+          });
           setJsonHeaders(res, 500);
           res.end(JSON.stringify({ error: 'Internal server error.' }));
+        }
+        }; // Close executeRAGRequest function
+
+        // Execute with root tracing
+        try {
+          const payload = await getRequestBody(req);
+          const requestId = req.requestContext?.requestId || `req-${Date.now()}`;
+          const sessionId = payload?.session_id || req.requestContext?.sessionId || null;
+          const userId = getAuthenticatedUserId(req);
+          const question = payload?.question || '';
+
+          await executeRAGRequest();
+        } catch (rootErr) {
+          console.error('[RAG Endpoint] Root execution error:', rootErr);
+          setJsonHeaders(res, 500);
+          res.end(JSON.stringify({ error: 'Request processing failed.' }));
         }
         return;
       }
@@ -2762,9 +2844,13 @@ What is the penalty for violating this provision?`;
     });
 
     server.listen(PORT, () => {
+      const embeddingConfig = getEmbeddingConfig();
+      console.log("\n=== RAG Pipeline Configuration ===");
+      console.log(`Embedding Model      : ${embeddingConfig.model}`);
+      console.log(`Embedding Dimensions : ${embeddingConfig.dimensions}`);
+      console.log(`==================================\n`);
       console.log(`Server running on port ${PORT}`);
     });
-
     const shutdown = async () => {
       console.log('Shutting down server...');
       server.close(async () => {

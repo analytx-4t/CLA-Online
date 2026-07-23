@@ -1,6 +1,5 @@
 const busboy = require('busboy');
-const { runGoldenDatasetEvaluation } = require('./evalRunner');
-const { uploadDataset, listGoldenDataset, getGoldenDatasetById, clearGoldenDataset } = require('./service');
+const { uploadDataset, listGoldenDataset, getGoldenDatasetById, clearGoldenDataset, getDatasetState, evaluatePreparedDataset, listGoldenDatasetEvaluations } = require('./service');
 
 function setJsonHeaders(res, statusCode) {
   res.writeHead(statusCode, {
@@ -11,16 +10,38 @@ function setJsonHeaders(res, statusCode) {
   });
 }
 
+function writeSseEvent(res, eventName, payload) {
+  res.write(`event: ${eventName}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
 async function handleGoldenDatasetRoutes(req, res, db) {
-  const path = req.url.split('?')[0] || '/';
+  const requestUrl = new URL(req.url, 'http://localhost');
+  const path = requestUrl.pathname || '/';
+  const stream = requestUrl.searchParams.get('stream') === 'true' || (req.headers.accept || '').includes('text/event-stream');
 
   if (path === '/api/admin/golden-dataset' && req.method === 'GET') {
     try {
       const records = await listGoldenDataset();
-      const stateCollection = db.collection('golden_dataset_state');
-      const state = await stateCollection.findOne({ _id: 'current' });
+      const state = await getDatasetState();
       setJsonHeaders(res, 200);
-      res.end(JSON.stringify({ records, version: state?.version || null, uploadedAt: state?.uploadedAt || null }));
+      res.end(JSON.stringify({
+        records,
+        version: state?.version || null,
+        uploadedAt: state?.uploadedAt || null,
+        evaluationSessionId: state?.evaluationSessionId || null,
+        generationStatus: state?.generationStatus || 'idle',
+        totalCount: state?.totalCount ?? records.length,
+        completedCount: state?.completedCount ?? records.length,
+        failedCount: state?.failedCount ?? 0,
+        evaluationState: {
+          evaluationInProgress: Boolean(state?.evaluationInProgress),
+          lastEvaluationStatus: state?.lastEvaluationStatus || null,
+          lastEvaluatedVersion: state?.lastEvaluatedVersion || null,
+          evaluationStartedAt: state?.evaluationStartedAt || null,
+          recordCount: state?.recordCount ?? records.length,
+        },
+      }));
       return true;
     } catch (error) {
       setJsonHeaders(res, 500);
@@ -56,14 +77,6 @@ async function handleGoldenDatasetRoutes(req, res, db) {
             const result = await uploadDataset(body);
             setJsonHeaders(res, 200);
             res.end(JSON.stringify(result));
-
-            setImmediate(async () => {
-              try {
-                await runGoldenDatasetEvaluation({ baseUrl: process.env.GOLDEN_DATASET_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`, db });
-              } catch (error) {
-                console.error('[Golden Dataset] Automatic evaluation failed:', error);
-              }
-            });
           } catch (error) {
             setJsonHeaders(res, 400);
             res.end(JSON.stringify({ error: error.message || 'Failed to upload golden dataset.' }));
@@ -93,14 +106,6 @@ async function handleGoldenDatasetRoutes(req, res, db) {
           const result = await uploadDataset(body);
           setJsonHeaders(res, 200);
           res.end(JSON.stringify(result));
-
-          setImmediate(async () => {
-            try {
-              await runGoldenDatasetEvaluation({ baseUrl: process.env.GOLDEN_DATASET_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`, db });
-            } catch (error) {
-              console.error('[Golden Dataset] Automatic evaluation failed:', error);
-            }
-          });
         } catch (error) {
           setJsonHeaders(res, 400);
           res.end(JSON.stringify({ error: error.message || 'Failed to upload golden dataset.' }));
@@ -118,9 +123,22 @@ async function handleGoldenDatasetRoutes(req, res, db) {
     }
   }
 
+  if (path === '/api/admin/golden-dataset/evaluations' && req.method === 'GET') {
+    try {
+      const evaluations = await listGoldenDatasetEvaluations();
+      setJsonHeaders(res, 200);
+      res.end(JSON.stringify({ evaluations }));
+      return true;
+    } catch (error) {
+      setJsonHeaders(res, 500);
+      res.end(JSON.stringify({ error: 'Unable to load golden dataset evaluations.' }));
+      return true;
+    }
+  }
+
   if (path.startsWith('/api/admin/golden-dataset/') && req.method === 'GET') {
     const id = path.split('/').filter(Boolean).pop();
-    if (id && id !== 'golden-dataset') {
+    if (id && id !== 'golden-dataset' && id !== 'evaluations' && id !== 'evaluate') {
       try {
         const record = await getGoldenDatasetById(id);
         if (!record) {
@@ -153,16 +171,49 @@ async function handleGoldenDatasetRoutes(req, res, db) {
     }
   }
 
-  if (path === '/api/admin/golden-dataset/evaluate' && req.method === 'POST') {
-    try {
-      const result = await runGoldenDatasetEvaluation({ baseUrl: process.env.GOLDEN_DATASET_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`, db });
-      setJsonHeaders(res, 200);
-      res.end(JSON.stringify({ message: 'Evaluation run started.', result }));
+  if (path === '/api/admin/golden-dataset/evaluate' && (req.method === 'POST' || (stream && req.method === 'GET'))) {
+    if (stream) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.write('retry: 10000\n\n');
+
+      try {
+        const evaluationSessionId = requestUrl.searchParams.get('evaluationSessionId') || null;
+        const summary = await evaluatePreparedDataset({
+          evaluationSessionId,
+          onProgress: (payload) => writeSseEvent(res, 'row', payload),
+        });
+
+        writeSseEvent(res, 'completion', summary);
+        res.end();
+      } catch (error) {
+        writeSseEvent(res, 'completion', {
+          status: 'failed',
+          total: 0,
+          success: 0,
+          failed: 0,
+          error: error.message || 'Golden dataset evaluation failed.',
+        });
+        res.end();
+      }
       return true;
-    } catch (error) {
-      setJsonHeaders(res, 500);
-      res.end(JSON.stringify({ error: error.message || 'Unable to run evaluation.' }));
-      return true;
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const summary = await evaluatePreparedDataset();
+        setJsonHeaders(res, 200);
+        res.end(JSON.stringify(summary));
+        return true;
+      } catch (error) {
+        setJsonHeaders(res, 500);
+        res.end(JSON.stringify({ error: error.message || 'Golden dataset evaluation failed.' }));
+        return true;
+      }
     }
   }
 

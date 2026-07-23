@@ -5,19 +5,13 @@ of the full, untouched parent + child rows behind any hit — for citing exact
 source data (case name, HeadNote, Judge, full Filetext, etc.) when answering
 a user's question, not just the cleaned/chunked embedding text.
 
-Embedding model: gemini-embedding-2 (see embed_documents.py — same model
-MUST be used here, since embedding spaces between gemini-embedding-2 and
-gemini-embedding-001 are not comparable).
-
-Current scope: only the "Articles" source (Articles_2025 <-> Articles_data_2025)
-has real embedded chunks right now (see ACTIVE_SOURCES in embed_documents.py).
-Every other SourceTable will simply return zero rows until it's embedded too —
-this file itself doesn't need to change when that happens, since it queries
-DocumentEmbeddings generically by SourceTable, not by hardcoding "Articles".
+This script now uses the same shared OpenAI text-embedding-3-large embedding
+service as the production chatbot and the evaluation pipeline so retrieval
+results stay aligned across all paths.
 
 Setup:
-    pip install --upgrade pyodbc google-genai python-dotenv numpy
-    Reuses the same .env as embed_documents.py (GEMINI_API_KEY, SQL_CONN_STR).
+    pip install --upgrade pyodbc python-dotenv numpy
+    Reuses the same .env as the chatbot (OPENAI_API_KEY, SQL_CONN_STR).
 
 Run:
     python search_documents.py
@@ -28,44 +22,23 @@ import re
 import struct
 import json
 import sys
-import urllib.request
 import numpy as np
 import pyodbc
 from dotenv import load_dotenv
 
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from shared_embedding_service import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, EMBEDDING_PROVIDER, embed_query as shared_embed_query, log_embedding_context
+
 load_dotenv()
 
 SQL_CONN_STR = os.environ["SQL_CONN_STR"]
-GEMINI_MODEL = "gemini-embedding-2"
 
 # ---------- EMBEDDING THE USER'S QUERY ----------
 
 def embed_query(query_text):
-    """gemini-embedding-2 asymmetric-retrieval query format using built-in urllib.request."""
-    formatted = f"task: search result | query: {query_text}"
-    api_key = os.environ["GEMINI_API_KEY"]
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:embedContent?key={api_key}"
-    
-    payload = {
-        "model": f"models/{GEMINI_MODEL}",
-        "content": {
-            "parts": [
-                {"text": formatted}
-            ]
-        }
-    }
-    
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
-    
-    with urllib.request.urlopen(req) as response:
-        res_data = json.loads(response.read().decode("utf-8"))
-        values = res_data["embedding"]["values"]
-        return np.array(values, dtype=np.float32)
+    """Use the shared OpenAI text-embedding-3-large embedding service for query embeddings."""
+    vector = shared_embed_query(query_text)
+    return np.array(vector, dtype=np.float32)
 
 
 def _bytes_to_vector(b):
@@ -81,7 +54,8 @@ def _cosine_similarity(a, b):
 
 _SELECT_COLS = """
     EmbeddingID, SourceTable, SourceRecordID, ParentID, ChunkText,
-    Embedding, Category, Subject, Sections, DocTitle, LawTitle, DocDate
+    Embedding, EmbeddingModel, EmbeddingDim, Category, Subject,
+    Sections, DocTitle, LawTitle, DocDate
 """
 
 
@@ -100,18 +74,56 @@ def _row_to_result(row, extra=None):
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "embeddings_cache.npz")
 
 
+def _require_openai_embedding_space(cnx):
+    cur = cnx.cursor()
+    cur.execute(
+        "SELECT TOP (1) EmbeddingModel, EmbeddingDim FROM dbo.DocumentEmbeddings WITH (NOLOCK) ORDER BY EmbeddingID"
+    )
+    row = cur.fetchone()
+    cur.close()
+
+    if row is None:
+        return
+
+    stored_provider = row[0] or "unknown"
+    stored_dimensions = row[1]
+
+    if stored_provider != EMBEDDING_MODEL or stored_dimensions != EMBEDDING_DIMENSIONS:
+        warning_message = (
+            f"EMBEDDING MISMATCH: Your DocumentEmbeddings were created with OpenAI '{stored_provider}' "
+            f"(dimension {stored_dimensions}), but the system expects '{EMBEDDING_MODEL}' "
+            f"(dimension {EMBEDDING_DIMENSIONS}). The vector space differs and retrieval will fail. "
+            f"Please re-index the DocumentEmbeddings table with the correct embedding model before continuing."
+        )
+        sys.stderr.write(f"{warning_message}\n")
+        raise RuntimeError(warning_message)
+
+
 def load_or_refresh_embeddings(cnx=None):
     """Load embeddings from local cache if it exists, otherwise refresh cache from DB."""
     if os.path.exists(CACHE_FILE):
         try:
             data = np.load(CACHE_FILE, allow_pickle=True)
             if "vectors" in data and "metadata" in data:
-                return data["vectors"], data["metadata"]
+                vectors = data["vectors"]
+                metadata = data["metadata"]
+                if len(metadata) and metadata.dtype == object:
+                    if not any(item.get("embedding_model") == EMBEDDING_MODEL for item in metadata.tolist()):
+                        warning_message = (
+                            "EMBEDDING CACHE MISMATCH: Embeddings cache (embeddings_cache.npz) was generated with "
+                            "a different embedding model than the system expects. Current: text-embedding-3-large (3072 dims). "
+                            "Please regenerate the embeddings cache using the shared embedding service before continuing."
+                        )
+                        sys.stderr.write(f"Error: {warning_message}\n")
+                        raise RuntimeError(warning_message)
+                return vectors, metadata
         except Exception as e:
             sys.stderr.write(f"Cache read error: {e}. Re-fetching from database...\n")
 
     if cnx is None:
         raise ValueError("Embeddings cache file is missing/corrupted, and no DB connection was provided to rebuild it.")
+
+    _require_openai_embedding_space(cnx)
 
     # Fetch all embeddings and metadata from the database
     sys.stderr.write("Cache missing or invalid. Rebuilding local embeddings cache...\n")
@@ -134,12 +146,14 @@ def load_or_refresh_embeddings(cnx=None):
             "record_id": row[2],
             "parent_id": row[3],
             "chunk_text": row[4],
-            "category": row[6],
-            "subject": row[7],
-            "sections": row[8],
-            "doc_title": row[9],
-            "law_title": row[10],
-            "doc_date": str(row[11]) if row[11] else None
+            "embedding_model": row[6],
+            "embedding_dim": row[7],
+            "category": row[8],
+            "subject": row[9],
+            "sections": row[10],
+            "doc_title": row[11],
+            "law_title": row[12],
+            "doc_date": str(row[13]) if row[13] else None,
         })
 
     vectors = np.array(vectors, dtype=np.float32)
@@ -366,6 +380,8 @@ def get_original_content_bulk(cnx, results):
 def search(query_text, top_k=5, hybrid=True, source_filter=None, with_original_content=True):
     """Primary function a backend endpoint should call. Reuse single database connection."""
     from concurrent.futures import ThreadPoolExecutor
+
+    log_embedding_context()
 
     # Run database connection, query embedding, and cache loading in parallel to optimize latency
     with ThreadPoolExecutor(max_workers=3) as executor:

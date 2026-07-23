@@ -1,23 +1,22 @@
 const XLSX = require('xlsx');
 
-const EXPECTED_HEADERS = [
-  'id',
-  'question',
-  'intent',
-  'answer',
-  'source_table',
-  'source_column',
-  'row_id',
-  'notes',
-];
+const REQUIRED_HEADERS = ['question', 'reference'];
 
 function normalizeHeader(value) {
-  return String(value || '').trim().toLowerCase();
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function findDatasetSheet(workbook) {
+  return workbook.SheetNames.find((name) => normalizeHeader(name) !== 'readme') || workbook.SheetNames[0] || null;
 }
 
 function parseWorkbookBuffer(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer' });
-  const datasetSheet = workbook.SheetNames.find((name) => normalizeHeader(name) !== 'readme');
+  const datasetSheet = findDatasetSheet(workbook);
 
   if (!datasetSheet) {
     throw new Error('No dataset worksheet found.');
@@ -31,23 +30,25 @@ function parseWorkbookBuffer(buffer) {
   }
 
   const headers = Object.keys(rows[0] || {});
-  const headerMap = new Map(headers.map((header, index) => [normalizeHeader(header), index]));
+  const headerMap = new Map(headers.map((header) => [normalizeHeader(header), header]));
 
-  const missingHeaders = EXPECTED_HEADERS.filter((header) => !headerMap.has(header));
+  const missingHeaders = REQUIRED_HEADERS.filter((header) => !headerMap.has(header));
   if (missingHeaders.length > 0) {
-    throw new Error(`Missing required columns: ${missingHeaders.join(', ')}`);
+    throw new Error(`CSV must contain both required columns: ${missingHeaders.join(', ')}`);
   }
 
-  return rows.map((row) => ({
-    id: String(row[headers[headerMap.get('id')]] ?? '').trim(),
-    question: String(row[headers[headerMap.get('question')]] ?? '').trim(),
-    intent: String(row[headers[headerMap.get('intent')]] ?? '').trim(),
-    answer: String(row[headers[headerMap.get('answer')]] ?? '').trim(),
-    sourceTable: String(row[headers[headerMap.get('source_table')]] ?? '').trim(),
-    sourceColumn: String(row[headers[headerMap.get('source_column')]] ?? '').trim(),
-    rowId: String(row[headers[headerMap.get('row_id')]] ?? '').trim(),
-    notes: String(row[headers[headerMap.get('notes')]] ?? '').trim(),
-  }));
+  return rows.map((row) => {
+    const questionKey = headerMap.get('question');
+    const referenceKey = headerMap.get('reference');
+
+    const question = String(row[questionKey] ?? '').trim();
+    const reference = String(row[referenceKey] ?? '').trim();
+
+    return {
+      question,
+      reference,
+    };
+  });
 }
 
 module.exports = {
