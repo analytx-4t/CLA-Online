@@ -7,6 +7,8 @@ const navItems = [
   { label: 'RAGAS', to: '/ragas', icon: ClipboardCheck },
   { label: 'Golden Dataset', to: '/golden-dataset', icon: Database },
   { label: 'Portkey', to: '/portkey', icon: ShieldCheck },
+  { label: 'LangSmith', to: '/langsmith', icon: Activity },
+  { label: 'Logfire', to: '/logfire', icon: FileText },
   { label: 'Settings', to: '/settings', icon: Settings },
 ];
 

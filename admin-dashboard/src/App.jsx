@@ -45,6 +45,8 @@ export default function App() {
               <Route path="/ragas" element={<RagasPage />} />
               <Route path="/golden-dataset" element={<GoldenDatasetPage />} />
               <Route path="/portkey" element={<MonitoringPages page="portkey" />} />
+              <Route path="/langsmith" element={<MonitoringPages page="langsmith" />} />
+              <Route path="/logfire" element={<MonitoringPages page="logfire" />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/request/:requestId" element={<RequestDetailsPage />} />
               <Route path="*" element={<NotFoundPage />} />

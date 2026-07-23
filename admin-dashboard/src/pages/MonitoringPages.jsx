@@ -1,8 +1,12 @@
 import { useParams } from 'react-router-dom';
 import PortkeyPage from './PortkeyPage';
+import LangsmithPage from './LangsmithPage';
+import LogfirePage from './LogfirePage';
 
 const pageComponents = {
   portkey: PortkeyPage,
+  langsmith: LangsmithPage,
+  logfire: LogfirePage,
 };
 
 export default function MonitoringPages({ page }) {
