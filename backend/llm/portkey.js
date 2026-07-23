@@ -76,6 +76,21 @@ async function persistPortkeyExecutionLog({
   }
 }
 
+// Newer OpenAI reasoning models (gpt-5, the o-series) have two API
+// incompatibilities with every other model on every other provider,
+// both confirmed live:
+//   1. They reject the legacy `max_tokens` param outright — "Unsupported
+//      parameter: 'max_tokens' is not supported with this model. Use
+//      'max_completion_tokens' instead."
+//   2. They reject any explicit `temperature` other than the default —
+//      "Unsupported value: 'temperature' does not support 0 with this
+//      model. Only the default (1) value is supported."
+function isOpenAIReasoningModel(model) {
+  if (!model) return false;
+  const normalized = String(model).toLowerCase();
+  return /^gpt-5/.test(normalized) || /^o[1-9](-|$)/.test(normalized);
+}
+
 const providerSlugs = {
   openai: process.env.PORTKEY_OPENAI_PROVIDER,
   groq: process.env.PORTKEY_GROQ_PROVIDER,
@@ -160,12 +175,22 @@ async function executeChatCompletionDirect({
           requestContext,
 
           call: async () => {
+            const reasoningModel = isOpenAIReasoningModel(model);
+            const tokenLimitField = reasoningModel ? 'max_completion_tokens' : 'max_tokens';
             return portkey.chat.completions.create(
               {
                 model: portkeyModel,
                 messages: finalMessages,
-                temperature,
-                max_tokens: maxTokens,
+                // gpt-5 / o-series only accept the default temperature (1) —
+                // omit the field entirely rather than send an unsupported value.
+                ...(reasoningModel ? {} : { temperature }),
+                [tokenLimitField]: maxTokens,
+                // Without this, gpt-5 defaults to a much higher internal reasoning
+                // budget and can burn the entire maxTokens allowance on hidden
+                // reasoning before emitting any visible content — confirmed live,
+                // reasoning_tokens dropped from ~4200 to ~1000 on an identical
+                // prompt once this was set, leaving reliable headroom for output.
+                ...(reasoningModel ? { reasoning_effort: 'low' } : {}),
               },
               {
                 ...(requestContextTraceId ? { traceId: requestContextTraceId } : {}),
@@ -316,6 +341,7 @@ async function createFallbackChatCompletion({
 module.exports = {
   portkey,
   getPortkeyModel,
+  executeChatCompletionDirect,
   createChatCompletion,
   createFallbackChatCompletion,
 };

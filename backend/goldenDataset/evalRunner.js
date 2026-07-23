@@ -72,13 +72,23 @@ async function runGoldenDatasetEvaluation({ baseUrl = process.env.GOLDEN_DATASET
 
     const results = [];
     const goldenRunsCollection = database.collection('golden_dataset_runs');
+    let rowIndex = 0;
 
     for (const row of rows) {
+      rowIndex += 1;
+      console.log(`[Golden Dataset] Evaluating ${rowIndex}/${rows.length}: "${String(row.question || '').slice(0, 80)}"`);
+
       try {
         const response = await postJson(`${baseUrl}/api/ask`, {
           question: row.question,
           session_id: row.session_id || null,
+          // Marks this call as an internal benchmark run rather than real
+          // end-user traffic, so its evaluation doesn't show up on the
+          // live Online Eval page (see requestSource in backend/index.js).
+          source: 'golden_dataset',
         });
+
+        const evaluationResult = response.data?.evaluation && typeof response.data.evaluation === 'object' ? response.data.evaluation : null;
 
         const runDocument = {
           datasetVersion: row.version || null,
@@ -86,22 +96,24 @@ async function runGoldenDatasetEvaluation({ baseUrl = process.env.GOLDEN_DATASET
           question: row.question,
           chatbotAnswer: response.data?.answer || null,
           referenceAnswer: row.answer || null,
-          status: response.statusCode && response.statusCode >= 400 ? 'failed' : 'completed',
+          status: response.statusCode && response.statusCode >= 400 ? 'failed' : (evaluationResult?.status || 'completed'),
           statusCode: response.statusCode || null,
-          ragasMetrics: response.data?.evaluation && typeof response.data.evaluation === 'object'
+          ragasMetrics: evaluationResult
             ? {
-                faithfulness: response.data.evaluation.faithfulness ?? null,
-                answerRelevancy: response.data.evaluation.answer_relevancy ?? response.data.evaluation.answerRelevancy ?? null,
-                contextPrecision: response.data.evaluation.context_precision ?? response.data.evaluation.contextPrecision ?? null,
-                contextRecall: response.data.evaluation.context_recall ?? response.data.evaluation.contextRecall ?? null,
-                answerCorrectness: response.data.evaluation.answer_correctness ?? response.data.evaluation.answerCorrectness ?? null,
+                faithfulness: evaluationResult.faithfulness ?? null,
+                answerRelevancy: evaluationResult.answerRelevancy ?? null,
+                contextPrecision: evaluationResult.contextPrecision ?? null,
+                contextRecall: evaluationResult.contextRecall ?? null,
+                piiLeakage: evaluationResult.piiLeakage ?? null,
               }
             : null,
+          overallScore: evaluationResult?.overallScore ?? null,
           timestamp: new Date().toISOString(),
           error: response.data?.error || null,
         };
 
         await goldenRunsCollection.insertOne(runDocument);
+        console.log(`[Golden Dataset] ${rowIndex}/${rows.length} done — status=${runDocument.status}, overallScore=${runDocument.overallScore ?? 'n/a'}`);
 
         results.push({
           questionId: row.id || row._id?.toString() || null,
@@ -124,6 +136,7 @@ async function runGoldenDatasetEvaluation({ baseUrl = process.env.GOLDEN_DATASET
         };
 
         await goldenRunsCollection.insertOne(failedRunDocument);
+        console.error(`[Golden Dataset] ${rowIndex}/${rows.length} failed:`, error.message);
 
         results.push({
           questionId: row.id || row._id?.toString() || null,

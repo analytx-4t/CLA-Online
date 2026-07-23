@@ -67,8 +67,16 @@ function buildRagasListQuery(url) {
   };
 }
 
+// Online Eval only ever shows real end-user chatbot traffic — golden-dataset
+// benchmark runs go through the same /api/ask endpoint but are tagged with
+// source: 'golden_dataset' and have their own view (the Golden Dataset page,
+// backed by golden_dataset_runs). Documents predating this field have no
+// `source` at all, which $ne treats as a match (correct: they're real chat
+// history, not benchmark runs).
+const EXCLUDE_GOLDEN_DATASET_SOURCE = { source: { $ne: 'golden_dataset' } };
+
 function getRagasFilter(query) {
-  const filter = {};
+  const filter = { ...EXCLUDE_GOLDEN_DATASET_SOURCE };
 
   if (query.search) {
     filter.$or = [
@@ -114,9 +122,9 @@ async function handleAdminRoutes(req, res, db) {
   if (path === '/api/admin/overview' && req.method === 'GET') {
     try {
       const evaluationResultsCollection = db.collection('evaluation_results');
-      const evaluations = await evaluationResultsCollection.find({}).toArray();
+      const evaluations = await evaluationResultsCollection.find(EXCLUDE_GOLDEN_DATASET_SOURCE).toArray();
 
-      const numericFields = ['faithfulness', 'answerRelevancy', 'contextPrecision', 'contextRecall', 'answerCorrectness'];
+      const numericFields = ['faithfulness', 'answerRelevancy', 'contextPrecision', 'contextRecall', 'piiLeakage'];
       const averages = {};
 
       numericFields.forEach((field) => {
@@ -135,7 +143,7 @@ async function handleAdminRoutes(req, res, db) {
         avgAnswerRelevancy: averages.answerRelevancy,
         avgContextPrecision: averages.contextPrecision,
         avgContextRecall: averages.contextRecall,
-        avgAnswerCorrectness: averages.answerCorrectness,
+        avgPiiLeakage: averages.piiLeakage,
       }));
     } catch (error) {
       setJsonHeaders(res, 500);
@@ -272,7 +280,7 @@ async function handleAdminRoutes(req, res, db) {
         answerRelevancy: item.ragasMetrics?.answerRelevancy ?? null,
         contextPrecision: item.ragasMetrics?.contextPrecision ?? null,
         contextRecall: item.ragasMetrics?.contextRecall ?? null,
-        answerCorrectness: item.ragasMetrics?.answerCorrectness ?? null,
+        piiLeakage: item.ragasMetrics?.piiLeakage ?? null,
         retrievalTime: item.retrievalTime ?? null,
         llmTime: item.llmTime ?? null,
         retrievedChunks: Array.isArray(item.retrievedChunks) ? item.retrievedChunks : [],
@@ -310,44 +318,72 @@ async function handleAdminRoutes(req, res, db) {
       startOfWeek.setHours(0, 0, 0, 0);
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
 
+      // Score averages (overall/faithfulness/relevancy/precision/recall/PII) are
+      // computed only from non-failed rows — a failed evaluation has no real
+      // metric values to average in, and mixing it in would understate scores
+      // that were never actually produced. Counts (total/success/failed/time)
+      // still reflect every row so the failure rate itself stays accurate.
       const pipeline = [
+        { $match: EXCLUDE_GOLDEN_DATASET_SOURCE },
         {
-          $group: {
-            _id: null,
-            totalEvaluations: { $sum: 1 },
-            successCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'completed'] }, 1, 0] } },
-            failedCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'failed'] }, 1, 0] } },
-            avgFaithfulness: { $avg: '$faithfulness' },
-            avgAnswerRelevancy: { $avg: '$answerRelevancy' },
-            avgContextPrecision: { $avg: '$contextPrecision' },
-            avgContextRecall: { $avg: '$contextRecall' },
-            avgAnswerCorrectness: { $avg: '$answerCorrectness' },
-            avgOverallScore: { $avg: '$overallScore' },
-            avgEvaluationTime: { $avg: '$evaluationTimeMs' },
+          $facet: {
+            totals: [
+              {
+                $group: {
+                  _id: null,
+                  totalEvaluations: { $sum: 1 },
+                  successCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'completed'] }, 1, 0] } },
+                  failedCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'failed'] }, 1, 0] } },
+                  avgEvaluationTime: { $avg: '$evaluationTimeMs' },
+                },
+              },
+            ],
+            scores: [
+              { $match: { evaluationStatus: { $ne: 'failed' } } },
+              {
+                $group: {
+                  _id: null,
+                  avgFaithfulness: { $avg: '$faithfulness' },
+                  avgAnswerRelevancy: { $avg: '$answerRelevancy' },
+                  avgContextPrecision: { $avg: '$contextPrecision' },
+                  avgContextRecall: { $avg: '$contextRecall' },
+                  avgPiiLeakage: { $avg: '$piiLeakage' },
+                  avgOverallScore: { $avg: '$overallScore' },
+                },
+              },
+            ],
           },
         },
       ];
 
-      const stats = await evaluationResultsCollection.aggregate(pipeline).toArray();
-      const aggregate = stats[0] || {};
+      const facetResult = await evaluationResultsCollection.aggregate(pipeline).toArray();
+      const aggregate = {
+        ...(facetResult[0]?.totals?.[0] || {}),
+        ...(facetResult[0]?.scores?.[0] || {}),
+      };
 
       const providerStats = await evaluationResultsCollection.aggregate([
+        { $match: EXCLUDE_GOLDEN_DATASET_SOURCE },
         { $group: { _id: '$provider', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
       ]).toArray();
 
       const modelStats = await evaluationResultsCollection.aggregate([
+        { $match: EXCLUDE_GOLDEN_DATASET_SOURCE },
         { $group: { _id: '$model', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
       ]).toArray();
 
       const dayCount = await evaluationResultsCollection.countDocuments({
+        ...EXCLUDE_GOLDEN_DATASET_SOURCE,
         timestamp: { $gte: startOfToday.toISOString() },
       });
       const weekCount = await evaluationResultsCollection.countDocuments({
+        ...EXCLUDE_GOLDEN_DATASET_SOURCE,
         timestamp: { $gte: startOfWeek.toISOString() },
       });
       const monthCount = await evaluationResultsCollection.countDocuments({
+        ...EXCLUDE_GOLDEN_DATASET_SOURCE,
         timestamp: { $gte: startOfMonth.toISOString() },
       });
 
@@ -365,7 +401,7 @@ async function handleAdminRoutes(req, res, db) {
           avgAnswerRelevancy: aggregate.avgAnswerRelevancy ?? null,
           avgContextPrecision: aggregate.avgContextPrecision ?? null,
           avgContextRecall: aggregate.avgContextRecall ?? null,
-          avgAnswerCorrectness: aggregate.avgAnswerCorrectness ?? null,
+          avgPiiLeakage: aggregate.avgPiiLeakage ?? null,
           avgOverallScore: aggregate.avgOverallScore ?? null,
           successRate,
           failureRate,
@@ -407,10 +443,15 @@ async function handleAdminRoutes(req, res, db) {
             ? evaluationDoc.retrievedContext
             : (evaluationDoc.retrievedContext ? [evaluationDoc.retrievedContext] : null),
           faithfulness: evaluationDoc.faithfulness ?? null,
+          faithfulnessReason: evaluationDoc.faithfulnessReason ?? null,
           answerRelevancy: evaluationDoc.answerRelevancy ?? null,
+          answerRelevancyReason: evaluationDoc.answerRelevancyReason ?? null,
           contextPrecision: evaluationDoc.contextPrecision ?? null,
+          contextPrecisionReason: evaluationDoc.contextPrecisionReason ?? null,
           contextRecall: evaluationDoc.contextRecall ?? null,
-          answerCorrectness: evaluationDoc.answerCorrectness ?? null,
+          contextRecallReason: evaluationDoc.contextRecallReason ?? null,
+          piiLeakage: evaluationDoc.piiLeakage ?? null,
+          piiLeakageReason: evaluationDoc.piiLeakageReason ?? null,
           overallScore: evaluationDoc.overallScore ?? null,
           provider: evaluationDoc.provider || null,
           model: evaluationDoc.model || null,
@@ -464,7 +505,8 @@ async function handleAdminRoutes(req, res, db) {
           answerRelevancy: evaluationDoc.answerRelevancy ?? null,
           contextPrecision: evaluationDoc.contextPrecision ?? null,
           contextRecall: evaluationDoc.contextRecall ?? null,
-          answerCorrectness: evaluationDoc.answerCorrectness ?? null,
+          piiLeakage: evaluationDoc.piiLeakage ?? null,
+          overallScore: evaluationDoc.overallScore ?? null,
           provider: evaluationDoc.provider || null,
           model: evaluationDoc.model || null,
         },

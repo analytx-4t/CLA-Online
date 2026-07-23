@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileUp, Search, RefreshCw, UploadCloud } from 'lucide-react';
 import DataTable from '../components/DataTable';
 import Drawer from '../components/Drawer';
 import MetricCard from '../components/MetricCard';
+import MarkdownContent from '../components/MarkdownContent';
 
 const PAGE_SIZE = 10;
 
@@ -33,11 +34,13 @@ export default function GoldenDatasetPage() {
     lastUpload: '—',
     lastEvaluation: '—',
     avgFaithfulness: '—',
-    avgAnswerCorrectness: '—',
+    avgPiiLeakage: '—',
   });
   const [evaluations, setEvaluations] = useState([]);
   const [selectedEvaluation, setSelectedEvaluation] = useState(null);
   const [evaluationsLoading, setEvaluationsLoading] = useState(true);
+  const [evaluationRunning, setEvaluationRunning] = useState(false);
+  const evaluationPollRef = useRef(null);
 
   const loadDataset = async () => {
     try {
@@ -48,22 +51,13 @@ export default function GoldenDatasetPage() {
       setRecords(dataset);
 
       const versions = dataset.map((item) => item.version).filter(Boolean);
-      const evaluations = dataset.filter((item) => item.lastEvaluation || item.last_evaluation);
-      const faithfulnessValues = dataset
-        .map((item) => Number(item.avgFaithfulness ?? item.avg_faithfulness))
-        .filter((value) => Number.isFinite(value));
-      const correctnessValues = dataset
-        .map((item) => Number(item.avgAnswerCorrectness ?? item.avg_answer_correctness))
-        .filter((value) => Number.isFinite(value));
 
-      setSummary({
+      setSummary((prev) => ({
+        ...prev,
         version: payload.version || versions[0] || '—',
         totalQuestions: dataset.length,
         lastUpload: payload.uploadedAt || dataset[0]?.uploadedAt || dataset[0]?.uploaded_at || '—',
-        lastEvaluation: evaluations[0]?.lastEvaluation || evaluations[0]?.last_evaluation || '—',
-        avgFaithfulness: faithfulnessValues.length ? `${(faithfulnessValues.reduce((sum, value) => sum + value, 0) / faithfulnessValues.length).toFixed(2)}%` : '—',
-        avgAnswerCorrectness: correctnessValues.length ? `${(correctnessValues.reduce((sum, value) => sum + value, 0) / correctnessValues.length).toFixed(2)}%` : '—',
-      });
+      }));
     } catch (error) {
       console.error(error);
     } finally {
@@ -76,7 +70,31 @@ export default function GoldenDatasetPage() {
       setEvaluationsLoading(true);
       const response = await fetch('http://127.0.0.1:3000/api/admin/golden-dataset/evaluations');
       const payload = await response.json();
-      setEvaluations(Array.isArray(payload.evaluations) ? payload.evaluations : []);
+      const list = Array.isArray(payload.evaluations) ? payload.evaluations : [];
+      setEvaluations(list);
+
+      // Summary averages are derived here, from real completed runs, rather
+      // than from a per-record field that's never actually written on
+      // upload — that field was always empty, so these cards always showed
+      // "—" regardless of how many evaluations had actually run.
+      const completedRuns = list.filter((item) => item.status === 'completed' || item.status === 'partial');
+      const faithfulnessValues = completedRuns.map((item) => Number(item.faithfulness)).filter(Number.isFinite);
+      const piiLeakageValues = completedRuns.map((item) => Number(item.piiLeakage)).filter(Number.isFinite);
+      const latestTimestamp = list.reduce((latest, item) => {
+        if (!item.timestamp) return latest;
+        return !latest || item.timestamp > latest ? item.timestamp : latest;
+      }, null);
+
+      setSummary((prev) => ({
+        ...prev,
+        lastEvaluation: latestTimestamp || '—',
+        avgFaithfulness: faithfulnessValues.length
+          ? `${((faithfulnessValues.reduce((sum, value) => sum + value, 0) / faithfulnessValues.length) * 100).toFixed(1)}%`
+          : '—',
+        avgPiiLeakage: piiLeakageValues.length
+          ? `${((piiLeakageValues.reduce((sum, value) => sum + value, 0) / piiLeakageValues.length) * 100).toFixed(1)}%`
+          : '—',
+      }));
     } catch (error) {
       console.error(error);
     } finally {
@@ -87,6 +105,12 @@ export default function GoldenDatasetPage() {
   useEffect(() => {
     loadDataset();
     loadEvaluations();
+    return () => {
+      if (evaluationPollRef.current) {
+        window.clearInterval(evaluationPollRef.current);
+        evaluationPollRef.current = null;
+      }
+    };
   }, []);
 
   const filteredRecords = useMemo(() => {
@@ -126,6 +150,24 @@ export default function GoldenDatasetPage() {
     }
   };
 
+  const startEvaluationPolling = () => {
+    setEvaluationRunning(true);
+    if (evaluationPollRef.current) {
+      window.clearInterval(evaluationPollRef.current);
+    }
+    let pollCount = 0;
+    const maxPolls = 80; // ~20 minutes at 15s intervals
+    evaluationPollRef.current = window.setInterval(() => {
+      pollCount += 1;
+      loadEvaluations();
+      if (pollCount >= maxPolls) {
+        window.clearInterval(evaluationPollRef.current);
+        evaluationPollRef.current = null;
+        setEvaluationRunning(false);
+      }
+    }, 15000);
+  };
+
   const handleUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -143,6 +185,10 @@ export default function GoldenDatasetPage() {
       if (!response.ok) throw new Error(payload.error || 'Upload failed');
       await loadDataset();
       alert(payload.message || 'Dataset uploaded');
+
+      // Upload auto-triggers a background evaluation run server-side —
+      // poll so newly evaluated rows show up without a manual refresh.
+      startEvaluationPolling();
     } catch (error) {
       alert(error.message || 'Upload failed');
     } finally {
@@ -179,9 +225,14 @@ export default function GoldenDatasetPage() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Evaluation failed');
-      await loadEvaluations();
-      window.setTimeout(() => loadEvaluations(), 2000);
+
+      // The run itself happens server-side in the background — each question
+      // is a full answer generation plus a 5-metric LLM-judge evaluation, so
+      // realistically a minute or more per question. Poll for fresh rows
+      // instead of waiting on one long request (which used to make this
+      // button look stuck).
       alert(payload.message || 'Evaluation started');
+      startEvaluationPolling();
     } catch (error) {
       alert(error.message || 'Evaluation failed');
     } finally {
@@ -207,9 +258,7 @@ export default function GoldenDatasetPage() {
     { header: 'Answer Relevancy', accessor: 'answerRelevancy', width: '130px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.answerRelevancy ?? '—'}</span> },
     { header: 'Context Precision', accessor: 'contextPrecision', width: '130px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.contextPrecision ?? '—'}</span> },
     { header: 'Context Recall', accessor: 'contextRecall', width: '120px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.contextRecall ?? '—'}</span> },
-    { header: 'Answer Correctness', accessor: 'answerCorrectness', width: '130px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.answerCorrectness ?? '—'}</span> },
-    { header: 'Retrieval Time', accessor: 'retrievalTime', width: '120px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.retrievalTime ?? '—'}</span> },
-    { header: 'LLM Time', accessor: 'llmTime', width: '100px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.llmTime ?? '—'}</span> },
+    { header: 'PII Leakage', accessor: 'piiLeakage', width: '110px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.piiLeakage ?? '—'}</span> },
     { header: 'Retrieved Chunks', accessor: 'retrievedChunks', width: '160px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{(row.retrievedChunks || []).join(', ') || '—'}</span> },
     { header: 'Chunk IDs', accessor: 'retrievedChunkIds', width: '140px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{(row.retrievedChunkIds || []).join(', ') || '—'}</span> },
     { header: 'Similarity Scores', accessor: 'similarityScores', width: '140px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{(row.similarityScores || []).join(', ') || '—'}</span> },
@@ -222,6 +271,15 @@ export default function GoldenDatasetPage() {
     <div className="rounded-lg border border-line bg-surface-muted p-3">
       <p className="text-[10px] uppercase tracking-[0.24em] text-muted">{label}</p>
       <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{value || '—'}</p>
+    </div>
+  );
+
+  const renderMarkdownSection = (label, value) => (
+    <div className="rounded-lg border border-line bg-surface-muted p-3">
+      <p className="text-[10px] uppercase tracking-[0.24em] text-muted">{label}</p>
+      <div className="mt-2">
+        <MarkdownContent content={value} />
+      </div>
     </div>
   );
 
@@ -245,7 +303,7 @@ export default function GoldenDatasetPage() {
           <div className="pl-4"><MetricCard compact title="Last Upload" value={formatDate(summary.lastUpload)} /></div>
           <div className="pl-4"><MetricCard compact title="Last Eval" value={formatDate(summary.lastEvaluation)} /></div>
           <div className="pl-4"><MetricCard title="Avg Faithfulness" value={summary.avgFaithfulness} /></div>
-          <div className="pl-4"><MetricCard title="Avg Correctness" value={summary.avgAnswerCorrectness} /></div>
+          <div className="pl-4"><MetricCard title="Avg PII Leakage" value={summary.avgPiiLeakage} /></div>
         </div>
       </section>
 
@@ -265,12 +323,21 @@ export default function GoldenDatasetPage() {
               <RefreshCw size={16} />
               Replace Dataset
             </button>
-            <button onClick={handleRunEvaluation} className="inline-flex items-center gap-2 rounded-lg border border-accent bg-accent/15 px-3 py-2 text-sm font-medium text-accent transition hover:bg-accent/25">
-              <FileUp size={16} />
-              Run Evaluation
+            <button
+              onClick={handleRunEvaluation}
+              disabled={evaluationRunning}
+              className="inline-flex items-center gap-2 rounded-lg border border-accent bg-accent/15 px-3 py-2 text-sm font-medium text-accent transition hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {evaluationRunning ? <RefreshCw size={16} className="animate-spin" /> : <FileUp size={16} />}
+              {evaluationRunning ? 'Evaluating…' : 'Run Evaluation'}
             </button>
           </div>
         </div>
+        {evaluationRunning && (
+          <p className="mt-2 text-xs text-muted">
+            Running in the background — each question takes roughly a minute or more (full answer generation plus a 5-metric evaluation). New rows will appear below as they finish.
+          </p>
+        )}
       </section>
 
       <section className="rounded-lg border border-line bg-surface p-3 ">
@@ -316,16 +383,14 @@ export default function GoldenDatasetPage() {
         {selectedEvaluation ? (
           <div className="space-y-3">
             {renderDetailSection('Retrieved chunks', (selectedEvaluation.retrievedChunks || []).join('\n'))}
-            {renderDetailSection('Complete chatbot answer', selectedEvaluation.chatbotAnswer)}
+            {renderMarkdownSection('Complete chatbot answer', selectedEvaluation.chatbotAnswer)}
             {renderDetailSection('Reference answer', selectedEvaluation.referenceAnswer)}
-            {renderDetailSection('RAGAS metrics', [
+            {renderDetailSection('Evaluation metrics', [
               `Faithfulness: ${selectedEvaluation.faithfulness ?? '—'}`,
               `Answer Relevancy: ${selectedEvaluation.answerRelevancy ?? '—'}`,
               `Context Precision: ${selectedEvaluation.contextPrecision ?? '—'}`,
               `Context Recall: ${selectedEvaluation.contextRecall ?? '—'}`,
-              `Answer Correctness: ${selectedEvaluation.answerCorrectness ?? '—'}`,
-              `Retrieval Time: ${selectedEvaluation.retrievalTime ?? '—'}`,
-              `LLM Time: ${selectedEvaluation.llmTime ?? '—'}`,
+              `PII Leakage: ${selectedEvaluation.piiLeakage ?? '—'}`,
             ].join('\n'))}
             {renderDetailSection('Metadata', [
               `Status: ${selectedEvaluation.status || '—'}`,

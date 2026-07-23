@@ -7,6 +7,7 @@ import DataTable from '../components/DataTable';
 import StatusPill from '../components/StatusPill';
 import Drawer from '../components/Drawer';
 import MetricCard from '../components/MetricCard';
+import MarkdownContent from '../components/MarkdownContent';
 
 const statusOptions = ['All', 'completed', 'failed'];
 const providerOptions = ['All', 'groq', 'openai', 'gemini', 'deepseek'];
@@ -216,7 +217,7 @@ export default function OnlineEvalPage() {
           <div className="pl-4"><MetricCard title="Overall" value={stats ? formatPercent(stats.avgOverallScore) : '—'} /></div>
           <div className="pl-4"><MetricCard title="Faithfulness" value={stats ? formatPercent(stats.avgFaithfulness) : '—'} /></div>
           <div className="pl-4"><MetricCard title="Relevancy" value={stats ? formatPercent(stats.avgAnswerRelevancy) : '—'} /></div>
-          <div className="pl-4"><MetricCard title="Correctness" value={stats ? formatPercent(stats.avgAnswerCorrectness) : '—'} /></div>
+          <div className="pl-4"><MetricCard title="PII Leakage" value={stats ? formatPercent(stats.avgPiiLeakage) : '—'} /></div>
         </div>
 
         <div className="card overflow-hidden p-3">
@@ -261,39 +262,58 @@ export default function OnlineEvalPage() {
               </div>
               <div className="rounded-lg bg-surface-muted p-3">
                 <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Answer</p>
-                <p className="mt-2 text-sm text-ink">{detail.answer || '—'}</p>
+                <div className="mt-2">
+                  <MarkdownContent content={detail.answer} />
+                </div>
               </div>
               <div className="rounded-lg bg-surface-muted p-3">
                 <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Retrieved Context</p>
-                <ul className="mt-2 space-y-2 text-sm text-muted">
-                  {(detail.retrievedContext || []).map((item) => <li key={item}>• {item}</li>)}
-                </ul>
+                <div className="mt-2 space-y-2">
+                  {(detail.retrievedContext || []).length === 0 ? (
+                    <p className="text-sm text-muted">—</p>
+                  ) : (
+                    detail.retrievedContext.map((item, idx) => (
+                      <div key={idx} className="rounded-lg border border-line bg-surface p-2.5">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">Source {idx + 1}</p>
+                        <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted">{item}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
               <div className="rounded-lg bg-surface-muted p-3">
                 <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Metrics</p>
-                <div className="mt-2 space-y-2 text-sm text-ink">
+                <div className="mt-2 space-y-3 text-sm text-ink">
                   {[
-                    ['Faithfulness', detail.faithfulness],
-                    ['Answer Relevancy', detail.answerRelevancy],
-                    ['Context Precision', detail.contextPrecision],
-                    ['Context Recall', detail.contextRecall],
-                    ['Answer Correctness', detail.answerCorrectness],
-                    ['Overall Score', detail.overallScore],
-                  ].map(([label, value]) => (
-                    <div key={label} className="flex items-center justify-between gap-2">
-                      <span className="text-muted">{label}</span>
-                      <span className="tnum font-semibold">{formatMetric(value)}</span>
+                    ['Faithfulness', detail.faithfulness, detail.faithfulnessReason],
+                    ['Answer Relevancy', detail.answerRelevancy, detail.answerRelevancyReason],
+                    ['Context Precision', detail.contextPrecision, detail.contextPrecisionReason],
+                    ['Context Recall', detail.contextRecall, detail.contextRecallReason],
+                    ['PII Leakage', detail.piiLeakage, detail.piiLeakageReason],
+                  ].map(([label, value, reason]) => (
+                    <div key={label} className="border-b border-line pb-2 last:border-0 last:pb-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-muted">{label}</span>
+                        <span className="tnum font-semibold">{formatMetric(value)}</span>
+                      </div>
+                      {reason && <p className="mt-1 text-xs leading-relaxed text-muted">{reason}</p>}
                     </div>
                   ))}
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <span className="font-medium text-ink">Overall Score</span>
+                    <span className="tnum font-semibold text-accent">{formatMetric(detail.overallScore)}</span>
+                  </div>
                 </div>
               </div>
               <div className="rounded-lg bg-surface-muted p-3">
                 <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Evaluation</p>
                 <div className="mt-2 space-y-2 text-sm text-ink">
-                  <div className="flex items-center justify-between gap-2"><span className="text-muted">Evaluation Time</span><span className="tnum font-semibold">{detail.evaluationTimeMs ?? '—'}</span></div>
                   <div className="flex items-center justify-between gap-2"><span className="text-muted">Provider</span><span className="font-semibold">{detail.provider || '—'}</span></div>
                   <div className="flex items-center justify-between gap-2"><span className="text-muted">Model</span><span className="font-semibold">{detail.model || '—'}</span></div>
-                  <div className="flex items-center justify-between gap-2"><span className="text-muted">Status</span><span className="font-semibold">{detail.evaluationStatus || '—'}</span></div>
+                  <div className="flex items-center justify-between gap-2"><span className="text-muted">Status</span><StatusPill label={(detail.evaluationStatus || 'unknown').toUpperCase()} tone={getStatusTone(detail.evaluationStatus)} /></div>
+                  {detail.errorMessage && (
+                    <p className="mt-1 rounded-lg border border-danger/30 bg-danger-soft p-2 text-xs text-danger">{detail.errorMessage}</p>
+                  )}
                 </div>
               </div>
               <div className="rounded-lg bg-surface-muted p-3">
