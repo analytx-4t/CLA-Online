@@ -265,7 +265,6 @@ The frontend consists of static HTML, CSS, and JavaScript files.
 ### Structure
 
 - **HTML/chatbot_interface.html** - Main chatbot interface
-- **HTML/dashboard.html** - Dashboard for managing sessions
 - **CSS/chatbot_interface.css** - Styling for the chatbot
 - **javascript/chatbot_interface.js** - Chatbot logic and API interactions
 - **assets/** - Images and other static assets

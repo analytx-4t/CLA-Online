@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FileUp, Search, RefreshCw, UploadCloud } from 'lucide-react';
 import DataTable from '../components/DataTable';
 import Drawer from '../components/Drawer';
+import MetricCard from '../components/MetricCard';
 
 const PAGE_SIZE = 10;
 
@@ -189,7 +190,7 @@ export default function GoldenDatasetPage() {
   };
 
   const datasetColumns = [
-    { header: 'ID', accessor: 'id', width: '90px', render: (row) => <button onClick={() => handleSort('id')} className="text-left text-slate-100">{row.id || '—'}</button> },
+    { header: 'ID', accessor: 'id', width: '90px', render: (row) => <button onClick={() => handleSort('id')} className="text-left text-ink">{row.id || '—'}</button> },
     { header: 'Question', accessor: 'question', width: '220px' },
     { header: 'Intent', accessor: 'intent', width: '140px' },
     { header: 'Expected Answer', accessor: 'answer', width: '220px' },
@@ -218,71 +219,53 @@ export default function GoldenDatasetPage() {
   ];
 
   const renderDetailSection = (label, value) => (
-    <div className="rounded-lg border border-slate-800/70 bg-[#0B1119] p-3">
-      <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{label}</p>
-      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{value || '—'}</p>
+    <div className="rounded-lg border border-line bg-surface-muted p-3">
+      <p className="text-[10px] uppercase tracking-[0.24em] text-muted">{label}</p>
+      <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{value || '—'}</p>
     </div>
   );
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-slate-800/80 bg-[#111827]/95 p-3 shadow-panel">
+      <section className="rounded-lg border border-line bg-surface p-3 ">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Golden dataset workspace</p>
-            <h2 className="mt-2 text-2xl font-semibold text-white">Golden Dataset</h2>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-muted">Golden dataset workspace</p>
+            <h2 className="mt-2 text-2xl font-semibold text-ink">Golden Dataset</h2>
           </div>
-          <div className="flex w-full max-w-md items-center gap-2 rounded-lg border border-slate-800 bg-[#0B1119] px-3 py-2 text-sm text-slate-300">
-            <Search size={16} className="text-slate-500" />
+          <div className="flex w-full max-w-md items-center gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2 text-sm text-ink">
+            <Search size={16} className="text-muted" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search dataset" className="w-full bg-transparent outline-none" />
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Dataset Version</p>
-            <p className="mt-2 text-lg font-semibold text-white">{summary.version}</p>
-          </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Total Questions</p>
-            <p className="mt-2 text-lg font-semibold text-white">{summary.totalQuestions}</p>
-          </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Last Upload</p>
-            <p className="mt-2 text-lg font-semibold text-white">{formatDate(summary.lastUpload)}</p>
-          </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Last Evaluation</p>
-            <p className="mt-2 text-lg font-semibold text-white">{formatDate(summary.lastEvaluation)}</p>
-          </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Average Faithfulness</p>
-            <p className="mt-2 text-lg font-semibold text-white">{summary.avgFaithfulness}</p>
-          </div>
-          <div className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Average Answer Correctness</p>
-            <p className="mt-2 text-lg font-semibold text-white">{summary.avgAnswerCorrectness}</p>
-          </div>
+        <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-3 divide-x divide-line">
+          <MetricCard compact title="Version" value={summary.version} />
+          <div className="pl-4"><MetricCard title="Questions" value={summary.totalQuestions} /></div>
+          <div className="pl-4"><MetricCard compact title="Last Upload" value={formatDate(summary.lastUpload)} /></div>
+          <div className="pl-4"><MetricCard compact title="Last Eval" value={formatDate(summary.lastEvaluation)} /></div>
+          <div className="pl-4"><MetricCard title="Avg Faithfulness" value={summary.avgFaithfulness} /></div>
+          <div className="pl-4"><MetricCard title="Avg Correctness" value={summary.avgAnswerCorrectness} /></div>
         </div>
       </section>
 
-      <section className="rounded-lg border border-slate-800/80 bg-[#111827]/95 p-3 shadow-panel">
+      <section className="rounded-lg border border-line bg-surface p-3 ">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Upload and evaluation</p>
-            <h3 className="mt-1 text-lg font-semibold text-white">Dataset controls</h3>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-muted">Upload and evaluation</p>
+            <h3 className="mt-1 text-lg font-semibold text-ink">Dataset controls</h3>
           </div>
           <div className="flex flex-wrap gap-2">
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-800 bg-[#0B1119] px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-[#0F9D58]">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2 text-sm font-medium text-ink transition hover:border-accent">
               <UploadCloud size={16} />
               {uploading ? 'Uploading…' : 'Upload Excel'}
               <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleUpload} />
             </label>
-            <button onClick={handleReplace} className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-[#0B1119] px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-[#0F9D58]">
+            <button onClick={handleReplace} className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2 text-sm font-medium text-ink transition hover:border-accent">
               <RefreshCw size={16} />
               Replace Dataset
             </button>
-            <button onClick={handleRunEvaluation} className="inline-flex items-center gap-2 rounded-lg border border-[#0F9D58] bg-[#0F9D58]/15 px-3 py-2 text-sm font-medium text-[#9BE6B2] transition hover:bg-[#0F9D58]/25">
+            <button onClick={handleRunEvaluation} className="inline-flex items-center gap-2 rounded-lg border border-accent bg-accent/15 px-3 py-2 text-sm font-medium text-accent transition hover:bg-accent/25">
               <FileUp size={16} />
               Run Evaluation
             </button>
@@ -290,40 +273,40 @@ export default function GoldenDatasetPage() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3 shadow-panel">
+      <section className="rounded-lg border border-line bg-surface p-3 ">
         <div className="mb-3 flex items-center justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Dataset table</p>
-            <p className="mt-1 text-sm text-slate-400">{sortedRecords.length} records</p>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-muted">Dataset table</p>
+            <p className="mt-1 text-sm text-muted">{sortedRecords.length} records</p>
           </div>
         </div>
 
         {loading ? (
-          <div className="rounded-lg border border-slate-800/80 bg-[#0B1119] p-4 text-sm text-slate-400">Loading dataset…</div>
+          <div className="rounded-lg border border-line bg-surface-muted p-4 text-sm text-muted">Loading dataset…</div>
         ) : (
           <>
             <DataTable columns={datasetColumns} rows={pagedRecords} />
-            <div className="mt-3 flex items-center justify-between text-sm text-slate-400">
+            <div className="mt-3 flex items-center justify-between text-sm text-muted">
               <span>Page {page} of {totalPages}</span>
               <div className="flex gap-2">
-                <button disabled={page === 1} onClick={() => setPage((prev) => Math.max(1, prev - 1))} className="rounded-lg border border-slate-800 bg-[#0B1119] px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
-                <button disabled={page === totalPages} onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} className="rounded-lg border border-slate-800 bg-[#0B1119] px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+                <button disabled={page === 1} onClick={() => setPage((prev) => Math.max(1, prev - 1))} className="rounded-lg border border-line bg-surface-muted px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
+                <button disabled={page === totalPages} onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} className="rounded-lg border border-line bg-surface-muted px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
               </div>
             </div>
           </>
         )}
       </section>
 
-      <section className="rounded-lg border border-slate-800/80 bg-[#151C26]/95 p-3 shadow-panel">
+      <section className="rounded-lg border border-line bg-surface p-3 ">
         <div className="mb-3 flex items-center justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Evaluation results</p>
-            <p className="mt-1 text-sm text-slate-400">One row per evaluated question</p>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-muted">Evaluation results</p>
+            <p className="mt-1 text-sm text-muted">One row per evaluated question</p>
           </div>
         </div>
 
         {evaluationsLoading ? (
-          <div className="rounded-lg border border-slate-800/80 bg-[#0B1119] p-4 text-sm text-slate-400">Loading evaluations…</div>
+          <div className="rounded-lg border border-line bg-surface-muted p-4 text-sm text-muted">Loading evaluations…</div>
         ) : (
           <DataTable columns={evaluationColumns} rows={evaluations} onRowClick={(row) => setSelectedEvaluation(row)} />
         )}

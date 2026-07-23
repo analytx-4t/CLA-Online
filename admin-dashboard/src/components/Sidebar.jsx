@@ -1,59 +1,55 @@
 import { NavLink } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { Activity, ChevronLeft, ClipboardCheck, Database, FileText, LayoutDashboard, Settings, ShieldCheck } from 'lucide-react';
+import { ChevronLeft, ClipboardCheck, Database, LayoutDashboard, Settings, ShieldCheck } from 'lucide-react';
+import ThemeToggle from './ThemeToggle';
 
 const navItems = [
   { label: 'Overview', to: '/', icon: LayoutDashboard },
-  { label: 'RAGAS', to: '/ragas', icon: ClipboardCheck },
+  { label: 'Online Eval', to: '/online-eval', icon: ClipboardCheck },
   { label: 'Golden Dataset', to: '/golden-dataset', icon: Database },
-  { label: 'Portkey', to: '/portkey', icon: ShieldCheck },
-  { label: 'LangSmith', to: '/langsmith', icon: Activity },
-  { label: 'Logfire', to: '/logfire', icon: FileText },
   { label: 'Settings', to: '/settings', icon: Settings },
 ];
 
 export default function Sidebar({ collapsed, onToggle }) {
   return (
-    <aside className={`hidden lg:flex flex-col border-r border-slate-800/70 bg-[#090B0F] text-slate-100 transition-all duration-200 ease-in-out ${collapsed ? 'w-[72px]' : 'w-[220px]'}`}>
+    <aside className={`hidden lg:flex flex-col border-r border-line bg-surface text-ink transition-all duration-200 ease-in-out ${collapsed ? 'w-[72px]' : 'w-[220px]'}`}>
       <div className={`flex ${collapsed ? 'flex-col items-center gap-3 py-3' : 'items-center justify-between px-3 py-3'} transition-all duration-200`}>
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-3'}`}>
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#0F9D58] text-sm font-semibold text-black">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent text-sm font-semibold text-accent-ink">
             CLA
           </div>
           {!collapsed && (
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-100">CLA Observability</p>
-              <p className="text-xs text-slate-500">AI monitoring</p>
+              <p className="text-sm font-semibold text-ink">CLA Admin</p>
+              <p className="text-xs text-muted">Operations workspace</p>
             </div>
           )}
         </div>
 
-        <motion.button
+        <button
           onClick={onToggle}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           title={collapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-950/70 text-slate-300 transition hover:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0F9D58]/40"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-surface text-muted transition hover:border-accent hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent-soft-strong"
         >
-          <ChevronLeft size={18} className={`transition-transform duration-200 ${collapsed ? 'rotate-180' : ''}`} />
-        </motion.button>
+          <ChevronLeft size={16} className={`transition-transform duration-200 ${collapsed ? 'rotate-180' : ''}`} />
+        </button>
       </div>
 
-      <nav className="mt-2 flex-1 space-y-1 px-1">
+      <nav className="mt-2 flex-1 space-y-1 px-2">
         {navItems.map((item) => {
           const Icon = item.icon;
           return (
             <NavLink
               key={item.to}
               to={item.to}
-              className={({ isActive }) => `group flex items-center gap-3 rounded-[10px] px-3 ${isActive ? 'border-l-4 border-lime-500 bg-slate-900 text-slate-100' : 'border-l-4 border-transparent text-slate-400 hover:bg-slate-950/80 hover:text-slate-100'} h-[46px] text-sm font-medium transition`}
+              end={item.to === '/'}
+              className={({ isActive }) => `group flex items-center gap-3 rounded-lg px-2.5 ${isActive ? 'bg-accent-soft text-accent' : 'text-muted hover:bg-surface-muted hover:text-ink'} h-[42px] text-sm font-medium transition`}
               aria-label={item.label}
             >
               {({ isActive }) => (
                 <>
-                  <div className={`flex h-10 w-10 min-w-[40px] items-center justify-center rounded-xl ${isActive ? 'bg-slate-900 text-lime-400' : 'bg-slate-950/80 text-slate-400 group-hover:bg-slate-900 group-hover:text-slate-100'}`}>
-                    <Icon size={20} />
+                  <div className={`flex h-8 w-8 min-w-[32px] items-center justify-center rounded-lg ${isActive ? 'text-accent' : 'text-muted group-hover:text-ink'}`}>
+                    <Icon size={18} />
                   </div>
                   {!collapsed && <span className="truncate">{item.label}</span>}
                 </>
@@ -63,23 +59,15 @@ export default function Sidebar({ collapsed, onToggle }) {
         })}
       </nav>
 
+      <div className={`border-t border-line px-3 py-3 ${collapsed ? 'flex justify-center' : ''}`}>
+        <ThemeToggle collapsed={collapsed} />
+      </div>
+
       {!collapsed && (
-        <div className="mt-auto space-y-3 border-t border-slate-800/70 px-3 py-3">
-          <div className="rounded-[10px] border border-slate-800/60 bg-slate-950/80 p-3 text-sm text-slate-300">
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Workspace</p>
-            <p className="mt-2 font-semibold text-slate-100">Infra Production</p>
-          </div>
-          <div className="rounded-[10px] border border-slate-800/60 bg-slate-950/80 p-3 text-sm text-slate-300">
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">System</p>
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <div>
-                <p className="font-semibold text-slate-100">All systems nominal</p>
-                <p className="text-xs text-slate-500">Latency 132 ms</p>
-              </div>
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-lime-500/15 text-lime-400">
-                <ShieldCheck size={16} />
-              </span>
-            </div>
+        <div className="space-y-3 px-3 pb-3">
+          <div className="rounded-lg border border-line bg-surface-muted p-3 text-sm text-ink">
+            <p className="text-xs uppercase tracking-[0.2em] text-muted">Workspace</p>
+            <p className="mt-2 font-semibold">Infra Production</p>
           </div>
         </div>
       )}

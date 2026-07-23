@@ -5,8 +5,7 @@ import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import OverviewPage from './pages/OverviewPage';
-import RagasPage from './pages/RagasPage';
-import MonitoringPages from './pages/MonitoringPages';
+import OnlineEvalPage from './pages/OnlineEvalPage';
 import SettingsPage from './pages/SettingsPage';
 import RequestDetailsPage from './pages/RequestDetailsPage';
 import GoldenDatasetPage from './pages/GoldenDatasetPage';
@@ -17,7 +16,7 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#05070A] text-slate-100 transition-colors duration-300">
+    <div className="relative min-h-screen overflow-hidden bg-canvas text-ink transition-colors duration-300">
       <div className="relative flex min-h-screen">
         <div className="hidden lg:block">
           <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((prev) => !prev)} />
@@ -25,7 +24,7 @@ export default function App() {
 
         <AnimatePresence>
           {mobileMenuOpen && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-30 bg-slate-950/45 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-30 bg-ink/45 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
           )}
         </AnimatePresence>
 
@@ -38,15 +37,12 @@ export default function App() {
         </AnimatePresence>
 
         <div className="flex min-h-screen flex-1 flex-col">
-          <Navbar title="Operations Dashboard" onMenuToggle={() => setMobileMenuOpen(true)} />
+          <Navbar onMenuToggle={() => setMobileMenuOpen(true)} />
           <main className="mx-auto flex-1 w-full max-w-[1680px] p-4 sm:p-5 lg:p-6">
             <Routes>
               <Route path="/" element={<OverviewPage />} />
-              <Route path="/ragas" element={<RagasPage />} />
+              <Route path="/online-eval" element={<OnlineEvalPage />} />
               <Route path="/golden-dataset" element={<GoldenDatasetPage />} />
-              <Route path="/portkey" element={<MonitoringPages page="portkey" />} />
-              <Route path="/langsmith" element={<MonitoringPages page="langsmith" />} />
-              <Route path="/logfire" element={<MonitoringPages page="logfire" />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/request/:requestId" element={<RequestDetailsPage />} />
               <Route path="*" element={<NotFoundPage />} />

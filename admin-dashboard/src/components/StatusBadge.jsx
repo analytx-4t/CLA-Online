@@ -1,13 +1,13 @@
 export default function StatusBadge({ status }) {
   const tone = {
-    Healthy: 'bg-[#0F9D58]/15 text-[#0F9D58]',
-    Review: 'bg-[#F59E0B]/15 text-[#F59E0B]',
-    Running: 'bg-[#38BDF8]/15 text-[#38BDF8]',
-    Completed: 'bg-[#0F9D58]/15 text-[#0F9D58]',
-    Warning: 'bg-[#F59E0B]/15 text-[#F59E0B]',
-    Critical: 'bg-[#EF4444]/15 text-[#EF4444]',
-    Info: 'bg-[#38BDF8]/15 text-[#38BDF8]',
-  }[status] || 'bg-slate-800 text-slate-200';
+    Healthy: 'bg-good/15 text-good',
+    Review: 'bg-warn-soft text-warn',
+    Running: 'bg-info-soft text-info',
+    Completed: 'bg-good/15 text-good',
+    Warning: 'bg-warn-soft text-warn',
+    Critical: 'bg-danger-soft text-danger',
+    Info: 'bg-info-soft text-info',
+  }[status] || 'bg-surface-strong text-muted';
 
-  return <span className={`inline-flex rounded-full border border-slate-800 px-2.5 py-1 text-[11px] font-semibold ${tone}`}>{status}</span>;
+  return <span className={`inline-flex rounded-full border border-line px-2.5 py-1 text-[11px] font-semibold ${tone}`}>{status}</span>;
 }

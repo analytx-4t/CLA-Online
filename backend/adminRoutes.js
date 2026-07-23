@@ -8,6 +8,7 @@ function setJsonHeaders(res, statusCode) {
 }
 
 const { handleGoldenDatasetRoutes } = require('./goldenDataset/routes');
+const { settings: llmSettings, getProviderHealth } = require('./config');
 
 function sendJson(res, statusCode, payload) {
   setJsonHeaders(res, statusCode);
@@ -139,6 +140,51 @@ async function handleAdminRoutes(req, res, db) {
     } catch (error) {
       setJsonHeaders(res, 500);
       res.end(JSON.stringify({ error: 'Unable to load admin overview.' }));
+    }
+
+    return true;
+  }
+
+  if (path === '/api/admin/settings' && req.method === 'GET') {
+    try {
+      const providerHealth = getProviderHealth();
+
+      setJsonHeaders(res, 200);
+      res.end(JSON.stringify({
+        llm: {
+          defaultProvider: llmSettings.DEFAULT_LLM_PROVIDER,
+          defaultModel: llmSettings.DEFAULT_LLM_MODEL,
+          providers: {
+            openai: { configured: providerHealth.openai.configured, model: llmSettings.OPENAI_MODEL || null },
+            deepseek: { configured: providerHealth.deepseek.configured, proModel: llmSettings.DEEPSEEK_PRO_MODEL || null, flashModel: llmSettings.DEEPSEEK_FLASH_MODEL || null },
+            gemini: { configured: providerHealth.gemini.configured, model: llmSettings.GEMINI_MODEL || null },
+            groq: { configured: providerHealth.groq.configured, llamaModel: llmSettings.GROQ_LLAMA_MODEL || null, mistralModel: llmSettings.GROQ_MISTRAL_MODEL || null },
+          },
+        },
+        gateway: {
+          portkeyConfigured: Boolean(process.env.PORTKEY_API_KEY),
+          configId: process.env.PORTKEY_CONFIG_ID || null,
+          retryConfigId: process.env.PORTKEY_RETRY_CONFIG_ID || null,
+          reliabilityConfigId: process.env.PORTKEY_RELIABILITY_CONFIG_ID || null,
+          cacheConfigId: process.env.PORTKEY_CACHE_CONFIG_ID || null,
+        },
+        observability: {
+          langsmithTracing: process.env.LANGSMITH_TRACING === 'true',
+          langsmithProject: process.env.LANGSMITH_PROJECT || null,
+          logfireConfigured: Boolean(process.env.LOGFIRE_TOKEN),
+        },
+        guardrails: {
+          active: true,
+          mode: 'LLM classification (Groq) with regex fallback chain',
+        },
+        database: {
+          name: process.env.MONGODB_DATABASE || null,
+          connected: Boolean(db),
+        },
+      }));
+    } catch (error) {
+      setJsonHeaders(res, 500);
+      res.end(JSON.stringify({ error: 'Unable to load settings.' }));
     }
 
     return true;

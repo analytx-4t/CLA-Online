@@ -1,27 +1,24 @@
-import { motion } from 'framer-motion';
-
-export default function MetricCard({ title, value, delta, trend, icon: Icon, accent, caption }) {
+export default function MetricCard({ title, value, delta, trend, icon: Icon, caption, compact }) {
   return (
-    <motion.div
-      whileHover={{ y: -2 }}
-      className="card group relative overflow-hidden border border-slate-800/80 bg-[#151C26]/95 px-4 py-4 shadow-panel min-h-[112px]"
-    >
+    <div className="group relative px-1 py-1 min-w-0">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{title}</p>
-          <p className="mt-2 text-[30px] font-semibold text-white sm:text-[34px]">{value}</p>
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">{title}</p>
+          <p className={`tnum mt-2 break-words font-semibold text-ink ${compact ? 'text-base leading-snug' : 'text-[28px] leading-none sm:text-[32px]'}`}>{value}</p>
         </div>
         {Icon && (
-          <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${accent || 'bg-slate-900 text-slate-300'}`}>
-            <Icon size={18} />
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
+            <Icon size={16} />
           </span>
         )}
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-slate-400">
-        {delta && <span className={`rounded-sm px-2 py-1 ${trend === 'down' ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>{delta}</span>}
-        {caption && <span>{caption}</span>}
-      </div>
-    </motion.div>
+      {(delta || caption) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-muted">
+          {delta && <span className={`tnum rounded-full px-2 py-0.5 font-medium ${trend === 'down' ? 'bg-danger-soft text-danger' : 'bg-good/15 text-good'}`}>{delta}</span>}
+          {caption && <span>{caption}</span>}
+        </div>
+      )}
+    </div>
   );
 }
