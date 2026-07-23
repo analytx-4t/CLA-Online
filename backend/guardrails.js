@@ -159,6 +159,7 @@ async function classifyWithLLM(text) {
     }],
     temperature: 0,
     maxTokens: 300,
+    metadata: { userQuestion: text },
   });
 
   return extractGuardrailJson(response.content);

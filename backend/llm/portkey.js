@@ -155,6 +155,8 @@ async function executeChatCompletionDirect({
           model,
           temperature,
           maxTokens,
+          messages: finalMessages,
+          metadata,
           requestContext,
 
           call: async () => {

@@ -154,7 +154,11 @@ async function ensureIndexes(db) {
     messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
     evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
     evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
-    evaluationResultsCollection.createIndex({ sessionId: 1 }, { name: 'eval_session_id' }),
+    evaluationResultsCollection.createIndex({ sessionId: 1 }, { name: 'eval_session_id' }).catch((error) => {
+      if (error?.codeName !== 'IndexKeySpecsConflict' && error?.code !== 86) {
+        throw error;
+      }
+    }),
     retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
     retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
     goldenDatasetCollection.createIndex({ version: 1 }, { name: 'golden_dataset_version' }),
@@ -1733,6 +1737,8 @@ async function startServer() {
                   provider,
                   model: payload.model || llm.defaultModel || 'default',
                   messageCount: payload.messages?.length || 0,
+                  messages: payload.messages || [],
+                  systemPrompt: payload.systemPrompt || '',
                   requestContext: req.requestContext,
 
                   generate: async () => {
