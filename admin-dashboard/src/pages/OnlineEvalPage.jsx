@@ -90,7 +90,7 @@ export default function OnlineEvalPage() {
       status: status === 'All' ? '' : status,
       provider: provider === 'All' ? '' : provider,
     });
-    const url = `http://127.0.0.1:3000/api/admin/ragas?${params.toString()}`;
+    const url = `/api/admin/ragas?${params.toString()}`;
 
     try {
       const response = await fetch(url);
@@ -113,7 +113,7 @@ export default function OnlineEvalPage() {
 
   const loadStats = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:3000/api/admin/ragas/stats');
+      const response = await fetch('/api/admin/ragas/stats');
       if (!response.ok) throw new Error('Unable to load stats.');
       const payload = await response.json();
       setStats(payload?.data || null);
@@ -130,7 +130,7 @@ export default function OnlineEvalPage() {
     setLoadingDetail(true);
     setSelectedRequestId(requestId);
     try {
-      const response = await fetch(`http://127.0.0.1:3000/api/admin/ragas/${requestId}`);
+      const response = await fetch(`/api/admin/ragas/${requestId}`);
       if (!response.ok) throw new Error('Unable to load evaluation details.');
       const payload = await response.json();
       setDetail(payload?.data || null);
@@ -162,7 +162,7 @@ export default function OnlineEvalPage() {
   }, [page, search, status, provider]);
 
   useEffect(() => {
-    const socket = io('http://127.0.0.1:3000', { transports: ['websocket'], reconnection: true, reconnectionAttempts: 5, reconnectionDelay: 1000 });
+    const socket = io('/', { transports: ['websocket', 'polling'], reconnection: true, reconnectionAttempts: 5, reconnectionDelay: 1000 });
     socketRef.current = socket;
 
     socket.on('ragas-evaluation-updated', (payload) => {

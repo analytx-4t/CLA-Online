@@ -62,7 +62,7 @@ export default function GoldenDatasetPage() {
   const loadDataset = useCallback(async ({ showLoader = false } = {}) => {
     if (showLoader) setLoading(true);
     try {
-      const response = await fetch('http://127.0.0.1:3000/api/admin/golden-dataset');
+      const response = await fetch('/api/admin/golden-dataset');
       const payload = await response.json();
       const dataset = Array.isArray(payload.records) ? payload.records : [];
       setRecords(dataset);
@@ -87,7 +87,7 @@ export default function GoldenDatasetPage() {
   const loadEvaluations = useCallback(async () => {
     try {
       setEvaluationsLoading(true);
-      const response = await fetch('http://127.0.0.1:3000/api/admin/golden-dataset/evaluations');
+      const response = await fetch('/api/admin/golden-dataset/evaluations');
       const payload = await response.json();
       const list = Array.isArray(payload.evaluations) ? payload.evaluations : [];
       setEvaluations(list);
@@ -198,7 +198,7 @@ export default function GoldenDatasetPage() {
 
     try {
       setUploading(true);
-      const response = await fetch('http://127.0.0.1:3000/api/admin/golden-dataset/upload', {
+      const response = await fetch('/api/admin/golden-dataset/upload', {
         method: 'POST',
         body: formData,
       });
@@ -223,7 +223,7 @@ export default function GoldenDatasetPage() {
     try {
       setUploading(true);
       stopPolling();
-      const response = await fetch('http://127.0.0.1:3000/api/admin/golden-dataset', {
+      const response = await fetch('/api/admin/golden-dataset', {
         method: 'DELETE',
       });
       const payload = await response.json();
@@ -244,7 +244,7 @@ export default function GoldenDatasetPage() {
   const handleRunEvaluation = async () => {
     try {
       setUploading(true);
-      const response = await fetch('http://127.0.0.1:3000/api/admin/golden-dataset/evaluate', {
+      const response = await fetch('/api/admin/golden-dataset/evaluate', {
         method: 'POST',
       });
       const payload = await response.json();

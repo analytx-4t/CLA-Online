@@ -34,7 +34,7 @@ export default function OverviewPage() {
       setLoading(true);
       setError(null);
       try {
-        const base = 'http://127.0.0.1:3000';
+        const base = '';
         const [overviewRes, settingsRes, portkeyRes, ragasRes] = await Promise.all([
           fetch(`${base}/api/admin/overview`),
           fetch(`${base}/api/admin/settings`),

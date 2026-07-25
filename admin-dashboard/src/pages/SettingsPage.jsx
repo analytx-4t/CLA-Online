@@ -54,7 +54,7 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/settings').catch(() => fetch('http://localhost:3000/api/admin/settings'));
+      const res = await fetch('/api/admin/settings');
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
       setData(await res.json());
     } catch (err) {
