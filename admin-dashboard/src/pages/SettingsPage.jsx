@@ -126,7 +126,7 @@ export default function SettingsPage() {
             <Row label="Status" value={data.guardrails.active ? 'Active' : 'Inactive'} tone={data.guardrails.active ? 'success' : 'danger'} />
             <Row label="Mode" value={data.guardrails.mode} />
             <Row label="Tracing (LangSmith)" value={data.observability.langsmithTracing ? 'Enabled' : 'Disabled'} tone={data.observability.langsmithTracing ? 'success' : 'neutral'} />
-            <Row label="Structured logging (Logfire)" value={data.observability.logfireConfigured ? 'Enabled' : 'Disabled'} tone={data.observability.logfireConfigured ? 'success' : 'neutral'} />
+            <Row label="NeMo Guardrail" value={data.guardrails.active ? 'Active' : 'Inactive'} tone={data.guardrails.active ? 'success' : 'danger'} />
           </SectionCard>
 
           <SectionCard icon={Database} title="Database" subtitle="Primary data store">

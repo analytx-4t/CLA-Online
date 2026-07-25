@@ -24,7 +24,6 @@ const {
   traceError,
 } = require('./langsmith');
 const { runFullEvaluation } = require('./llm/judge');
-const { traceLLMGeneration } = require('./langsmith');
 const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./responseParser');
 const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
 const { createRequestContext } = require('./requestContext');
@@ -80,16 +79,22 @@ function generateSessionId() {
 }
 
 function getRequestBody(req) {
+  if (req._parsedBody !== undefined) {
+    return Promise.resolve(req._parsedBody);
+  }
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
       if (!body) {
+        req._parsedBody = {};
         resolve({});
         return;
       }
       try {
-        resolve(JSON.parse(body));
+        const parsed = JSON.parse(body);
+        req._parsedBody = parsed;
+        resolve(parsed);
       } catch (error) {
         reject(error);
       }
@@ -248,6 +253,7 @@ function buildEvaluationResultDocument({
     judgeModel: evaluationData.judgeModel ?? null,
     judgeFallbackProvider: evaluationData.judgeFallbackProvider ?? null,
     judgeFallbackModel: evaluationData.judgeFallbackModel ?? null,
+    guardrailCategory: metadata?.guardrailCategory ?? null,
   };
   const scoredFaithfulness = evaluationData.faithfulness ?? null;
   const scoredAnswerRelevancy = evaluationData.answer_relevancy ?? evaluationData.answerRelevancy ?? null;
@@ -1956,6 +1962,47 @@ async function startServer() {
               console.log('[NeMo Guardrails] Action:', guardrailResult.action, 'Category:', guardrailResult.category);
               if (guardrailResult.action === 'RESPOND') {
                 console.log('[RAG Endpoint] Guardrail handled request. Skipping retrieval and generation.');
+
+                // Guardrail-blocked turns never reach retrieval/generation, so
+                // there's no context or answer to run RAGAS against — persist
+                // with a distinct 'blocked' status and null metrics instead of
+                // scoring nothing. Still recorded so every chatbot question
+                // (not just the ones that hit cache/DB) shows up in Online Eval.
+                try {
+                  const guardrailEvaluation = {
+                    faithfulness: null,
+                    faithfulnessReason: 'Guardrail blocked query: zero chunks retrieved.',
+                    contextPrecision: null,
+                    contextPrecisionReason: 'Guardrail blocked query: zero chunks retrieved.',
+                    contextRecall: null,
+                    contextRecallReason: 'Guardrail blocked query: zero chunks retrieved.',
+                    answerRelevancy: null,
+                    answerRelevancyReason: 'Guardrail blocked query: zero chunks retrieved.',
+                    piiLeakage: null,
+                    piiLeakageReason: 'Guardrail blocked query: zero chunks retrieved.',
+                    overallScore: null,
+                    status: 'blocked',
+                  };
+
+                  const guardrailDocument = buildEvaluationResultDocument({
+                    requestContext: req.requestContext,
+                    question: question.trim(),
+                    answer: guardrailResult.response || null,
+                    evaluation: guardrailEvaluation,
+                    provider: null,
+                    model: null,
+                    contexts: [],
+                    evaluationStatus: 'blocked',
+                    metadata: { guardrailCategory: guardrailResult.category || guardrailResult.route || null },
+                    source: requestSource,
+                  });
+                  persistEvaluationResult(db, guardrailDocument, io).catch((persistError) => {
+                    console.error('[RAG Endpoint] Failed to persist guardrail-blocked evaluation:', persistError);
+                  });
+                } catch (buildError) {
+                  console.error('[RAG Endpoint] Failed to build guardrail-blocked evaluation document:', buildError);
+                }
+
                 setJsonHeaders(res, 200);
                 res.end(JSON.stringify({
                   answer: guardrailResult.response || 'Your request cannot be processed.',

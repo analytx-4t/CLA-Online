@@ -3,10 +3,16 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { parseWorkbookBuffer } = require('./parser');
+const { runFullEvaluation } = require('../llm/judge');
 
 let inMemoryDataset = [];
 let rowStatusMap = new Map();
 let evaluationResults = [];
+// Tracks how many times a dataset file has been uploaded this server
+// session — deliberately NOT reset by clearGoldenDataset(), since it's a
+// running "uploads so far" counter, not part of the current dataset's
+// state. Like the rest of this module, it resets only on server restart.
+let totalUploadsCount = 0;
 let datasetState = {
   version: null,
   uploadedAt: null,
@@ -99,7 +105,7 @@ function postToAskEndpoint(question) {
   });
 }
 
-async function uploadDataset(buffer) {
+async function uploadDataset(buffer, db) {
   const records = parseWorkbookBuffer(buffer);
   const now = new Date();
   const version = createVersionStamp();
@@ -107,6 +113,7 @@ async function uploadDataset(buffer) {
   inMemoryDataset = [];
   evaluationResults = [];
   rowStatusMap = new Map();
+  totalUploadsCount += 1;
   datasetState = {
     version,
     uploadedAt: now.toISOString(),
@@ -134,6 +141,23 @@ async function uploadDataset(buffer) {
   datasetState.totalCount = inMemoryDataset.length;
   for (let index = 0; index < inMemoryDataset.length; index += 1) {
     rowStatusMap.set(String(index + 1), { status: 'uploaded', error: null });
+  }
+
+  if (db) {
+    try {
+      await db.collection('golden_dataset_records').deleteMany({});
+      await db.collection('golden_dataset_runs').deleteMany({});
+      if (inMemoryDataset.length > 0) {
+        await db.collection('golden_dataset_records').insertMany(inMemoryDataset.map((r, i) => ({ ...r, rowIndex: i + 1, version })));
+      }
+      await db.collection('golden_dataset_state').updateOne(
+        { _id: 'current_state' },
+        { $set: { state: datasetState, totalUploadsCount, updatedAt: new Date().toISOString() } },
+        { upsert: true }
+      );
+    } catch (err) {
+      console.warn('[Golden Dataset] Failed to persist uploaded dataset to DB:', err.message);
+    }
   }
 
   return {
@@ -232,11 +256,19 @@ function runEvaluationProcess(rows) {
   });
 }
 
-async function evaluatePreparedDataset({ onProgress, evaluationSessionId } = {}) {
+async function evaluatePreparedDataset({ onProgress, evaluationSessionId, db } = {}) {
   const preparedRows = await waitForPreparedDatasetReady();
   const total = preparedRows.length;
   const activeEvaluationSessionId = evaluationSessionId || createVersionStamp();
   const results = [];
+  evaluationResults = [];
+  if (db) {
+    try {
+      await db.collection('golden_dataset_runs').deleteMany({});
+    } catch (err) {
+      console.warn('[Golden Dataset] Failed to clear DB runs at eval start:', err.message);
+    }
+  }
   const evaluationStartedAt = Date.now();
 
   datasetState.evaluationInProgress = true;
@@ -248,30 +280,34 @@ async function evaluatePreparedDataset({ onProgress, evaluationSessionId } = {})
 
   for (let index = 0; index < preparedRows.length; index += 1) {
     const row = await generateDatasetRow(index);
-    let evaluationPayload;
+    let evalResult;
     if (process.env.GOLDEN_DATASET_EVALUATION_MOCK === '1') {
-      evaluationPayload = [{
+      evalResult = {
         faithfulness: 0.92,
-        answer_relevancy: 0.9,
-        context_precision: 0.88,
-        context_recall: 0.86,
-        answer_correctness: 0.9,
-        overall_score: 0.89,
-      }];
+        answerRelevancy: 0.9,
+        contextPrecision: 0.88,
+        contextRecall: 0.86,
+        overallScore: 0.89,
+        status: 'completed',
+      };
     } else if (rowStatusMap.get(String(index + 1))?.status === 'failed') {
-      evaluationPayload = { status: 'failed', error: rowStatusMap.get(String(index + 1))?.error || 'Generation failed' };
+      evalResult = { status: 'failed', errors: [rowStatusMap.get(String(index + 1))?.error || 'Generation failed'] };
     } else {
-      evaluationPayload = await runEvaluationProcess([row]);
+      try {
+        evalResult = await runFullEvaluation({
+          question: row.question,
+          answer: row.answer,
+          contexts: row.contexts,
+          groundTruth: row.reference || null,
+        });
+      } catch (evalErr) {
+        console.error('[Golden Dataset] Evaluation failed for row:', evalErr);
+        evalResult = { status: 'failed', errors: [evalErr?.message || 'Evaluation failed'] };
+      }
     }
-    const evaluationFailure = evaluationPayload && typeof evaluationPayload === 'object' && (evaluationPayload.status === 'failed' || evaluationPayload.error);
-    const evaluationFailureMessage = evaluationFailure ? evaluationPayload.error || null : null;
+
+    const evaluationFailure = evalResult?.status === 'failed';
     const timestamp = new Date().toISOString();
-    const evaluationRow = Array.isArray(evaluationPayload) ? evaluationPayload[0] || {} : {};
-    const rowStatus = evaluationFailure
-      ? 'failed'
-      : evaluationRow?.status === 'failed' || evaluationRow?.error
-        ? 'failed'
-        : 'completed';
     const completedRows = index + 1;
     const elapsedMs = Date.now() - evaluationStartedAt;
     const averageMsPerRow = completedRows > 0 ? elapsedMs / completedRows : 0;
@@ -286,20 +322,29 @@ async function evaluatePreparedDataset({ onProgress, evaluationSessionId } = {})
       chatbotAnswer: row.answer || null,
       contexts: Array.isArray(row.contexts) ? row.contexts : [],
       retrievedChunks: Array.isArray(row.contexts) ? row.contexts : [],
-      faithfulness: evaluationRow?.faithfulness ?? null,
-      answerRelevancy: evaluationRow?.answer_relevancy ?? evaluationRow?.answerRelevancy ?? null,
-      contextPrecision: evaluationRow?.context_precision ?? evaluationRow?.contextPrecision ?? null,
-      contextRecall: evaluationRow?.context_recall ?? evaluationRow?.contextRecall ?? null,
-      answerCorrectness: evaluationRow?.answer_correctness ?? evaluationRow?.answerCorrectness ?? null,
-      overallScore: evaluationRow?.overall_score ?? evaluationRow?.overallScore ?? null,
+      faithfulness: evalResult?.faithfulness ?? null,
+      answerRelevancy: evalResult?.answerRelevancy ?? null,
+      contextPrecision: evalResult?.contextPrecision ?? null,
+      contextRecall: evalResult?.contextRecall ?? null,
+      answerCorrectness: evalResult?.overallScore ?? evalResult?.answerRelevancy ?? null,
+      overallScore: evalResult?.overallScore ?? null,
       timestamp,
-      status: rowStatus,
-      error: rowStatus === 'failed' ? evaluationRow?.error || evaluationFailureMessage : null,
+      status: evaluationFailure ? 'failed' : 'completed',
+      error: evaluationFailure ? (evalResult?.errors?.join('; ') || 'Evaluation failed') : null,
       evaluationSessionId: activeEvaluationSessionId,
     };
 
     results.push(rowResult);
     evaluationResults.push(rowResult);
+
+    if (db) {
+      try {
+        await db.collection('golden_dataset_runs').insertOne({ ...rowResult });
+      } catch (dbErr) {
+        console.warn('[Golden Dataset] Failed to insert golden_dataset_run to DB:', dbErr.message);
+      }
+    }
+
     onProgress?.({
       current: completedRows,
       currentRow: completedRows,
@@ -322,6 +367,18 @@ async function evaluatePreparedDataset({ onProgress, evaluationSessionId } = {})
   datasetState.lastEvaluationCompletedAt = new Date().toISOString();
   datasetState.generationStatus = 'completed';
 
+  if (db) {
+    try {
+      await db.collection('golden_dataset_state').updateOne(
+        { _id: 'current_state' },
+        { $set: { state: datasetState, updatedAt: new Date().toISOString() } },
+        { upsert: true }
+      );
+    } catch (dbErr) {
+      console.warn('[Golden Dataset] Failed to update golden_dataset_state in DB:', dbErr.message);
+    }
+  }
+
   return {
     status: failedCount === results.length && results.length > 0 ? 'failed' : 'completed',
     total: results.length,
@@ -332,15 +389,76 @@ async function evaluatePreparedDataset({ onProgress, evaluationSessionId } = {})
   };
 }
 
-async function listGoldenDataset() {
-  return getPreparedDatasetRows();
+async function listGoldenDataset(db) {
+  const prepared = getPreparedDatasetRows();
+  if (prepared.length > 0) {
+    return prepared;
+  }
+  if (db) {
+    try {
+      const docs = await db.collection('golden_dataset_records').find({}).toArray();
+      if (docs.length > 0) {
+        return docs.map((doc) => ({
+          question: doc.question || null,
+          answer: doc.answer || null,
+          reference: doc.reference || null,
+          contexts: Array.isArray(doc.contexts) ? doc.contexts : [],
+        }));
+      }
+    } catch (err) {
+      console.warn('[Golden Dataset] Failed to read golden_dataset_records from db:', err.message);
+    }
+  }
+  return prepared;
 }
 
-async function listGoldenDatasetEvaluations() {
-  return evaluationResults.map((row) => ({
-    ...row,
-    contexts: Array.isArray(row.contexts) ? row.contexts : [],
-  }));
+async function listGoldenDatasetEvaluations(db) {
+  const mapEvalRow = (item) => {
+    const faithfulness = item.faithfulness ?? item.ragasMetrics?.faithfulness ?? null;
+    const answerRelevancy = item.answerRelevancy ?? item.answer_relevancy ?? item.ragasMetrics?.answerRelevancy ?? item.ragasMetrics?.answer_relevancy ?? null;
+    const contextPrecision = item.contextPrecision ?? item.context_precision ?? item.ragasMetrics?.contextPrecision ?? item.ragasMetrics?.context_precision ?? null;
+    const contextRecall = item.contextRecall ?? item.context_recall ?? item.ragasMetrics?.contextRecall ?? item.ragasMetrics?.context_recall ?? null;
+    const answerCorrectness = item.answerCorrectness ?? item.answer_correctness ?? item.ragasMetrics?.answerCorrectness ?? item.ragasMetrics?.answer_correctness ?? null;
+    let overallScore = item.overallScore ?? item.overall_score ?? item.ragasMetrics?.overallScore ?? null;
+
+    if (overallScore === null && (faithfulness !== null || answerRelevancy !== null)) {
+      const vals = [faithfulness, answerRelevancy, contextPrecision, contextRecall].filter((v) => typeof v === 'number');
+      if (vals.length > 0) {
+        overallScore = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100;
+      }
+    }
+
+    return {
+      id: item._id?.toString() || item.id || null,
+      question: item.question || null,
+      status: item.status || 'completed',
+      faithfulness,
+      answerRelevancy,
+      contextPrecision,
+      contextRecall,
+      answerCorrectness: answerCorrectness ?? overallScore,
+      overallScore,
+      retrievedChunks: Array.isArray(item.retrievedChunks) && item.retrievedChunks.length ? item.retrievedChunks : (Array.isArray(item.contexts) ? item.contexts : []),
+      contexts: Array.isArray(item.contexts) && item.contexts.length ? item.contexts : (Array.isArray(item.retrievedChunks) ? item.retrievedChunks : []),
+      chatbotAnswer: item.chatbotAnswer || item.generatedAnswer || item.generated_answer || item.answer || null,
+      referenceAnswer: item.referenceAnswer || item.reference_answer || item.reference || null,
+      timestamp: item.timestamp || null,
+      evaluationSessionId: item.evaluationSessionId || null,
+      error: item.error || null,
+    };
+  };
+
+  if (db) {
+    try {
+      const docs = await db.collection('golden_dataset_runs').find({}).sort({ timestamp: -1 }).toArray();
+      if (docs.length > 0) {
+        return docs.map(mapEvalRow);
+      }
+    } catch (err) {
+      console.warn('[Golden Dataset] Failed to read golden_dataset_runs from db:', err.message);
+    }
+  }
+  return evaluationResults.map(mapEvalRow);
 }
 
 async function getGoldenDatasetById(id) {
@@ -362,7 +480,7 @@ async function getGoldenDatasetById(id) {
   };
 }
 
-async function clearGoldenDataset() {
+async function clearGoldenDataset(db) {
   const deletedCount = inMemoryDataset.length;
   inMemoryDataset = [];
   rowStatusMap = new Map();
@@ -382,11 +500,31 @@ async function clearGoldenDataset() {
     evaluationStartedAt: null,
   };
 
+  if (db) {
+    try {
+      await db.collection('golden_dataset_records').deleteMany({});
+      await db.collection('golden_dataset_runs').deleteMany({});
+      await db.collection('golden_dataset_state').deleteMany({});
+    } catch (err) {
+      console.warn('[Golden Dataset] Failed to clear DB collections:', err.message);
+    }
+  }
+
   return { deletedCount };
 }
 
-async function getDatasetState() {
-  return { ...datasetState };
+async function getDatasetState(db) {
+  if (!datasetState.version && db) {
+    try {
+      const stateDoc = await db.collection('golden_dataset_state').findOne({ _id: 'current_state' });
+      if (stateDoc) {
+        datasetState = { ...stateDoc.state };
+      }
+    } catch (err) {
+      console.warn('[Golden Dataset] Failed to read dataset state from db:', err.message);
+    }
+  }
+  return { ...datasetState, totalUploadsCount };
 }
 
 module.exports = {

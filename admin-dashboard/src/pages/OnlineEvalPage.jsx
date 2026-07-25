@@ -9,11 +9,11 @@ import Drawer from '../components/Drawer';
 import MetricCard from '../components/MetricCard';
 import MarkdownContent from '../components/MarkdownContent';
 
-const statusOptions = ['All', 'completed', 'failed'];
+const statusOptions = ['All', 'completed', 'blocked', 'failed'];
 const providerOptions = ['All', 'groq', 'openai', 'gemini', 'deepseek'];
 
 function formatMetric(value) {
-  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Nil';
   return `${Number(value).toFixed(2)}`;
 }
 
@@ -25,14 +25,37 @@ function formatTimestamp(value) {
 }
 
 function formatPercent(value) {
-  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Nil';
   return `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+// The judge scores PII Leakage inverted from every other metric — 1.00 is
+// the clean/no-leak baseline and each detected leak subtracts from it (see
+// eval_agent.md, "## 5. PII Leakage": "Base is 1.00 and each leak
+// subtracts"). Displaying that raw score under a column literally called
+// "PII Leakage" reads backwards — a safe answer would show "100%", implying
+// maximum leakage. Flip it here so 0% always means "nothing leaked".
+function formatLeakagePercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Nil';
+  return formatPercent(1 - Number(value));
+}
+
+function formatLeakageMetric(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Nil';
+  return formatMetric(1 - Number(value));
 }
 
 function getStatusTone(status) {
   if (status === 'failed') return 'danger';
   if (status === 'completed') return 'success';
+  if (status === 'blocked') return 'info';
   return 'neutral';
+}
+
+function omitTimings(metadata) {
+  if (!metadata || typeof metadata !== 'object') return {};
+  const { retrievalTime, llmTime, ...rest } = metadata;
+  return rest;
 }
 
 export default function OnlineEvalPage() {
@@ -168,59 +191,55 @@ export default function OnlineEvalPage() {
   const filteredRows = useMemo(() => rows, [rows]);
 
   const columns = [
-    { header: 'Timestamp', accessor: 'timestamp', width: '170px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{formatTimestamp(row.timestamp)}</span> },
-    { header: 'Request ID', accessor: 'requestId', width: '130px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.requestId || '—'}</span> },
-    { header: 'Question', accessor: 'question', width: '260px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.question || '—'}</span> },
-    { header: 'Provider', accessor: 'provider', width: '100px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.provider || '—'}</span> },
-    { header: 'Model', accessor: 'model', width: '140px', render: (row) => <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{row.model || '—'}</span> },
-    { header: 'Overall Score', accessor: 'overallScore', width: '110px', render: (row) => <span className="tnum font-semibold text-ink">{formatMetric(row.overallScore)}</span> },
-    { header: 'Status', accessor: 'evaluationStatus', width: '100px', render: (row) => <StatusPill label={(row.evaluationStatus || 'unknown').toUpperCase()} tone={getStatusTone(row.evaluationStatus)} /> },
-    { header: 'Actions', accessor: 'action', width: '90px', render: (row) => <button onClick={() => loadDetail(row.requestId)} className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-accent">View <ChevronRight size={14} /></button> },
+    { header: 'Timestamp', accessor: 'timestamp', width: '10%', render: (row) => formatTimestamp(row.timestamp) },
+    { header: 'Question', accessor: 'question', width: '18%', render: (row) => row.question || '—' },
+    { header: 'Model', accessor: 'model', width: '9%', render: (row) => row.model || '—' },
+    
+    { header: 'Faithfulness', accessor: 'faithfulness', width: '7%', render: (row) => <span className="tnum">{formatMetric(row.faithfulness)}</span> },
+    { header: 'Answer Relevancy', accessor: 'answerRelevancy', width: '7%', render: (row) => <span className="tnum">{formatMetric(row.answerRelevancy)}</span> },
+    { header: 'Context Recall', accessor: 'contextRecall', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.contextRecall)}</span> },
+    { header: 'Context Precision', accessor: 'contextPrecision', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.contextPrecision)}</span> },
+    { header: 'PII Leakage', accessor: 'piiLeakage', width: '8%', render: (row) => <span className="tnum">{formatLeakageMetric(row.piiLeakage)}</span> },
+    { header: 'Status', accessor: 'evaluationStatus', width: '9%', render: (row) => <StatusPill label={(row.evaluationStatus || 'unknown').toUpperCase()} tone={getStatusTone(row.evaluationStatus)} /> },
+    { header: 'Actions', accessor: 'action', width: '9%', render: (row) => <button onClick={(e) => { e.stopPropagation(); loadDetail(row.requestId); }} className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-accent">View <ChevronRight size={14} /></button> },
   ];
 
   return (
     <div className="space-y-4">
-      <section className="card p-4">
-        <div className="flex flex-col gap-2 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-muted">Evaluation workspace</p>
-            <h2 className="mt-2 text-2xl font-semibold text-ink">Online Evaluation</h2>
-            <p className="mt-1 text-sm text-muted">Live quality scoring of production requests, evaluated as they happen.</p>
-          </div>
-          <div className="flex w-full max-w-sm items-center gap-2 xl:w-auto">
-            <SearchBox value={search} onChange={setSearch} placeholder="Search evaluations" />
-            <button onClick={() => loadData({ showLoader: false, refresh: true })} disabled={refreshing} className="inline-flex items-center justify-center rounded-lg border border-line bg-surface p-2.5 text-muted transition hover:border-accent hover:text-accent disabled:opacity-60">
-              <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <FilterBar>
-            <div className="flex items-center gap-2 text-sm text-ink"><Filter size={16} /><span>Status</span></div>
-            <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className="rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none">
-              {statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-          </FilterBar>
-          <FilterBar>
-            <div className="flex items-center gap-2 text-sm text-ink"><Filter size={16} /><span>Provider</span></div>
-            <select value={provider} onChange={(e) => { setProvider(e.target.value); setPage(1); }} className="rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none">
-              {providerOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-          </FilterBar>
-        </div>
-      </section>
-
       <section className="space-y-4">
-        <div className="card grid grid-cols-2 gap-x-4 gap-y-5 p-4 sm:grid-cols-5 divide-x divide-line">
+        <div className="card grid grid-cols-2 gap-x-4 gap-y-5 p-4 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-line">
           <MetricCard title="Total Evaluations" value={stats?.totalEvaluations ?? '—'} caption="All saved" />
-          <div className="pl-4"><MetricCard title="Overall" value={stats ? formatPercent(stats.avgOverallScore) : '—'} /></div>
           <div className="pl-4"><MetricCard title="Faithfulness" value={stats ? formatPercent(stats.avgFaithfulness) : '—'} /></div>
-          <div className="pl-4"><MetricCard title="Relevancy" value={stats ? formatPercent(stats.avgAnswerRelevancy) : '—'} /></div>
-          <div className="pl-4"><MetricCard title="PII Leakage" value={stats ? formatPercent(stats.avgPiiLeakage) : '—'} /></div>
+          <div className="pl-4"><MetricCard title="Answer Relevancy" value={stats ? formatPercent(stats.avgAnswerRelevancy) : '—'} /></div>
+          <div className="pl-4"><MetricCard title="Context Precision" value={stats ? formatPercent(stats.avgContextPrecision) : '—'} /></div>
+          <div className="pl-4"><MetricCard title="Context Recall" value={stats ? formatPercent(stats.avgContextRecall) : '—'} /></div>
+          <div className="pl-4"><MetricCard title="PII Leakage" value={stats ? formatLeakagePercent(stats.avgPiiLeakage) : '—'} /></div>
         </div>
 
         <div className="card overflow-hidden p-3">
+          <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-1 items-center gap-2">
+              <SearchBox value={search} onChange={setSearch} placeholder="Search evaluations" />
+              <button onClick={() => loadData({ showLoader: false, refresh: true })} disabled={refreshing} className="inline-flex items-center justify-center rounded-lg border border-line bg-surface p-2.5 text-muted transition hover:border-accent hover:text-accent disabled:opacity-60">
+                <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterBar>
+                <div className="flex items-center gap-2 text-sm text-ink"><Filter size={16} /><span>Status</span></div>
+                <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className="rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none">
+                  {statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </FilterBar>
+              <FilterBar>
+                <div className="flex items-center gap-2 text-sm text-ink"><Filter size={16} /><span>Provider</span></div>
+                <select value={provider} onChange={(e) => { setProvider(e.target.value); setPage(1); }} className="rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none">
+                  {providerOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </FilterBar>
+            </div>
+          </div>
+
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-10 animate-pulse rounded-lg bg-surface-muted" />)}
@@ -235,9 +254,7 @@ export default function OnlineEvalPage() {
             <div className="rounded-lg border border-dashed border-line bg-surface-muted p-6 text-center text-sm text-muted">No evaluations available yet.</div>
           ) : (
             <>
-              <div className="w-full overflow-x-auto">
-                <DataTable columns={columns} rows={filteredRows} onRowClick={(row) => loadDetail(row.requestId)} />
-              </div>
+              <DataTable columns={columns} rows={filteredRows} onRowClick={(row) => loadDetail(row.requestId)} fit maxHeight="380px" />
               <div className="mt-3 flex flex-col gap-2 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
                 <span>Page {page} of {totalPages}</span>
                 <div className="flex items-center gap-2">
@@ -285,28 +302,24 @@ export default function OnlineEvalPage() {
                 <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Metrics</p>
                 <div className="mt-2 space-y-3 text-sm text-ink">
                   {[
-                    ['Faithfulness', detail.faithfulness, detail.faithfulnessReason],
-                    ['Answer Relevancy', detail.answerRelevancy, detail.answerRelevancyReason],
-                    ['Context Precision', detail.contextPrecision, detail.contextPrecisionReason],
-                    ['Context Recall', detail.contextRecall, detail.contextRecallReason],
-                    ['PII Leakage', detail.piiLeakage, detail.piiLeakageReason],
-                  ].map(([label, value, reason]) => (
+                    ['Faithfulness', detail.faithfulness, detail.faithfulnessReason, formatMetric],
+                    ['Answer Relevancy', detail.answerRelevancy, detail.answerRelevancyReason, formatMetric],
+                    ['Context Precision', detail.contextPrecision, detail.contextPrecisionReason, formatMetric],
+                    ['Context Recall', detail.contextRecall, detail.contextRecallReason, formatMetric],
+                    ['PII Leakage', detail.piiLeakage, detail.piiLeakageReason, formatLeakageMetric],
+                  ].map(([label, value, reason, format]) => (
                     <div key={label} className="border-b border-line pb-2 last:border-0 last:pb-0">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-muted">{label}</span>
-                        <span className="tnum font-semibold">{formatMetric(value)}</span>
+                        <span className="tnum font-semibold">{format(value)}</span>
                       </div>
                       {reason && <p className="mt-1 text-xs leading-relaxed text-muted">{reason}</p>}
                     </div>
                   ))}
-                  <div className="flex items-center justify-between gap-2 pt-1">
-                    <span className="font-medium text-ink">Overall Score</span>
-                    <span className="tnum font-semibold text-accent">{formatMetric(detail.overallScore)}</span>
-                  </div>
                 </div>
               </div>
               <div className="rounded-lg bg-surface-muted p-3">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Evaluation</p>
+                <p className="text-[10px] uppercase tracking-[0.24em] text-muted">LLM Response</p>
                 <div className="mt-2 space-y-2 text-sm text-ink">
                   <div className="flex items-center justify-between gap-2"><span className="text-muted">Provider</span><span className="font-semibold">{detail.provider || '—'}</span></div>
                   <div className="flex items-center justify-between gap-2"><span className="text-muted">Model</span><span className="font-semibold">{detail.model || '—'}</span></div>
@@ -318,7 +331,7 @@ export default function OnlineEvalPage() {
               </div>
               <div className="rounded-lg bg-surface-muted p-3">
                 <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Metadata</p>
-                <pre className="mt-2 whitespace-pre-wrap text-sm text-ink">{JSON.stringify(detail.metadata || {}, null, 2)}</pre>
+                <pre className="mt-2 whitespace-pre-wrap text-sm text-ink">{JSON.stringify(omitTimings(detail.metadata), null, 2)}</pre>
               </div>
               <div className="rounded-lg bg-surface-muted p-3">
                 <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Suggestions</p>

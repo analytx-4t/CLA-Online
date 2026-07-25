@@ -34,7 +34,7 @@ export default function ThemeToggle({ collapsed }) {
       onClick={toggle}
       aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-      className={`flex items-center gap-2 rounded-lg border border-line bg-surface-muted text-muted transition hover:border-accent hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent-soft-strong ${collapsed ? 'h-9 w-9 justify-center' : 'w-full px-3 py-2 text-sm font-medium'}`}
+      className={`flex items-center gap-2 rounded-lg border border-sidebar-line bg-sidebar-muted-bg text-sidebar-muted transition hover:border-accent hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent-soft-strong ${collapsed ? 'h-9 w-9 justify-center' : 'w-full px-3 py-2 text-sm font-medium'}`}
     >
       {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
       {!collapsed && <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>}

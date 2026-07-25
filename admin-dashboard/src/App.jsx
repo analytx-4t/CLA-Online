@@ -18,9 +18,10 @@ export default function App() {
   return (
     <div className="relative min-h-screen overflow-hidden bg-canvas text-ink transition-colors duration-300">
       <div className="relative flex min-h-screen">
-        <div className="hidden lg:block">
-          <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((prev) => !prev)} />
-        </div>
+        <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((prev) => !prev)} fixed />
+        {/* Reserves the fixed sidebar's width in the flex row so the main
+            column doesn't render underneath it. */}
+        <div className={`hidden lg:block flex-shrink-0 transition-all duration-200 ease-in-out ${sidebarCollapsed ? 'w-[84px]' : 'w-[260px]'}`} aria-hidden="true" />
 
         <AnimatePresence>
           {mobileMenuOpen && (

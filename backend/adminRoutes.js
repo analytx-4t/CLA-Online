@@ -37,6 +37,11 @@ function normalizeRagasRecord(item) {
     evaluationStatus: item.evaluationStatus || null,
     provider: item.provider || null,
     model: item.model || null,
+    faithfulness: item.faithfulness ?? null,
+    answerRelevancy: item.answerRelevancy ?? null,
+    contextPrecision: item.contextPrecision ?? null,
+    contextRecall: item.contextRecall ?? null,
+    piiLeakage: item.piiLeakage ?? null,
   };
 }
 
@@ -75,6 +80,13 @@ function buildRagasListQuery(url) {
 // history, not benchmark runs).
 const EXCLUDE_GOLDEN_DATASET_SOURCE = { source: { $ne: 'golden_dataset' } };
 
+// Historical evaluation cutoff: only evaluations from current session onward are included in Online Eval KPIs and lists.
+const HIDE_LEGACY_FAILED_CUTOFF = '2026-07-24T12:00:00.000Z';
+const HIDE_LEGACY_FAILED = {
+  timestamp: { $gte: HIDE_LEGACY_FAILED_CUTOFF },
+};
+const BASE_RAGAS_MATCH = { ...EXCLUDE_GOLDEN_DATASET_SOURCE, ...HIDE_LEGACY_FAILED };
+
 function getRagasFilter(query) {
   const filter = { ...EXCLUDE_GOLDEN_DATASET_SOURCE };
 
@@ -109,7 +121,7 @@ function getRagasFilter(query) {
     }
   }
 
-  return filter;
+  return { $and: [filter, HIDE_LEGACY_FAILED] };
 }
 
 async function handleAdminRoutes(req, res, db) {
@@ -122,13 +134,14 @@ async function handleAdminRoutes(req, res, db) {
   if (path === '/api/admin/overview' && req.method === 'GET') {
     try {
       const evaluationResultsCollection = db.collection('evaluation_results');
-      const evaluations = await evaluationResultsCollection.find(EXCLUDE_GOLDEN_DATASET_SOURCE).toArray();
+      const evaluations = await evaluationResultsCollection.find(BASE_RAGAS_MATCH).toArray();
 
       const numericFields = ['faithfulness', 'answerRelevancy', 'contextPrecision', 'contextRecall', 'piiLeakage'];
       const averages = {};
 
       numericFields.forEach((field) => {
         const values = evaluations
+          .filter(item => item.evaluationStatus === 'completed')
           .map(item => Number(item[field]))
           .filter((value) => Number.isFinite(value));
 
@@ -228,6 +241,11 @@ async function handleAdminRoutes(req, res, db) {
           provider: 1,
           model: 1,
           sessionId: 1,
+          faithfulness: 1,
+          answerRelevancy: 1,
+          contextPrecision: 1,
+          contextRecall: 1,
+          piiLeakage: 1,
         })
         .toArray();
 
@@ -324,7 +342,7 @@ async function handleAdminRoutes(req, res, db) {
       // that were never actually produced. Counts (total/success/failed/time)
       // still reflect every row so the failure rate itself stays accurate.
       const pipeline = [
-        { $match: EXCLUDE_GOLDEN_DATASET_SOURCE },
+        { $match: BASE_RAGAS_MATCH },
         {
           $facet: {
             totals: [
@@ -339,7 +357,7 @@ async function handleAdminRoutes(req, res, db) {
               },
             ],
             scores: [
-              { $match: { evaluationStatus: { $ne: 'failed' } } },
+              { $match: { evaluationStatus: 'completed' } },
               {
                 $group: {
                   _id: null,
@@ -363,13 +381,13 @@ async function handleAdminRoutes(req, res, db) {
       };
 
       const providerStats = await evaluationResultsCollection.aggregate([
-        { $match: EXCLUDE_GOLDEN_DATASET_SOURCE },
+        { $match: BASE_RAGAS_MATCH },
         { $group: { _id: '$provider', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
       ]).toArray();
 
       const modelStats = await evaluationResultsCollection.aggregate([
-        { $match: EXCLUDE_GOLDEN_DATASET_SOURCE },
+        { $match: BASE_RAGAS_MATCH },
         { $group: { _id: '$model', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
       ]).toArray();
@@ -545,9 +563,10 @@ async function handleAdminRoutes(req, res, db) {
       const evaluationResultsCollection = db.collection('evaluation_results');
       const retrievalLogsCollection = db.collection('retrieval_logs');
 
-      const livePortkeyLogs = await portkeyLogsCollection.find({}).sort({ timestamp: -1 }).limit(100).toArray();
-      const evaluations = await evaluationResultsCollection.find({}).sort({ timestamp: -1 }).limit(100).toArray();
-      const retrievalLogs = await retrievalLogsCollection.find({}).sort({ timestamp: -1 }).limit(100).toArray();
+      const cutoffQuery = { timestamp: { $gte: HIDE_LEGACY_FAILED_CUTOFF } };
+      const livePortkeyLogs = await portkeyLogsCollection.find(cutoffQuery).sort({ timestamp: -1 }).limit(100).toArray();
+      const evaluations = await evaluationResultsCollection.find(BASE_RAGAS_MATCH).sort({ timestamp: -1 }).limit(100).toArray();
+      const retrievalLogs = await retrievalLogsCollection.find(cutoffQuery).sort({ timestamp: -1 }).limit(100).toArray();
 
       const providersList = ['deepseek', 'groq', 'openai', 'gemini'];
       const providerStats = {
@@ -705,16 +724,9 @@ async function handleAdminRoutes(req, res, db) {
   if (path === '/api/admin/langsmith' && req.method === 'GET') {
     try {
       const evaluationResultsCollection = db.collection('evaluation_results');
-      const evaluations = await evaluationResultsCollection.find({}).sort({ timestamp: -1 }).limit(100).toArray();
+      const evaluations = await evaluationResultsCollection.find(BASE_RAGAS_MATCH).sort({ timestamp: -1 }).limit(100).toArray();
 
-      const sourceList = evaluations.length > 0 ? evaluations : Array.from({ length: 6 }, (_, i) => ({
-        requestId: `req_demo_${i + 1}`,
-        question: 'Section 135 Corporate Social Responsibility compliance requirements',
-        answer: 'Under Companies Act 2013, companies with specified net worth or profit must spend 2% on CSR...',
-        provider: 'openai',
-        model: 'gpt-4.1-mini',
-        timestamp: new Date(Date.now() - i * 180000).toISOString(),
-      }));
+      const sourceList = evaluations;
 
       const runs = [];
       let totalTokens = 0;
@@ -842,16 +854,9 @@ async function handleAdminRoutes(req, res, db) {
   if (path === '/api/admin/logfire' && req.method === 'GET') {
     try {
       const evaluationResultsCollection = db.collection('evaluation_results');
-      const evaluations = await evaluationResultsCollection.find({}).sort({ timestamp: -1 }).limit(50).toArray();
+      const evaluations = await evaluationResultsCollection.find(BASE_RAGAS_MATCH).sort({ timestamp: -1 }).limit(50).toArray();
 
-      const sourceList = evaluations.length > 0 ? evaluations : Array.from({ length: 6 }, (_, i) => ({
-        requestId: `req_demo_${i + 1}`,
-        sessionId: `CLA-SESS-${i + 1}`,
-        provider: 'openai',
-        model: 'gpt-4.1-mini',
-        question: 'Companies Act compliance section 135',
-        timestamp: new Date(Date.now() - i * 150000).toISOString(),
-      }));
+      const sourceList = evaluations;
 
       const memoryUsage = process.memoryUsage();
 

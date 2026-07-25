@@ -65,3 +65,18 @@ def run_ragas(
         )
 
     return results
+
+
+if __name__ == '__main__':
+    import json
+    import sys
+
+    try:
+        raw_input = sys.stdin.read()
+        payload = json.loads(raw_input) if raw_input and raw_input.strip() else {}
+        dataset = payload.get('dataset', [])
+        results = run_ragas(dataset)
+        print(json.dumps({'status': 'completed', 'results': results}))
+    except Exception as exc:
+        print(json.dumps({'status': 'failed', 'error': str(exc)}))
+

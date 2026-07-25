@@ -10,20 +10,14 @@ function setJsonHeaders(res, statusCode) {
   });
 }
 
-function writeSseEvent(res, eventName, payload) {
-  res.write(`event: ${eventName}\n`);
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
-}
-
 async function handleGoldenDatasetRoutes(req, res, db) {
   const requestUrl = new URL(req.url, 'http://localhost');
   const path = requestUrl.pathname || '/';
-  const stream = requestUrl.searchParams.get('stream') === 'true' || (req.headers.accept || '').includes('text/event-stream');
 
   if (path === '/api/admin/golden-dataset' && req.method === 'GET') {
     try {
-      const records = await listGoldenDataset();
-      const state = await getDatasetState();
+      const records = await listGoldenDataset(db);
+      const state = await getDatasetState(db);
       setJsonHeaders(res, 200);
       res.end(JSON.stringify({
         records,
@@ -34,6 +28,7 @@ async function handleGoldenDatasetRoutes(req, res, db) {
         totalCount: state?.totalCount ?? records.length,
         completedCount: state?.completedCount ?? records.length,
         failedCount: state?.failedCount ?? 0,
+        totalUploadsCount: state?.totalUploadsCount ?? 0,
         evaluationState: {
           evaluationInProgress: Boolean(state?.evaluationInProgress),
           lastEvaluationStatus: state?.lastEvaluationStatus || null,
@@ -74,7 +69,7 @@ async function handleGoldenDatasetRoutes(req, res, db) {
               return;
             }
 
-            const result = await uploadDataset(body);
+            const result = await uploadDataset(body, db);
             setJsonHeaders(res, 200);
             res.end(JSON.stringify(result));
           } catch (error) {
@@ -103,7 +98,7 @@ async function handleGoldenDatasetRoutes(req, res, db) {
             return;
           }
 
-          const result = await uploadDataset(body);
+          const result = await uploadDataset(body, db);
           setJsonHeaders(res, 200);
           res.end(JSON.stringify(result));
         } catch (error) {
@@ -125,7 +120,7 @@ async function handleGoldenDatasetRoutes(req, res, db) {
 
   if (path === '/api/admin/golden-dataset/evaluations' && req.method === 'GET') {
     try {
-      const evaluations = await listGoldenDatasetEvaluations();
+      const evaluations = await listGoldenDatasetEvaluations(db);
       setJsonHeaders(res, 200);
       res.end(JSON.stringify({ evaluations }));
       return true;
@@ -138,10 +133,6 @@ async function handleGoldenDatasetRoutes(req, res, db) {
 
   if (path.startsWith('/api/admin/golden-dataset/') && req.method === 'GET') {
     const id = path.split('/').filter(Boolean).pop();
-    // 'evaluations' is a named sub-route (handled in adminRoutes.js), not a
-    // record id — without this exclusion it was being swallowed here as a
-    // lookup for a record literally named "evaluations", which always 404s
-    // and meant the Evaluation Results table could never load real data.
     if (id && id !== 'golden-dataset' && id !== 'evaluations') {
       try {
         const record = await getGoldenDatasetById(id);
@@ -164,7 +155,7 @@ async function handleGoldenDatasetRoutes(req, res, db) {
 
   if (path === '/api/admin/golden-dataset' && req.method === 'DELETE') {
     try {
-      const result = await clearGoldenDataset();
+      const result = await clearGoldenDataset(db);
       setJsonHeaders(res, 200);
       res.end(JSON.stringify(result));
       return true;
@@ -177,18 +168,12 @@ async function handleGoldenDatasetRoutes(req, res, db) {
 
   if (path === '/api/admin/golden-dataset/evaluate' && req.method === 'POST') {
     try {
-      const questionCount = await db.collection('golden_dataset').countDocuments({});
+      const state = await getDatasetState(db);
+      const questionCount = state.totalCount ?? state.recordCount ?? 0;
 
-      // Each question here runs a full answer generation plus a 5-metric
-      // LLM-judge evaluation (the same one Online Eval uses) — realistically
-      // a minute or more per question. Awaiting the whole batch in this
-      // request used to hold the HTTP connection open for the entire run,
-      // which reads as "stuck" (and risks hitting browser/proxy idle
-      // timeouts long before it's actually done). Run it in the background
-      // instead and let the dataset table pick up rows as they land.
       setImmediate(async () => {
         try {
-          const result = await runGoldenDatasetEvaluation({ baseUrl: process.env.GOLDEN_DATASET_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`, db });
+          const result = await evaluatePreparedDataset({ db });
           console.log('[Golden Dataset] Evaluation run finished:', JSON.stringify({ status: result.status, count: result.count }));
         } catch (error) {
           console.error('[Golden Dataset] Evaluation run failed:', error);
@@ -205,19 +190,6 @@ async function handleGoldenDatasetRoutes(req, res, db) {
       setJsonHeaders(res, 500);
       res.end(JSON.stringify({ error: error.message || 'Unable to run evaluation.' }));
       return true;
-    }
-
-    if (req.method === 'POST') {
-      try {
-        const summary = await evaluatePreparedDataset();
-        setJsonHeaders(res, 200);
-        res.end(JSON.stringify(summary));
-        return true;
-      } catch (error) {
-        setJsonHeaders(res, 500);
-        res.end(JSON.stringify({ error: error.message || 'Golden dataset evaluation failed.' }));
-        return true;
-      }
     }
   }
 

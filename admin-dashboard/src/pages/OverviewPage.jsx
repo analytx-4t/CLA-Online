@@ -21,13 +21,6 @@ function formatTimestamp(value) {
   return date.toLocaleString();
 }
 
-function getScoreTone(score) {
-  if (score === null || score === undefined) return 'neutral';
-  if (score >= 0.8) return 'success';
-  if (score >= 0.6) return 'warning';
-  return 'danger';
-}
-
 export default function OverviewPage() {
   const [overview, setOverview] = useState(null);
   const [settings, setSettings] = useState(null);
@@ -81,11 +74,6 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-4">
-      <section className="card p-4">
-        <p className="text-[11px] uppercase tracking-[0.2em] text-muted">Executive summary</p>
-        <h2 className="mt-1 text-2xl font-semibold text-ink">Overview</h2>
-      </section>
-
       {error && (
         <div className="rounded-lg border border-danger/30 bg-danger-soft p-4 text-sm text-danger">
           Unable to load live data: {error}
@@ -96,7 +84,7 @@ export default function OverviewPage() {
         <MetricCard title="Evaluated Requests" value={loading ? '—' : (overview?.totalRequests ?? 0)} icon={Activity} caption="All time" />
         <div className="pl-4"><MetricCard title="Avg Quality Score" value={loading ? '—' : formatPercent(avgOverallScore)} icon={ClipboardCheck} caption="RAGAS composite" /></div>
         <div className="pl-4"><MetricCard title="Guardrails" value={loading || !settings ? '—' : (settings.guardrails.active ? 'Active' : 'Inactive')} icon={ShieldCheck} caption={settings?.guardrails?.mode} /></div>
-        <div className="pl-4"><MetricCard title="Default Model" value={loading ? '—' : (settings?.llm?.defaultModel || '—')} icon={Cpu} caption={settings?.llm?.defaultProvider} /></div>
+        <div className="pl-4"><MetricCard title="LLM Model" value={loading ? '—' : (settings?.llm?.defaultModel || '—')} icon={Cpu} caption={settings?.llm?.defaultProvider} /></div>
       </section>
 
       <section className="grid gap-3 lg:grid-cols-3">
@@ -111,10 +99,9 @@ export default function OverviewPage() {
         <div className="card p-4 lg:col-span-2">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Recent evaluations</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Recent interactions</p>
               <p className="mt-1 text-sm text-muted">Latest scored production requests</p>
             </div>
-            <Link to="/online-eval" className="text-sm font-medium text-accent hover:underline">View all</Link>
           </div>
 
           {loading ? (
@@ -131,11 +118,14 @@ export default function OverviewPage() {
                     <p className="truncate text-ink">{row.question || row.requestId}</p>
                     <p className="text-xs text-muted">{formatTimestamp(row.timestamp)} · {row.provider || '—'}</p>
                   </div>
-                  <StatusPill label={formatPercent(row.overallScore)} tone={getScoreTone(row.overallScore)} />
                 </div>
               ))}
             </div>
           )}
+
+          <div className="mt-3 text-right">
+            <Link to="/online-eval" className="text-sm font-medium text-accent hover:underline">See more</Link>
+          </div>
         </div>
       </section>
 

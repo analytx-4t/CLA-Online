@@ -25,6 +25,11 @@ export default {
         info: 'rgb(var(--info) / <alpha-value>)',
         'info-soft': 'var(--info-soft)',
         overlay: 'rgb(var(--overlay) / <alpha-value>)',
+        sidebar: 'rgb(var(--sidebar-bg) / <alpha-value>)',
+        'sidebar-muted-bg': 'rgb(var(--sidebar-surface-muted) / <alpha-value>)',
+        'sidebar-ink': 'rgb(var(--sidebar-ink) / <alpha-value>)',
+        'sidebar-muted': 'rgb(var(--sidebar-muted) / <alpha-value>)',
+        'sidebar-line': 'var(--sidebar-line)',
       },
       boxShadow: {
         soft: '0 10px 40px rgba(17, 17, 17, 0.12)',

@@ -133,32 +133,18 @@ const traceRetrieval = traceable(
     const results = await performSearch();
     const latencyMs = Date.now() - startTime;
 
-    const chunkIds = Array.isArray(results)
-      ? results.map((r) => r.embedding_id || r.record_id || r.parent_id).filter(Boolean)
-      : [];
-    const documentIds = Array.isArray(results)
-      ? results.map((r) => r.doc_id || r.documentId || r.source).filter(Boolean)
-      : [];
-    const similarityScores = Array.isArray(results)
-      ? results.map((r) => r.score || r.similarity_score).filter((s) => Number.isFinite(s))
-      : [];
-
-    return {
-      query,
-      topK,
-      retrievedCount: Array.isArray(results) ? results.length : 0,
-      chunkIds,
-      documentIds,
-      similarityScores,
-      _langsmith_metadata: {
+    // Attach trace metadata onto the returned array
+    if (Array.isArray(results)) {
+      results._langsmith_metadata = {
         latency_ms: latencyMs,
         component: 'retrieval',
         provider: 'vector-search',
         embedding_model: 'text-embedding-3-large',
         embedding_dimensions: 3072,
-        retrieved_documents: Array.isArray(results) ? results.length : 0,
-      },
-    };
+        retrieved_documents: results.length,
+      };
+    }
+    return Array.isArray(results) ? results : [];
   },
   {
     name: 'Vector Retrieval / Search',
@@ -181,19 +167,16 @@ const traceReranking = traceable(
     const rerankedResults = await rerankResults();
     const latencyMs = Date.now() - startTime;
 
-    return {
-      originalQuestion,
-      candidateCount,
-      rerankedCount: Array.isArray(rerankedResults) ? rerankedResults.length : 0,
-      rerankedResults,
-      _langsmith_metadata: {
+    if (Array.isArray(rerankedResults)) {
+      rerankedResults._langsmith_metadata = {
         latency_ms: latencyMs,
         component: 'reranking',
         provider: 'bm25-reranker',
         candidates: candidateCount,
-        final_results: Array.isArray(rerankedResults) ? rerankedResults.length : 0,
-      },
-    };
+        final_results: rerankedResults.length,
+      };
+    }
+    return Array.isArray(rerankedResults) ? rerankedResults : [];
   },
   {
     name: 'Reranking',
@@ -265,50 +248,29 @@ const traceLLMGeneration = traceable(
     model,
     temperature,
     maxTokens,
-systemPrompt,
-userContent,
-messages,
-generate,
-call,
-requestContext,
+    systemPrompt = '',
+    userContent = '',
+    messages = [],
+    generate,
+    call,
+    requestContext,
   }) {
     const startTime = Date.now();
-    const response = await generate();
+    const fn = call || generate;
+    const response = fn ? await fn() : null;
     const latencyMs = Date.now() - startTime;
 
-    // Extract usage information
-    const inputTokens = response?.usage?.prompt_tokens || 
-                       response?.usage?.input_tokens || 
-                       Math.ceil(userContent.length / 4);
-    const outputTokens = response?.usage?.completion_tokens || 
-                        response?.usage?.output_tokens || 
-                        Math.ceil((response?.content || response?.text || response?.message?.content || '').length / 4);
-    const totalTokens = (response?.usage?.total_tokens) || (inputTokens + outputTokens);
-
-    // Estimate cost (varies by model)
-    const costPerInputToken = provider === 'openai' ? 0.0000005 : 0.00001; // rough estimates
-    const costPerOutputToken = provider === 'openai' ? 0.0000015 : 0.00002;
-    const estimatedCost = (inputTokens * costPerInputToken) + (outputTokens * costPerOutputToken);
-
-    return {
-      content: response?.content || response?.text || response?.message?.content,
-      provider,
-      model,
-      finishReason: response?.finish_reason || 'unknown',
-      _langsmith_metadata: {
+    if (response) {
+      response._langsmith_metadata = {
         latency_ms: latencyMs,
         component: 'llm',
         provider,
         model,
         temperature,
         max_tokens: maxTokens,
-        input_tokens: inputTokens,
-        output_tokens: outputTokens,
-        total_tokens: totalTokens,
-        estimated_cost_usd: estimatedCost.toFixed(6),
-        finish_reason: response?.finish_reason || 'unknown',
-      },
-    };
+      };
+    }
+    return response;
   },
   {
     name: 'Portkey LLM Call',
@@ -443,6 +405,7 @@ module.exports = {
   traceReranking,
   tracePromptConstruction,
   traceLLMGeneration,
+  tracePortkeyLLMCall: traceLLMGeneration,
   traceRAGEvaluation,
   traceMongoPersistence,
   traceError,
