@@ -135,42 +135,59 @@ def load_or_refresh_embeddings(cnx=None):
 
     _require_openai_embedding_space(cnx)
 
-    # Fetch all embeddings and metadata from the database
-    sys.stderr.write("Cache missing or invalid. Rebuilding local embeddings cache...\n")
+    # Fetch total count for live progress reporting
     cur = cnx.cursor()
+    cur.execute("SELECT COUNT(*) FROM dbo.DocumentEmbeddings WITH (NOLOCK)")
+    total_count = cur.fetchone()[0] or 1
+    sys.stderr.write(f"Cache missing or invalid. Rebuilding local embeddings cache for {total_count:,} chunks...\n")
+
     sql = f"SELECT {_SELECT_COLS} FROM dbo.DocumentEmbeddings WITH (NOLOCK)"
     cur.execute(sql)
-    rows = cur.fetchall()
-    cur.close()
 
     vectors = []
     metadata = []
-    for row in rows:
-        emb_bytes = row[5]
-        vec = _bytes_to_vector(emb_bytes)
-        vectors.append(vec)
-        
-        metadata.append({
-            "embedding_id": row[0],
-            "source_table": row[1],
-            "record_id": row[2],
-            "parent_id": row[3],
-            "chunk_text": row[4],
-            "embedding_model": row[6],
-            "embedding_dim": row[7],
-            "category": row[8],
-            "subject": row[9],
-            "sections": row[10],
-            "doc_title": row[11],
-            "law_title": row[12],
-            "doc_date": str(row[13]) if row[13] else None,
-        })
+    processed = 0
+    batch_size = 5000
 
+    while True:
+        rows = cur.fetchmany(batch_size)
+        if not rows:
+            break
+
+        for row in rows:
+            emb_bytes = row[5]
+            vec = _bytes_to_vector(emb_bytes)
+            vectors.append(vec)
+            
+            metadata.append({
+                "embedding_id": row[0],
+                "source_table": row[1],
+                "record_id": row[2],
+                "parent_id": row[3],
+                "chunk_text": row[4],
+                "embedding_model": row[6],
+                "embedding_dim": row[7],
+                "category": row[8],
+                "subject": row[9],
+                "sections": row[10],
+                "doc_title": row[11],
+                "law_title": row[12],
+                "doc_date": str(row[13]) if row[13] else None,
+            })
+
+        processed += len(rows)
+        pct = (processed / total_count) * 100
+        sys.stderr.write(f"[Embeddings Cache] Processed {processed:,} / {total_count:,} chunks ({pct:.1f}%)...\n")
+
+    cur.close()
+
+    sys.stderr.write("Compressing and saving local embeddings_cache.npz...\n")
     vectors = np.array(vectors, dtype=np.float32)
     metadata = np.array(metadata, dtype=object)
 
     try:
         np.savez_compressed(CACHE_FILE, vectors=vectors, metadata=metadata)
+        sys.stderr.write(f"Successfully saved embeddings cache ({len(vectors):,} vectors).\n")
     except Exception as e:
         sys.stderr.write(f"Cache write error: {e}\n")
 
