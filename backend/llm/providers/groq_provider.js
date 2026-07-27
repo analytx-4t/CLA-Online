@@ -60,8 +60,8 @@ class GroqProvider extends BaseLLMProvider {
 
       return {
         content: response.choices?.[0]?.message?.content || '',
-        provider: 'groq',
-        model,
+        provider: response._actualProvider || 'groq',
+        model: response._actualModel || model,
         usage: {
           input_tokens: response.usage?.prompt_tokens ?? null,
           output_tokens: response.usage?.completion_tokens ?? null,

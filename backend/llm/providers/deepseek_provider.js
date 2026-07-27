@@ -61,8 +61,8 @@ class DeepSeekProvider extends BaseLLMProvider {
 
       return {
         content: response.choices?.[0]?.message?.content || '',
-        provider: 'deepseek',
-        model,
+        provider: response._actualProvider || 'deepseek',
+        model: response._actualModel || model,
         usage: {
           input_tokens: response.usage?.prompt_tokens ?? null,
           output_tokens: response.usage?.completion_tokens ?? null,

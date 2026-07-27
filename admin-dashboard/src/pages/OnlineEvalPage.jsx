@@ -1,6 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { Filter, ChevronRight, RefreshCw } from 'lucide-react';
+import { 
+  Filter, 
+  ChevronRight, 
+  RefreshCw, 
+  ShieldCheck, 
+  Sparkles, 
+  Database, 
+  Cpu, 
+  Award, 
+  ChevronDown, 
+  ChevronUp, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Clock, 
+  Layers 
+} from 'lucide-react';
 import SearchBox from '../components/SearchBox';
 import FilterBar from '../components/FilterBar';
 import DataTable from '../components/DataTable';
@@ -29,12 +44,11 @@ function formatPercent(value) {
   return `${(Number(value) * 100).toFixed(1)}%`;
 }
 
-// The judge scores PII Leakage inverted from every other metric — 1.00 is
-// the clean/no-leak baseline and each detected leak subtracts from it (see
-// eval_agent.md, "## 5. PII Leakage": "Base is 1.00 and each leak
-// subtracts"). Displaying that raw score under a column literally called
-// "PII Leakage" reads backwards — a safe answer would show "100%", implying
-// maximum leakage. Flip it here so 0% always means "nothing leaked".
+function formatPercentVal(val) {
+  if (val === null || val === undefined || Number.isNaN(Number(val))) return 'N/A';
+  return `${(Number(val) * 100).toFixed(0)}%`;
+}
+
 function formatLeakagePercent(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Nil';
   return formatPercent(1 - Number(value));
@@ -47,15 +61,179 @@ function formatLeakageMetric(value) {
 
 function getStatusTone(status) {
   if (status === 'failed') return 'danger';
-  if (status === 'completed') return 'success';
-  if (status === 'blocked') return 'info';
+  if (status === 'completed' || status === 'passed') return 'success';
+  if (status === 'blocked') return 'warning';
   return 'neutral';
 }
 
 function omitTimings(metadata) {
   if (!metadata || typeof metadata !== 'object') return {};
-  const { retrievalTime, llmTime, ...rest } = metadata;
+  const { retrievalTime, llmTime, tokenUsage, ...rest } = metadata;
   return rest;
+}
+
+function ServerLogsTimeline({ logs }) {
+  const [expandedSteps, setExpandedSteps] = useState({ 1: true, 2: true, 3: true, 4: true, 5: true });
+
+  if (!logs || logs.length === 0) {
+    return <p className="text-xs text-muted p-4">No step-by-step agent logs recorded for this query.</p>;
+  }
+
+  const toggleStep = (stepNum) => {
+    setExpandedSteps((prev) => ({ ...prev, [stepNum]: !prev[stepNum] }));
+  };
+
+  const getStepIcon = (step) => {
+    switch (step) {
+      case 1: return <ShieldCheck className="h-4 w-4 text-emerald-500" />;
+      case 2: return <Sparkles className="h-4 w-4 text-blue-500" />;
+      case 3: return <Database className="h-4 w-4 text-amber-500" />;
+      case 4: return <Cpu className="h-4 w-4 text-purple-500" />;
+      case 5: return <Award className="h-4 w-4 text-teal-500" />;
+      default: return <Layers className="h-4 w-4 text-muted" />;
+    }
+  };
+
+  const getStatusBadge = (status) => {
+    if (status === 'completed' || status === 'passed') {
+      return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-500"><CheckCircle2 className="h-3 w-3" /> PASSED</span>;
+    }
+    if (status === 'blocked') {
+      return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-500"><AlertTriangle className="h-3 w-3" /> BLOCKED</span>;
+    }
+    return <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-medium text-red-500">FAILED</span>;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-indigo-500/20 bg-indigo-500/5 p-3 text-xs leading-relaxed text-ink">
+        <p className="font-semibold text-indigo-400 flex items-center gap-1.5">
+          <Sparkles className="h-4 w-4" /> Client Execution Summary
+        </p>
+        <p className="mt-1 text-muted">
+          This timeline explains step-by-step how the legal query was processed behind the scenes—from safety guardrails to statutory expansion, database retrieval, legal response synthesis, and quality auditing.
+        </p>
+      </div>
+
+      <div className="relative border-l-2 border-line pl-4 space-y-4 my-2">
+        {logs.map((log) => {
+          const isOpen = Boolean(expandedSteps[log.step]);
+          return (
+            <div key={log.step} className="relative">
+              {/* Step Icon */}
+              <div className="absolute -left-[25px] top-1 flex h-6 w-6 items-center justify-center rounded-full border border-line bg-surface shadow-sm">
+                {getStepIcon(log.step)}
+              </div>
+
+              <div className="rounded-lg border border-line bg-surface p-3 shadow-panel">
+                {/* Header */}
+                <div 
+                  onClick={() => toggleStep(log.step)}
+                  className="flex cursor-pointer items-center justify-between gap-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-ink">{log.title || `Step ${log.step}`}</span>
+                    {getStatusBadge(log.status)}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-muted">
+                    {log.timeMs !== undefined && log.timeMs !== null && (
+                      <span className="inline-flex items-center gap-1 rounded bg-surface-muted px-1.5 py-0.5 font-mono text-[10px]">
+                        <Clock className="h-3 w-3" /> {log.timeMs} ms
+                      </span>
+                    )}
+                    {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </div>
+                </div>
+
+                {/* Easy English Summary */}
+                <p className="mt-2 text-xs leading-relaxed text-ink font-medium">
+                  {log.summary}
+                </p>
+
+                {/* Agent Badges */}
+                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                  <span className="rounded bg-surface-strong px-2 py-0.5 text-muted font-medium">Agent: {log.agent}</span>
+                  {log.provider && (
+                    <span className="rounded bg-surface-strong px-2 py-0.5 text-muted font-mono">
+                      {log.provider} {log.model ? `/ ${log.model}` : ''}
+                    </span>
+                  )}
+                </div>
+
+                {/* Expanded Flow Parameters */}
+                {isOpen && log.details && (
+                  <div className="mt-3 rounded-md border border-line bg-surface-muted p-2.5 text-xs space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted">Technical Data & Flow Parameters</p>
+
+                    {log.details.originalQuery && (
+                      <div>
+                        <span className="text-muted font-medium">Original Query: </span>
+                        <span className="text-ink">{log.details.originalQuery}</span>
+                      </div>
+                    )}
+                    {log.details.expandedQuery && (
+                      <div>
+                        <span className="text-muted font-medium">Expanded Query: </span>
+                        <span className="text-ink font-semibold">{log.details.expandedQuery}</span>
+                      </div>
+                    )}
+                    {Array.isArray(log.details.keywords) && log.details.keywords.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="text-muted font-medium">Keywords: </span>
+                        {log.details.keywords.map((kw, i) => (
+                          <span key={i} className="rounded bg-surface px-1.5 py-0.5 text-[10px] text-indigo-400 border border-indigo-500/20">{kw}</span>
+                        ))}
+                      </div>
+                    )}
+                    {log.details.retrievalQuery && (
+                      <div>
+                        <span className="text-muted font-medium">Retrieval Query: </span>
+                        <span className="font-mono text-[11px] text-ink">{log.details.retrievalQuery}</span>
+                      </div>
+                    )}
+                    {log.details.candidatesFound !== undefined && (
+                      <div className="flex gap-3 text-muted">
+                        <span>Candidates: <strong className="text-ink">{log.details.candidatesFound}</strong></span>
+                        <span>Top Reranked Sources: <strong className="text-ink">{log.details.topRerankedCount}</strong></span>
+                      </div>
+                    )}
+                    {Array.isArray(log.details.topSourcesPreview) && log.details.topSourcesPreview.length > 0 && (
+                      <div className="space-y-1">
+                        <span className="text-muted font-medium">Top Sources Preview:</span>
+                        {log.details.topSourcesPreview.map((src, i) => (
+                          <div key={i} className="rounded bg-surface p-1.5 text-[11px] text-muted border border-line">
+                            <span className="font-bold text-indigo-400">Source [{src.rank}]: </span>
+                            {src.title ? <span>{src.title} — </span> : null}
+                            <span>{src.snippet || src.sections}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {log.details.sourcesUsed !== undefined && (
+                      <div className="flex gap-3 text-muted">
+                        <span>Sources Used: <strong className="text-ink">{log.details.sourcesUsed}</strong></span>
+                        <span>Suggestions: <strong className="text-ink">{log.details.suggestionsGenerated}</strong></span>
+                        <span>Answer Length: <strong className="text-ink">{log.details.answerLength} chars</strong></span>
+                      </div>
+                    )}
+                    {log.details.faithfulness !== undefined && (
+                      <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-line text-[11px]">
+                        <div>Faithfulness: <strong className="text-emerald-500">{formatPercentVal(log.details.faithfulness)}</strong></div>
+                        <div>Answer Relevancy: <strong className="text-emerald-500">{formatPercentVal(log.details.answerRelevancy)}</strong></div>
+                        <div>Context Precision: <strong className="text-emerald-500">{formatPercentVal(log.details.contextPrecision)}</strong></div>
+                        <div>Context Recall: <strong className="text-emerald-500">{formatPercentVal(log.details.contextRecall)}</strong></div>
+                        <div>PII Protection: <strong className="text-emerald-500">{formatPercentVal(1 - (log.details.piiLeakage ?? 0))}</strong></div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export default function OnlineEvalPage() {
@@ -73,6 +251,7 @@ export default function OnlineEvalPage() {
   const [pageSize] = useState(25);
   const [totalPages, setTotalPages] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
+  const [drawerTab, setDrawerTab] = useState('logs');
   const latestRequestRef = useRef(0);
   const socketRef = useRef(null);
   const pollTimerRef = useRef(null);
@@ -129,6 +308,7 @@ export default function OnlineEvalPage() {
     }
     setLoadingDetail(true);
     setSelectedRequestId(requestId);
+    setDrawerTab('logs');
     try {
       const response = await fetch(`/api/admin/ragas/${requestId}`);
       if (!response.ok) throw new Error('Unable to load evaluation details.');
@@ -188,20 +368,17 @@ export default function OnlineEvalPage() {
     };
   }, []);
 
-  const filteredRows = useMemo(() => rows, [rows]);
-
   const columns = [
-    { header: 'Timestamp', accessor: 'timestamp', width: '10%', render: (row) => formatTimestamp(row.timestamp) },
-    { header: 'Question', accessor: 'question', width: '18%', render: (row) => row.question || '—' },
-    { header: 'Model', accessor: 'model', width: '9%', render: (row) => row.model || '—' },
-    
-    { header: 'Faithfulness', accessor: 'faithfulness', width: '7%', render: (row) => <span className="tnum">{formatMetric(row.faithfulness)}</span> },
-    { header: 'Answer Relevancy', accessor: 'answerRelevancy', width: '7%', render: (row) => <span className="tnum">{formatMetric(row.answerRelevancy)}</span> },
+    { header: 'Timestamp', accessor: 'timestamp', width: '12%', render: (row) => formatTimestamp(row.timestamp) },
+    { header: 'Question', accessor: 'question', width: '22%', render: (row) => row.question || '—' },
+    { header: 'Model', accessor: 'model', width: '10%', render: (row) => row.model || '—' },
+    { header: 'Faithfulness', accessor: 'faithfulness', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.faithfulness)}</span> },
+    { header: 'Answer Relevancy', accessor: 'answerRelevancy', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.answerRelevancy)}</span> },
     { header: 'Context Recall', accessor: 'contextRecall', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.contextRecall)}</span> },
     { header: 'Context Precision', accessor: 'contextPrecision', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.contextPrecision)}</span> },
     { header: 'PII Leakage', accessor: 'piiLeakage', width: '8%', render: (row) => <span className="tnum">{formatLeakageMetric(row.piiLeakage)}</span> },
-    { header: 'Status', accessor: 'evaluationStatus', width: '9%', render: (row) => <StatusPill label={(row.evaluationStatus || 'unknown').toUpperCase()} tone={getStatusTone(row.evaluationStatus)} /> },
-    { header: 'Actions', accessor: 'action', width: '9%', render: (row) => <button onClick={(e) => { e.stopPropagation(); loadDetail(row.requestId); }} className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-accent">View <ChevronRight size={14} /></button> },
+    { header: 'Status', accessor: 'evaluationStatus', width: '8%', render: (row) => <StatusPill label={(row.evaluationStatus || 'unknown').toUpperCase()} tone={getStatusTone(row.evaluationStatus)} /> },
+    { header: 'Actions', accessor: 'action', width: '8%', render: (row) => <button onClick={(e) => { e.stopPropagation(); loadDetail(row.requestId); }} className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-accent">View <ChevronRight size={14} /></button> },
   ];
 
   return (
@@ -254,7 +431,7 @@ export default function OnlineEvalPage() {
             <div className="rounded-lg border border-dashed border-line bg-surface-muted p-6 text-center text-sm text-muted">No evaluations available yet.</div>
           ) : (
             <>
-              <DataTable columns={columns} rows={filteredRows} onRowClick={(row) => loadDetail(row.requestId)} fit maxHeight="380px" />
+              <DataTable columns={columns} rows={rows} onRowClick={(row) => loadDetail(row.requestId)} fit maxHeight="380px" />
               <div className="mt-3 flex flex-col gap-2 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
                 <span>Page {page} of {totalPages}</span>
                 <div className="flex items-center gap-2">
@@ -273,72 +450,104 @@ export default function OnlineEvalPage() {
             </div>
           ) : detail ? (
             <div className="space-y-3">
-              <div className="rounded-lg bg-surface-muted p-3">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Question</p>
-                <p className="mt-2 text-sm text-ink">{detail.question || '—'}</p>
+              {/* Tab navigation */}
+              <div className="flex border-b border-line pb-1">
+                <button
+                  onClick={() => setDrawerTab('logs')}
+                  className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition ${
+                    drawerTab === 'logs'
+                      ? 'border-indigo-500 text-indigo-400'
+                      : 'border-transparent text-muted hover:text-ink'
+                  }`}
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                  Behind-the-Scenes Logs ({detail.serverLogs?.length || 0})
+                </button>
+                <button
+                  onClick={() => setDrawerTab('overview')}
+                  className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition ${
+                    drawerTab === 'overview'
+                      ? 'border-indigo-500 text-indigo-400'
+                      : 'border-transparent text-muted hover:text-ink'
+                  }`}
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Overview & Details
+                </button>
               </div>
-              <div className="rounded-lg bg-surface-muted p-3">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Answer</p>
-                <div className="mt-2">
-                  <MarkdownContent content={detail.answer} />
-                </div>
-              </div>
-              <div className="rounded-lg bg-surface-muted p-3">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Retrieved Context</p>
-                <div className="mt-2 space-y-2">
-                  {(detail.retrievedContext || []).length === 0 ? (
-                    <p className="text-sm text-muted">—</p>
-                  ) : (
-                    detail.retrievedContext.map((item, idx) => (
-                      <div key={idx} className="rounded-lg border border-line bg-surface p-2.5">
-                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">Source {idx + 1}</p>
-                        <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted">{item}</p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div className="rounded-lg bg-surface-muted p-3">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Metrics</p>
-                <div className="mt-2 space-y-3 text-sm text-ink">
-                  {[
-                    ['Faithfulness', detail.faithfulness, detail.faithfulnessReason, formatMetric],
-                    ['Answer Relevancy', detail.answerRelevancy, detail.answerRelevancyReason, formatMetric],
-                    ['Context Precision', detail.contextPrecision, detail.contextPrecisionReason, formatMetric],
-                    ['Context Recall', detail.contextRecall, detail.contextRecallReason, formatMetric],
-                    ['PII Leakage', detail.piiLeakage, detail.piiLeakageReason, formatLeakageMetric],
-                  ].map(([label, value, reason, format]) => (
-                    <div key={label} className="border-b border-line pb-2 last:border-0 last:pb-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-muted">{label}</span>
-                        <span className="tnum font-semibold">{format(value)}</span>
-                      </div>
-                      {reason && <p className="mt-1 text-xs leading-relaxed text-muted">{reason}</p>}
+
+              {drawerTab === 'logs' ? (
+                <ServerLogsTimeline logs={detail.serverLogs} />
+              ) : (
+                <div className="space-y-3">
+                  <div className="rounded-lg bg-surface-muted p-3">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Question</p>
+                    <p className="mt-2 text-sm text-ink">{detail.question || '—'}</p>
+                  </div>
+                  <div className="rounded-lg bg-surface-muted p-3">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Answer</p>
+                    <div className="mt-2">
+                      <MarkdownContent content={detail.answer} />
                     </div>
-                  ))}
+                  </div>
+                  <div className="rounded-lg bg-surface-muted p-3">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Retrieved Context</p>
+                    <div className="mt-2 space-y-2">
+                      {(detail.retrievedContext || []).length === 0 ? (
+                        <p className="text-sm text-muted">—</p>
+                      ) : (
+                        detail.retrievedContext.map((item, idx) => (
+                          <div key={idx} className="rounded-lg border border-line bg-surface p-2.5">
+                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">Source {idx + 1}</p>
+                            <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted">{item}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-surface-muted p-3">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Metrics</p>
+                    <div className="mt-2 space-y-3 text-sm text-ink">
+                      {[
+                        ['Faithfulness', detail.faithfulness, detail.faithfulnessReason, formatMetric],
+                        ['Answer Relevancy', detail.answerRelevancy, detail.answerRelevancyReason, formatMetric],
+                        ['Context Precision', detail.contextPrecision, detail.contextPrecisionReason, formatMetric],
+                        ['Context Recall', detail.contextRecall, detail.contextRecallReason, formatMetric],
+                        ['PII Leakage', detail.piiLeakage, detail.piiLeakageReason, formatLeakageMetric],
+                      ].map(([label, value, reason, format]) => (
+                        <div key={label} className="border-b border-line pb-2 last:border-0 last:pb-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-muted">{label}</span>
+                            <span className="tnum font-semibold">{format(value)}</span>
+                          </div>
+                          {reason && <p className="mt-1 text-xs leading-relaxed text-muted">{reason}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-surface-muted p-3">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-muted">LLM Response</p>
+                    <div className="mt-2 space-y-2 text-sm text-ink">
+                      <div className="flex items-center justify-between gap-2"><span className="text-muted">Provider</span><span className="font-semibold">{detail.provider || '—'}</span></div>
+                      <div className="flex items-center justify-between gap-2"><span className="text-muted">Model</span><span className="font-semibold">{detail.model || '—'}</span></div>
+                      <div className="flex items-center justify-between gap-2"><span className="text-muted">Status</span><StatusPill label={(detail.evaluationStatus || 'unknown').toUpperCase()} tone={getStatusTone(detail.evaluationStatus)} /></div>
+                      {detail.errorMessage && (
+                        <p className="mt-1 rounded-lg border border-danger/30 bg-danger-soft p-2 text-xs text-danger">{detail.errorMessage}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-surface-muted p-3">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Metadata</p>
+                    <pre className="mt-2 whitespace-pre-wrap text-sm text-ink">{JSON.stringify(omitTimings(detail.metadata), null, 2)}</pre>
+                  </div>
+                  <div className="rounded-lg bg-surface-muted p-3">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Suggestions</p>
+                    <ul className="mt-2 space-y-2 text-sm text-muted">
+                      {(detail.suggestions || []).map((item) => <li key={item}>• {item}</li>)}
+                    </ul>
+                  </div>
                 </div>
-              </div>
-              <div className="rounded-lg bg-surface-muted p-3">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-muted">LLM Response</p>
-                <div className="mt-2 space-y-2 text-sm text-ink">
-                  <div className="flex items-center justify-between gap-2"><span className="text-muted">Provider</span><span className="font-semibold">{detail.provider || '—'}</span></div>
-                  <div className="flex items-center justify-between gap-2"><span className="text-muted">Model</span><span className="font-semibold">{detail.model || '—'}</span></div>
-                  <div className="flex items-center justify-between gap-2"><span className="text-muted">Status</span><StatusPill label={(detail.evaluationStatus || 'unknown').toUpperCase()} tone={getStatusTone(detail.evaluationStatus)} /></div>
-                  {detail.errorMessage && (
-                    <p className="mt-1 rounded-lg border border-danger/30 bg-danger-soft p-2 text-xs text-danger">{detail.errorMessage}</p>
-                  )}
-                </div>
-              </div>
-              <div className="rounded-lg bg-surface-muted p-3">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Metadata</p>
-                <pre className="mt-2 whitespace-pre-wrap text-sm text-ink">{JSON.stringify(omitTimings(detail.metadata), null, 2)}</pre>
-              </div>
-              <div className="rounded-lg bg-surface-muted p-3">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Suggestions</p>
-                <ul className="mt-2 space-y-2 text-sm text-muted">
-                  {(detail.suggestions || []).map((item) => <li key={item}>• {item}</li>)}
-                </ul>
-              </div>
+              )}
             </div>
           ) : null}
         </Drawer>

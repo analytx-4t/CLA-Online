@@ -53,8 +53,8 @@ class GeminiProvider extends BaseLLMProvider {
 
       return {
         content: response.choices?.[0]?.message?.content || '',
-        provider: 'gemini',
-        model,
+        provider: response._actualProvider || 'gemini',
+        model: response._actualModel || model,
         usage: {
           input_tokens: response.usage?.prompt_tokens ?? null,
           output_tokens: response.usage?.completion_tokens ?? null,

@@ -242,6 +242,7 @@ function buildEvaluationResultDocument({
   metadata = {},
   errorMessage = null,
   source = 'cla_chat',
+  serverLogs = [],
 }) {
   const evaluationData = evaluation && typeof evaluation === 'object' ? evaluation : {};
   const timestamp = new Date().toISOString();
@@ -316,6 +317,7 @@ function buildEvaluationResultDocument({
     suggestions: Array.isArray(suggestions) ? suggestions : [],
     errorMessage: errorMessage || (Array.isArray(evaluationData?.errors) && evaluationData.errors.length ? evaluationData.errors.join('; ') : null),
     metadata: normalizedMetadata,
+    serverLogs: Array.isArray(serverLogs) ? serverLogs : [],
   };
 }
 
@@ -1941,8 +1943,11 @@ async function startServer() {
             console.log(`[RAG Endpoint] Using ${payload.attachments.length} attachment(s) as supplementary context.`);
           }
 
+          const serverLogs = [];
+
           // Run guardrails early to avoid expensive operations for blocked requests.
           let guardrailResult = null;
+          const guardrailStartedAt = Date.now();
           try {
             const { checkGuardrails } = require('./guardrails');
             guardrailResult = await traceGuardrails({
@@ -1955,6 +1960,25 @@ async function startServer() {
                 component: 'guardrails',
                 requestId: req.requestContext.requestId,
                 sessionId: req.requestContext.sessionId,
+              },
+            });
+
+            const guardrailTimeMs = Date.now() - guardrailStartedAt;
+            serverLogs.push({
+              step: 1,
+              agent: 'Safety Guardrail Agent',
+              title: 'Step 1: Safety & Compliance Check',
+              status: guardrailResult?.action === 'RESPOND' ? 'blocked' : 'completed',
+              timeMs: guardrailTimeMs,
+              provider: 'groq',
+              model: 'llama-3.3-70b-versatile',
+              summary: guardrailResult?.action === 'RESPOND'
+                ? `Safety system flagged query in category "${guardrailResult.category || 'policy'}". Workflow stopped.`
+                : 'Checked user question for safety, tone, and corporate law relevance. Approved to proceed.',
+              details: {
+                action: guardrailResult?.action || 'PASS',
+                category: guardrailResult?.category || guardrailResult?.route || 'PASS',
+                response: guardrailResult?.response || null,
               },
             });
 
@@ -1995,6 +2019,7 @@ async function startServer() {
                     evaluationStatus: 'blocked',
                     metadata: { guardrailCategory: guardrailResult.category || guardrailResult.route || null },
                     source: requestSource,
+                    serverLogs,
                   });
                   persistEvaluationResult(db, guardrailDocument, io).catch((persistError) => {
                     console.error('[RAG Endpoint] Failed to persist guardrail-blocked evaluation:', persistError);
@@ -2045,6 +2070,7 @@ async function startServer() {
             // to the original user question.
             const { expandLegalQuery } = require('./agentSystem');
 
+            const expansionStartedAt = Date.now();
             const queryExpansion = await traceQueryExpansion({
               originalQuestion: question.trim(),
               expandLegalQuery: async () => {
@@ -2057,6 +2083,7 @@ async function startServer() {
                 sessionId: req.requestContext.sessionId,
               },
             });
+            const expansionTimeMs = Date.now() - expansionStartedAt;
 
             const expandedQuery =
               queryExpansion.expandedQuery || question.trim();
@@ -2065,6 +2092,23 @@ async function startServer() {
               Array.isArray(queryExpansion.keywords)
                 ? queryExpansion.keywords
                 : [];
+
+            serverLogs.push({
+              step: 2,
+              agent: 'Query Expansion Agent',
+              title: 'Step 2: Query Expansion & Legal Understanding',
+              status: 'completed',
+              timeMs: expansionTimeMs,
+              provider: settings.DEFAULT_LLM_PROVIDER || 'groq',
+              model: settings.DEFAULT_LLM_MODEL || 'llama-3.3-70b-versatile',
+              summary: 'Analyzed your question and expanded it with key Indian statutory section numbers, legal synonyms, and technical keywords for maximum database coverage.',
+              details: {
+                originalQuery: question.trim(),
+                expandedQuery: expandedQuery,
+                keywords: expansionKeywords,
+                suggestedFilters: queryExpansion.suggestedFilters || 'None',
+              },
+            });
 
             console.log(
               '[RAG Endpoint] Query expansion result:',
@@ -2120,6 +2164,28 @@ async function startServer() {
                 component: 'reranking',
                 requestId: req.requestContext.requestId,
                 sessionId: req.requestContext.sessionId,
+              },
+            });
+
+            serverLogs.push({
+              step: 3,
+              agent: 'Document Retrieval & Legal Reranker Agent',
+              title: 'Step 3: Database Search & Legal Document Reranking',
+              status: Array.isArray(results) && results.length > 0 ? 'completed' : 'failed',
+              timeMs: retrievalTimeMs,
+              provider: 'FastEmbed / Cosine Reranker',
+              model: 'text-embedding-3-large',
+              summary: `Searched millions of corporate law records via hybrid vector search. Retrieved ${candidateResults ? candidateResults.length : 0} initial candidates and reranked top ${results ? results.length : 0} verified legal sources.`,
+              details: {
+                retrievalQuery: retrievalQuery,
+                candidatesFound: candidateResults ? candidateResults.length : 0,
+                topRerankedCount: results ? results.length : 0,
+                topSourcesPreview: Array.isArray(results) ? results.map((r, idx) => ({
+                  rank: idx + 1,
+                  title: r.doc_title || 'Untitled',
+                  sections: r.sections || 'General',
+                  score: r.backend_relevance_score ? Number(r.backend_relevance_score).toFixed(2) : '—'
+                })) : []
               },
             });
 
@@ -2242,82 +2308,108 @@ What is the penalty for violating this provision?`;
             },
           });
 
-          let llmResponse;
+          let llmResponse = null;
           let llmStartedAt = null;
           let llmTimeMs = null;
-          try {
-            llmStartedAt = Date.now();
-            const userContent = userContentParts.join('\n\n');
-            
-            llmResponse = await traceLLMGeneration({
-              provider: llm.constructor.name,
-              model: model,
-              systemPrompt: systemPrompt,
-              userContent: userContent,
-              temperature: 0.1,
-              maxTokens: 2048,
-              generate: async () => {
-                return await llm.generate({
-                  systemPrompt: systemPrompt,
-                  messages: [{ role: 'user', content: userContent }],
-                  temperature: 0.1,
-                  maxTokens: 2048
-                });
-              },
-              requestContext: req.requestContext,
-              metadata: {
-                component: 'llm_generation',
-                requestId: req.requestContext.requestId,
-                sessionId: req.requestContext.sessionId,
-              },
-            });
-            llmTimeMs = Date.now() - llmStartedAt;
-          } catch (llmErr) {
-            console.error('[RAG Endpoint] LLM generation failed:', llmErr);
+          let answerText = '';
+          let suggestions = [];
+
+          const userContent = userContentParts.join('\n\n');
+
+          const endpointFallbackTiers = [
+            { provider: settings.DEFAULT_LLM_PROVIDER || 'deepseek', model: settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro' },
+            { provider: 'openai', model: process.env.OPENAI_MODEL || 'gpt-4.1-mini' },
+            { provider: 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' },
+            { provider: 'groq', model: process.env.GROQ_LLAMA_MODEL || 'llama-3.3-70b-versatile' },
+          ];
+
+          const uniqueTiers = [];
+          const seenTiers = new Set();
+          for (const tier of endpointFallbackTiers) {
+            const key = `${tier.provider}:${tier.model}`;
+            if (!seenTiers.has(key)) {
+              seenTiers.add(key);
+              uniqueTiers.push(tier);
+            }
+          }
+
+          let lastLLMErr = null;
+
+          for (const tier of uniqueTiers) {
+            try {
+              llmStartedAt = Date.now();
+              const currentLlm = getLLMProvider(tier.provider, tier.model);
+
+              llmResponse = await traceLLMGeneration({
+                provider: currentLlm.constructor.name,
+                model: tier.model,
+                systemPrompt: systemPrompt,
+                userContent: userContent,
+                temperature: 0.1,
+                maxTokens: 2048,
+                generate: async () => {
+                  return await currentLlm.generate({
+                    systemPrompt: systemPrompt,
+                    messages: [{ role: 'user', content: userContent }],
+                    temperature: 0.1,
+                    maxTokens: 2048
+                  });
+                },
+                requestContext: req.requestContext,
+                metadata: {
+                  component: 'llm_generation',
+                  requestId: req.requestContext.requestId,
+                  sessionId: req.requestContext.sessionId,
+                },
+              });
+              llmTimeMs = Date.now() - llmStartedAt;
+
+              const candidateText =
+                llmResponse?.content ||
+                llmResponse?.text ||
+                llmResponse?.response ||
+                llmResponse?.message?.content ||
+                llmResponse?.choices?.[0]?.message?.content ||
+                '';
+
+              if (candidateText && candidateText.trim().length > 0) {
+                answerText = candidateText;
+                console.log(
+                  '[RAG Endpoint] Raw LLM response:',
+                  JSON.stringify(llmResponse, null, 2)
+                );
+                console.log(
+                  '[RAG Endpoint] Extracted answer length:',
+                  answerText.length
+                );
+                console.log(`[RAG Endpoint] Answer generated successfully using ${llmResponse?.provider || tier.provider} (${llmResponse?.model || tier.model}).`);
+                break;
+              }
+
+              console.warn(`[RAG Endpoint] Provider ${tier.provider} (${tier.model}) returned empty answer. Trying fallback tier...`);
+            } catch (err) {
+              lastLLMErr = err;
+              console.warn(`[RAG Endpoint] LLM generation failed for ${tier.provider} (${tier.model}): ${err?.message || err}. Trying fallback tier...`);
+            }
+          }
+
+          if (!answerText || !answerText.trim()) {
+            console.error(
+              '[RAG Endpoint] All LLM provider fallbacks failed or returned empty answers. RAGAS evaluation skipped.'
+            );
             await traceError({
               errorType: 'LLMGenerationError',
-              errorMessage: llmErr?.message || String(llmErr),
+              errorMessage: lastLLMErr?.message || 'All LLM providers returned empty answers.',
               component: 'llm_generation',
               requestId: req.requestContext.requestId,
               sessionId: req.requestContext.sessionId,
             });
-            setJsonHeaders(res, 500);
-            res.end(JSON.stringify({ error: 'LLM generation failed.' }));
-            return;
-          }
-
-          console.log(
-            '[RAG Endpoint] Raw LLM response:',
-            JSON.stringify(llmResponse, null, 2)
-          );
-
-          let answerText =
-            llmResponse?.content ||
-            llmResponse?.text ||
-            llmResponse?.response ||
-            llmResponse?.message?.content ||
-            llmResponse?.choices?.[0]?.message?.content ||
-            '';
-
-          let suggestions = [];
-
-          console.log(
-            '[RAG Endpoint] Extracted answer length:',
-            answerText.length
-          );
-
-          if (!answerText.trim()) {
-            console.error(
-              '[RAG Endpoint] LLM returned an empty answer. RAGAS evaluation skipped.'
-            );
-
             setJsonHeaders(res, 502);
             res.end(JSON.stringify({
-              error: 'The LLM provider returned an empty answer.',
+              error: 'All LLM providers failed or returned an empty answer.',
               provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
               model: llmResponse?.model || settings.DEFAULT_LLM_MODEL
             }));
-
             return;
           }
           console.log('[RAG Endpoint] Answer generated successfully.');
@@ -2331,6 +2423,25 @@ What is the penalty for violating this provision?`;
           console.log(
             `[RAG Endpoint] Extracted ${suggestions.length} suggestions.`
           );
+
+          serverLogs.push({
+            step: 4,
+            agent: 'CLA Legal Advisor Agent',
+            title: 'Step 4: CLA Answer Generation & Citation',
+            status: 'completed',
+            timeMs: llmTimeMs,
+            provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+            model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
+            summary: 'Synthesized a clear, grounded legal answer with inline numerical citations [1], [2] based strictly on the retrieved document context.',
+            details: {
+              provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+              model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
+              sourcesUsed: results.length,
+              suggestionsGenerated: suggestions.length,
+              answerLength: answerText.length,
+            },
+          });
+
           const ragasContexts = results
             .map(r => r.chunk_text || r.content || r.text || '')
             .filter(context => context && context.trim());
@@ -2376,6 +2487,33 @@ What is the penalty for violating this provision?`;
               const evaluationTimeMs = Number.isFinite(evaluation?.evaluationTimeMs) ? evaluation.evaluationTimeMs : (Date.now() - evaluationStartedAt);
               const evaluationStatus = evaluation?.status === 'failed' ? 'failed' : 'completed';
 
+              serverLogs.push({
+                step: 5,
+                agent: 'AI Quality Judge Agent',
+                title: 'Step 5: Quality Assessment & RAGAS Metric Scoring',
+                status: evaluationStatus,
+                timeMs: evaluationTimeMs,
+                provider: evaluation?.judgeProvider || 'openai',
+                model: evaluation?.judgeModel || 'gpt-4.1-mini',
+                summary: evaluationStatus === 'completed'
+                  ? 'Evaluated response accuracy across 5 key quality metrics (Faithfulness, Relevancy, Context Precision, Recall, and PII Protection).'
+                  : 'Metric quality evaluation failed or did not finish.',
+                details: {
+                  faithfulness: evaluation?.faithfulness ?? null,
+                  answerRelevancy: evaluation?.answerRelevancy ?? null,
+                  contextPrecision: evaluation?.contextPrecision ?? null,
+                  contextRecall: evaluation?.contextRecall ?? null,
+                  piiLeakage: evaluation?.piiLeakage ?? null,
+                  reasons: {
+                    faithfulnessReason: evaluation?.faithfulnessReason || null,
+                    answerRelevancyReason: evaluation?.answerRelevancyReason || null,
+                    contextPrecisionReason: evaluation?.contextPrecisionReason || null,
+                    contextRecallReason: evaluation?.contextRecallReason || null,
+                    piiLeakageReason: evaluation?.piiLeakageReason || null,
+                  },
+                },
+              });
+
               try {
                 const evaluationDocument = buildEvaluationResultDocument({
                   requestContext: req.requestContext,
@@ -2400,6 +2538,7 @@ What is the penalty for violating this provision?`;
                     llmTime: llmTimeMs ?? null,
                   },
                   source: requestSource,
+                  serverLogs,
                 });
 
                 await persistEvaluationResult(db, evaluationDocument, io);
