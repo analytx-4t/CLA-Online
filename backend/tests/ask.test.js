@@ -134,4 +134,24 @@ test.describe('/api/ask Endpoint Integration Tests', () => {
     assert.ok(data.error);
     assert.strictEqual(data.error, 'Question parameter is required and cannot be empty.');
   });
+
+  test('POST /api/ask - Emits progress updates for a request id', async () => {
+    const requestId = `progress-test-${Date.now()}`;
+    const res = await fetch(`${BASE_URL}/api/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: 'Can a managing director be in the employment of the company?', requestId })
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const progressRes = await fetch(`${BASE_URL}/api/ask/progress/${encodeURIComponent(requestId)}`);
+    assert.strictEqual(progressRes.status, 200);
+    const progressData = await progressRes.json();
+
+    assert.ok(progressData.requestId === requestId, 'progress should be tracked for the request id');
+    assert.ok(Array.isArray(progressData.steps), 'progress should include a step history');
+    assert.ok(progressData.steps.length > 0, 'progress should include at least one step');
+    assert.ok(progressData.currentStage === 'completed' || progressData.currentStage === 'complete', 'progress should complete');
+  });
 });

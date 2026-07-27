@@ -91,12 +91,128 @@ function nowISO() {
   return new Date().toISOString();
 }
 
+function ensureMessageTimestamp(message) {
+  if (!message || typeof message !== 'object') return null;
+
+  const timestampValue = message.timestamp || message.created_at || message.updated_at;
+  if (timestampValue) {
+    if (!message.created_at) message.created_at = timestampValue;
+    if (!message.timestamp) message.timestamp = timestampValue;
+    return timestampValue;
+  }
+
+  const createdAt = nowISO();
+  message.created_at = createdAt;
+  message.timestamp = createdAt;
+  return createdAt;
+}
+
+function formatMessageTimestamp(message) {
+  const timestampValue = ensureMessageTimestamp(message);
+  if (!timestampValue) return '';
+
+  const date = new Date(timestampValue);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
 let activeTypingIntervals = [];
 let messagesToAnimate = new Set();
+let activeProgressPollTimer = null;
+let activeProgressRequestId = null;
+let activeProgressStageIndex = 0;
+let activeProcessingSessionId = null;
+let activeProcessingMessageId = null;
 
 function clearTypingIntervals() {
   activeTypingIntervals.forEach(clearInterval);
   activeTypingIntervals = [];
+}
+
+function clearProcessingIndicator() {
+  if (activeProgressPollTimer) {
+    clearInterval(activeProgressPollTimer);
+    activeProgressPollTimer = null;
+  }
+  activeProgressRequestId = null;
+  activeProgressStageIndex = 0;
+  activeProcessingSessionId = null;
+  activeProcessingMessageId = null;
+}
+
+function updateThinkingMessage(sessionId, messageId, messageText, stageIndex) {
+  const sessionMessages = messagesBySession[sessionId] || [];
+  const thinkingMessage = sessionMessages.find(message => message.message_id === messageId);
+  if (!thinkingMessage) return false;
+
+  thinkingMessage.metadata = thinkingMessage.metadata || {};
+  thinkingMessage.metadata.isThinking = true;
+  thinkingMessage.metadata.processingStage = stageIndex;
+  thinkingMessage.content = messageText;
+  return true;
+}
+
+function startBackendProgressPolling(sessionId, messageId, requestId) {
+  clearProcessingIndicator();
+
+  const sessionMessages = messagesBySession[sessionId] || [];
+  const thinkingMessage = sessionMessages.find(message => message.message_id === messageId);
+  if (!thinkingMessage) return;
+
+  thinkingMessage.metadata = thinkingMessage.metadata || {};
+  thinkingMessage.metadata.isThinking = true;
+  thinkingMessage.metadata.processingStage = 0;
+  thinkingMessage.content = 'Preparing your response...';
+
+  activeProcessingSessionId = sessionId;
+  activeProcessingMessageId = messageId;
+  activeProgressRequestId = requestId;
+  activeProgressStageIndex = 0;
+
+  renderMessages();
+
+  const pollProgress = async () => {
+    if (!activeProgressRequestId || !activeProcessingSessionId) return;
+
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/ask/progress/${encodeURIComponent(activeProgressRequestId)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': getCurrentUserId(),
+        },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const progress = await response.json();
+      const stageIndex = Number(progress?.stageIndex || progress?.stage || 0);
+      const messageText = progress?.message || 'Preparing your response...';
+      const isCompleted = progress?.status === 'completed' || progress?.currentStage === 'completed' || stageIndex >= 5;
+
+      if (!Number.isFinite(stageIndex) || stageIndex <= activeProgressStageIndex) {
+        if (isCompleted) {
+          clearProcessingIndicator();
+        }
+        return;
+      }
+
+      if (updateThinkingMessage(sessionId, messageId, messageText, stageIndex)) {
+        activeProgressStageIndex = stageIndex;
+        renderMessages();
+      }
+    } catch (error) {
+      // Ignore polling failures and keep the fallback loading message visible.
+    }
+  };
+
+  void pollProgress();
+  activeProgressPollTimer = setInterval(() => {
+    void pollProgress();
+  }, 250);
 }
 
 function createSession({ title, user_id = getCurrentUserId(), status = SESSION_STATUS.ACTIVE } = {}) {
@@ -112,6 +228,24 @@ function createSession({ title, user_id = getCurrentUserId(), status = SESSION_S
     last_message_at: timestamp,
     message_count: 0,
     status,
+    isDraft: false,
+  };
+}
+
+function createDraftSession({ title, user_id = getCurrentUserId(), status = SESSION_STATUS.ACTIVE } = {}) {
+  const sessionId = generateSessionId();
+  const timestamp = nowISO();
+  return {
+    session_id: sessionId,
+    user_id,
+    title: title || 'New chat',
+    mode: 'chat',
+    created_at: timestamp,
+    updated_at: timestamp,
+    last_message_at: timestamp,
+    message_count: 0,
+    status,
+    isDraft: true,
   };
 }
 
@@ -149,6 +283,32 @@ async function persistSession(sessionPayload) {
 
 function getCurrentSession() {
   return sessions.find(session => session.session_id === currentSessionId) || null;
+}
+
+function getSessionMessages(session) {
+  if (!session || !session.session_id) return [];
+  return messagesBySession[session.session_id] || [];
+}
+
+function isEmptyDraftSession(session) {
+  if (!session || !session.isDraft) return false;
+  const messages = getSessionMessages(session);
+  return !messages.some(message => message.role === 'user');
+}
+
+function discardEmptyDraftSession(sessionIdToKeep = null) {
+  const draftSessions = sessions.filter(session => isEmptyDraftSession(session) && session.session_id !== sessionIdToKeep);
+  if (!draftSessions.length) return false;
+
+  draftSessions.forEach(session => {
+    delete messagesBySession[session.session_id];
+  });
+  sessions = sessions.filter(session => !draftSessions.some(draft => draft.session_id === session.session_id));
+
+  if (currentSessionId && draftSessions.some(session => session.session_id === currentSessionId) && currentSessionId !== sessionIdToKeep) {
+    currentSessionId = null;
+  }
+  return true;
 }
 
 function getMessagesForSession(sessionId) {
@@ -452,7 +612,7 @@ function renderConversationTracker(messages) {
       <span class="tracker-index">${itemIndex + 1}</span>
       <span class="tracker-text">${escapeHTML(preview.length > 72 ? `${preview.slice(0, 72)}…` : preview)}</span>
     `;
-    chip.addEventListener('click', () => scrollToMessage(entry.assistantMessage.message_id));
+    chip.addEventListener('click', () => scrollToMessage(entry.userMessage.message_id));
 
     // Hover preview: show full user prompt in the floating preview box
     chip.addEventListener('mouseenter', (ev) => {
@@ -499,10 +659,14 @@ function scrollToMessage(messageId) {
   if (!messageId || !chatWindow) return;
   const target = chatWindow.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
   if (!target) return;
-  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   target.classList.remove('tracker-highlight');
   void target.offsetWidth;
   target.classList.add('tracker-highlight');
+  requestAnimationFrame(() => {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 }
 
 function applySidebarWidth(width) {
@@ -553,7 +717,9 @@ function setupSidebarResizer() {
 }
 
 function truncateTitle(text) {
-  return text.length > 40 ? text.slice(0, 40) + '...' : text;
+  if (!text) return 'New chat';
+  const value = String(text).trim();
+  return value.length > 40 ? value.slice(0, 40) + '...' : value;
 }
 
 function ensureSessionMenuPortal() {
@@ -627,8 +793,8 @@ function renderSessions() {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'chat-item' + (session.session_id === currentSessionId ? ' active' : '');
-    const titleText = session.title || 'New chat';
-    item.setAttribute('title', titleText);
+    const titleText = truncateTitle(session.title || 'New chat');
+    item.setAttribute('title', session.title || 'New chat');
     item.innerHTML = highlightMatch(titleText, sessionSearchQuery);
     item.addEventListener('click', () => selectSession(session.session_id));
     const moreBtn = document.createElement('button');
@@ -721,20 +887,6 @@ function ensureCitationVisible(citationsContainer, cardEl) {
   cardEl.classList.remove('highlight');
   void cardEl.offsetWidth;
   cardEl.classList.add('highlight');
-}
-
-// Quiet signal for answers with no strong retrieved sources — legal answers
-// should visibly hedge rather than read with the same confidence every time.
-function renderConfidenceHedge(container, message) {
-  if (container.querySelector('.confidence-hedge')) return;
-  const sources = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
-  const content = message.content || '';
-  if (sources.length > 0 || content.length < 120) return;
-
-  const hedge = document.createElement('div');
-  hedge.className = 'confidence-hedge';
-  hedge.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>No strong matching sources were found for this answer — verify independently before relying on it.</span>`;
-  container.appendChild(hedge);
 }
 
 function renderSourceCitations(container, message) {
@@ -889,18 +1041,42 @@ function renderMessageActions(container, message) {
     </svg>
   `;
 
-  thumbsUpBtn.addEventListener('click', () => {
-    const isActive = thumbsUpBtn.classList.toggle('active');
-    thumbsDownBtn.classList.remove('active');
-    sendFeedback(message.session_id, message.message_id, isActive ? 'up' : 'none');
-    message.feedback = isActive ? 'up' : 'none';
+  const updateFeedbackUI = (nextFeedback) => {
+    const isUp = nextFeedback === 'up';
+    const isDown = nextFeedback === 'down';
+    thumbsUpBtn.classList.toggle('active', isUp);
+    thumbsDownBtn.classList.toggle('active', isDown);
+    message.feedback = nextFeedback;
+  };
+
+  thumbsUpBtn.addEventListener('click', async () => {
+    const previousFeedback = message.feedback;
+    const nextFeedback = thumbsUpBtn.classList.contains('active') ? null : 'up';
+    updateFeedbackUI(nextFeedback);
+
+    try {
+      await sendFeedback(message.session_id, message.message_id, nextFeedback);
+    } catch (error) {
+      updateFeedbackUI(previousFeedback || null);
+      if (window.alert) {
+        window.alert('Unable to save your feedback right now.');
+      }
+    }
   });
 
-  thumbsDownBtn.addEventListener('click', () => {
-    const isActive = thumbsDownBtn.classList.toggle('active');
-    thumbsUpBtn.classList.remove('active');
-    sendFeedback(message.session_id, message.message_id, isActive ? 'down' : 'none');
-    message.feedback = isActive ? 'down' : 'none';
+  thumbsDownBtn.addEventListener('click', async () => {
+    const previousFeedback = message.feedback;
+    const nextFeedback = thumbsDownBtn.classList.contains('active') ? null : 'down';
+    updateFeedbackUI(nextFeedback);
+
+    try {
+      await sendFeedback(message.session_id, message.message_id, nextFeedback);
+    } catch (error) {
+      updateFeedbackUI(previousFeedback || null);
+      if (window.alert) {
+        window.alert('Unable to save your feedback right now.');
+      }
+    }
   });
 
   actionsRow.appendChild(copyBtn);
@@ -958,7 +1134,7 @@ function renderMessages() {
 
   messages.forEach(message => {
     const wrapper = document.createElement('div');
-    wrapper.className = 'message-bubble-wrapper';
+    wrapper.className = `message-bubble-wrapper ${message.role === 'user' ? 'user' : 'assistant'}`;
     wrapper.dataset.messageId = message.message_id;
     wrapper.dataset.messageRole = message.role;
 
@@ -971,8 +1147,19 @@ function renderMessages() {
       contentDiv.className = 'assistant-text-content';
       div.appendChild(contentDiv);
 
-      // Check if we need to animate/stream this message
-      if (messagesToAnimate.has(message.message_id)) {
+      if (message.metadata?.isThinking) {
+        const statusBubble = document.createElement('div');
+        statusBubble.className = 'assistant-processing';
+        const dots = document.createElement('span');
+        dots.className = 'processing-dots';
+        dots.innerHTML = '<span></span><span></span><span></span>';
+        const text = document.createElement('span');
+        text.className = 'processing-text';
+        text.textContent = message.content || 'Preparing a clear response...';
+        statusBubble.appendChild(dots);
+        statusBubble.appendChild(text);
+        contentDiv.appendChild(statusBubble);
+      } else if (messagesToAnimate.has(message.message_id)) {
         messagesToAnimate.delete(message.message_id); // prevent re-animation
         contentDiv.classList.add('streaming-cursor');
 
@@ -992,7 +1179,6 @@ function renderMessages() {
 
             // Render in order: Citations, Follow-up Questions, Message Actions
             renderSourceCitations(div, message);
-            renderConfidenceHedge(div, message);
             renderSuggestedFollowUps(div, message);
             renderMessageActions(div, message);
             scrollToBottom();
@@ -1012,7 +1198,6 @@ function renderMessages() {
         contentDiv.innerHTML = formatMarkdown(sanitizedContent);
         // Render in order: Citations, Follow-up Questions, Message Actions
         renderSourceCitations(div, message);
-        renderConfidenceHedge(div, message);
         renderSuggestedFollowUps(div, message);
         renderMessageActions(div, message);
       }
@@ -1033,6 +1218,12 @@ function renderMessages() {
         div.appendChild(attachContainer);
       }
     }
+
+    const timestampEl = document.createElement('div');
+    timestampEl.className = 'message-timestamp';
+    timestampEl.textContent = formatMessageTimestamp(message);
+    wrapper.appendChild(timestampEl);
+
     chatWindow.appendChild(wrapper);
   });
   scrollToBottom();
@@ -1100,9 +1291,6 @@ function addMessage(role, content, metadata) {
   messages.push(message);
   messagesBySession[session.session_id] = messages;
   updateSessionCounters(session);
-  if (role === 'user' && (!session.title || session.title === 'New chat')) {
-    session.title = truncateTitle(content);
-  }
   renderSessions();
   renderMessages();
   updateWelcomeCard();
@@ -1136,18 +1324,22 @@ async function addAssistantMessage() {
 }
 
 async function createNewSession() {
-  const session = createSession();
-  try {
-    const resolvedSession = await persistSession(session);
-    sessions.unshift(resolvedSession);
-    messagesBySession[resolvedSession.session_id] = [];
-    setCurrentSession(resolvedSession.session_id);
-  } catch (error) {
-    sessions.unshift(session);
-    messagesBySession[session.session_id] = [];
-    setCurrentSession(session.session_id);
-    console.error('Unable to persist new chat session', error);
+  const activeEmptyDraft = currentSessionId && sessions.find(session => session.session_id === currentSessionId && session.isDraft && isEmptyDraftSession(session));
+  if (activeEmptyDraft) {
+    activeSessionMenuId = null;
+    renderSessions();
+    renderMessages();
+    updateWelcomeCard();
+    return;
   }
+
+  discardEmptyDraftSession();
+
+  const session = createDraftSession();
+  sessions.unshift(session);
+  messagesBySession[session.session_id] = [];
+  setCurrentSession(session.session_id);
+
   activeSessionMenuId = null;
   renderSessions();
   renderMessages();
@@ -1155,6 +1347,7 @@ async function createNewSession() {
 }
 
 async function selectSession(sessionId) {
+  discardEmptyDraftSession(sessionId);
   setCurrentSession(sessionId);
 
   activeSessionMenuId = null;
@@ -1189,6 +1382,43 @@ function closeSessionMenu() {
   }
 }
 
+async function persistDraftSessionIfNeeded() {
+  const session = getCurrentSession();
+  if (!session || !session.isDraft) return session;
+
+  try {
+    const persistedSession = await persistSession({
+      session_id: session.session_id,
+      user_id: session.user_id || getCurrentUserId(),
+      title: session.title || 'New chat',
+      mode: session.mode || 'chat',
+      created_at: session.created_at || nowISO(),
+      updated_at: session.updated_at || nowISO(),
+      last_message_at: session.last_message_at || nowISO(),
+      message_count: session.message_count || 0,
+      status: session.status || SESSION_STATUS.ACTIVE,
+    });
+
+    const draftMessages = messagesBySession[session.session_id] || [];
+    const persistedSessionId = persistedSession.session_id || persistedSession.id || persistedSession._id || session.session_id;
+    messagesBySession[persistedSessionId] = draftMessages;
+    if (persistedSessionId !== session.session_id) {
+      delete messagesBySession[session.session_id];
+    }
+
+    const index = sessions.findIndex(item => item.session_id === session.session_id);
+    if (index !== -1) {
+      sessions[index] = { ...persistedSession, isDraft: false };
+    }
+
+    currentSessionId = persistedSessionId;
+    return sessions.find(item => item.session_id === persistedSessionId) || null;
+  } catch (error) {
+    console.error('Unable to persist draft session', error);
+    return session;
+  }
+}
+
 async function handleUserSend() {
   if (!messageInput || isSendingMessage) return;
   const text = messageInput.value.trim();
@@ -1201,6 +1431,15 @@ async function handleUserSend() {
   }
 
   isSendingMessage = true;
+
+  const currentSession = getCurrentSession();
+  let activeSession = currentSession;
+  if (currentSession && currentSession.isDraft) {
+    activeSession = await persistDraftSessionIfNeeded();
+  }
+  if (activeSession) {
+    setCurrentSession(activeSession.session_id);
+  }
 
   // Attachment metadata persisted alongside the message (name/size for display in history).
   const attachmentsMeta = selectedFiles.map(entry => ({
@@ -1229,11 +1468,12 @@ async function handleUserSend() {
 
   const thinkingMessageId = 'thinking-' + Date.now();
   const sessionId = currentSessionId;
+  const progressRequestId = `req-${generateId()}`;
   const thinkingMsg = {
     message_id: thinkingMessageId,
     session_id: sessionId,
     role: 'assistant',
-    content: 'CLA is analyzing your query and generating a response...',
+    content: 'Preparing your response...',
     created_at: nowISO(),
     metadata: { isThinking: true }
   };
@@ -1244,6 +1484,7 @@ async function handleUserSend() {
   messagesBySession[sessionId].push(thinkingMsg);
   renderMessages();
   updateWelcomeCard();
+  startBackendProgressPolling(sessionId, thinkingMessageId, progressRequestId);
 
   try {
     const response = await fetch(`${getApiBaseUrl()}/api/ask`, {
@@ -1251,7 +1492,7 @@ async function handleUserSend() {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ question: text, attachments: attachmentsForContext })
+      body: JSON.stringify({ question: text, attachments: attachmentsForContext, requestId: progressRequestId })
     });
 
     if (!response.ok) {
@@ -1293,6 +1534,7 @@ async function handleUserSend() {
     };
 
     const saveResult = await sendMessageToSession(sessionId, persistPayload);
+    clearProcessingIndicator();
     messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
 
     if (saveResult.userMessage) {
@@ -1318,12 +1560,22 @@ async function handleUserSend() {
     if (session) {
       session.message_count = messagesBySession[sessionId].length;
       session.updated_at = nowISO();
-      if (session.title === 'New chat') {
-        session.title = truncateTitle(text);
+      if (saveResult && saveResult.session) {
+        session.title = saveResult.session.title || session.title;
+        if (saveResult.session.updated_at) {
+          session.updated_at = saveResult.session.updated_at;
+        }
+        if (saveResult.session.last_message_at) {
+          session.last_message_at = saveResult.session.last_message_at;
+        }
+        if (typeof saveResult.session.message_count === 'number') {
+          session.message_count = saveResult.session.message_count;
+        }
       }
     }
   } catch (error) {
     console.error('Failed to send message:', error);
+    clearProcessingIndicator();
     messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
     messagesBySession[sessionId].push({
       message_id: 'error-' + Date.now(),
@@ -1740,7 +1992,13 @@ async function fetchSessionMessages(sessionId) {
 
     const data = await response.json();
 
-    return data.messages || [];
+    return (data.messages || []).map(message => {
+      ensureMessageTimestamp(message);
+      if (message.role === 'assistant' && message.feedback === undefined) {
+        message.feedback = null;
+      }
+      return message;
+    });
   } catch (err) {
     console.error('fetchSessionMessages error:', err);
     return messagesBySession[sessionId] || [];
@@ -1755,25 +2013,25 @@ async function searchChatSessions(query) {
 }
 
 async function sendFeedback(sessionId, messageId, feedbackType) {
-  try {
-    const response = await fetch(`${getApiBaseUrl()}/api/chat/feedback`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': getCurrentUserId()
-      },
-      body: JSON.stringify({
-        session_id: sessionId,
-        message_id: messageId,
-        feedback: feedbackType
-      })
-    });
-    if (!response.ok) {
-      console.error('Failed to save feedback');
-    }
-  } catch (err) {
-    console.error('sendFeedback error:', err);
+  const response = await fetch(`${getApiBaseUrl()}/api/chat/feedback`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-user-id': getCurrentUserId()
+    },
+    body: JSON.stringify({
+      session_id: sessionId,
+      message_id: messageId,
+      feedback: feedbackType
+    })
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to save feedback');
   }
+
+  return await response.json().catch(() => ({}));
 }
 
 async function sendMessageToSession(sessionId, messagePayload) {

@@ -31,6 +31,7 @@ const { handleAdminRoutes } = require('./adminRoutes');
 const { Server } = require('socket.io');
 
 let logfire;
+const requestProgressStore = new Map();
 
 async function getLogfire() {
   if (!logfire) {
@@ -57,6 +58,80 @@ function setJsonHeaders(res, statusCode) {
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, x-user-id, x-auth-user-id',
   });
+}
+
+function getProgressStageMeta(stageIndex) {
+  const mapping = {
+    0: { currentStage: 'queued', message: 'Preparing your response...' },
+    1: { currentStage: 'understanding', message: 'Understanding your question...' },
+    2: { currentStage: 'retrieving', message: 'Finding relevant information...' },
+    3: { currentStage: 'reviewing', message: 'Reviewing the retrieved information...' },
+    4: { currentStage: 'preparing', message: 'Preparing your answer...' },
+    5: { currentStage: 'completed', message: 'Finalizing your response...' },
+  };
+
+  return mapping[stageIndex] || mapping[0];
+}
+
+function updateRequestProgress(requestId, patch = {}) {
+  const normalizedRequestId = requestId || `req-${randomUUID()}`;
+  const previous = requestProgressStore.get(normalizedRequestId) || {
+    requestId: normalizedRequestId,
+    status: 'in_progress',
+    stageIndex: 0,
+    currentStage: 'queued',
+    message: 'Preparing your response...',
+    steps: [],
+    startedAt: new Date().toISOString(),
+  };
+
+  const nextStageIndex = Number.isFinite(patch.stageIndex) ? patch.stageIndex : previous.stageIndex;
+  const stageMeta = getProgressStageMeta(nextStageIndex);
+  const nextMessage = patch.message || stageMeta.message || previous.message;
+  const nextCurrentStage = patch.currentStage || stageMeta.currentStage || previous.currentStage;
+  const nextStatus = patch.status || previous.status || 'in_progress';
+
+  const nextSteps = Array.isArray(previous.steps) ? previous.steps.slice() : [];
+  if (Number.isFinite(patch.stageIndex) && patch.stageIndex > previous.stageIndex) {
+    nextSteps.push({
+      stageIndex: patch.stageIndex,
+      currentStage: nextCurrentStage,
+      message: nextMessage,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const nextState = {
+    ...previous,
+    requestId: normalizedRequestId,
+    status: nextStatus,
+    stageIndex: Math.max(previous.stageIndex, nextStageIndex),
+    currentStage: nextCurrentStage,
+    message: nextMessage,
+    steps: nextSteps,
+    updatedAt: new Date().toISOString(),
+  };
+
+  requestProgressStore.set(normalizedRequestId, nextState);
+  return nextState;
+}
+
+function getRequestProgress(requestId) {
+  const normalizedRequestId = requestId || null;
+  if (!normalizedRequestId) {
+    return null;
+  }
+
+  const state = requestProgressStore.get(normalizedRequestId);
+  return state ? { ...state } : null;
+}
+
+function clearRequestProgress(requestId) {
+  if (!requestId) {
+    return;
+  }
+
+  requestProgressStore.delete(requestId);
 }
 
 function handleCors(req, res) {
@@ -96,6 +171,7 @@ function getRequestBody(req) {
         req._parsedBody = parsed;
         resolve(parsed);
       } catch (error) {
+        console.error('[Request Body] Failed to parse body:', JSON.stringify(body));
         reject(error);
       }
     });
@@ -105,6 +181,71 @@ function getRequestBody(req) {
 
 function getSessionLookupFilter(sessionId, userId) {
   return { session_id: sessionId, user_id: userId };
+}
+
+function normalizeGeneratedTitle(title) {
+  if (typeof title !== 'string') return '';
+
+  const cleaned = title
+    .replace(/^[\s"'`]+|[\s"'`]+$/g, '')
+    .replace(/[.!?]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) return '';
+
+  const words = cleaned
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(word => word.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, ''))
+    .filter(Boolean);
+
+  if (!words.length) return '';
+
+  const stopWords = new Set(['the', 'and', 'for', 'with', 'about', 'into', 'from', 'this', 'that', 'your', 'how', 'what', 'when', 'where', 'why', 'can', 'could', 'should', 'would', 'please', 'regarding', 'regard', 'about']);
+  const meaningfulWords = words.filter(word => !stopWords.has(word.toLowerCase()));
+  const titleWords = (meaningfulWords.length ? meaningfulWords : words).slice(0, 6);
+
+  return titleWords.join(' ');
+}
+
+async function generateConversationTitle({ userContent, assistantContent, requestContext }) {
+  const prompt = [
+    'Create a short conversation title for the following chat.',
+    'Requirements:',
+    '- 3 to 6 words',
+    '- describe the topic, not the full first message',
+    '- no punctuation, no quotes, no trailing periods',
+    '- make it human readable',
+    '',
+    'User message:',
+    userContent || 'No user message available',
+    '',
+    'Assistant response:',
+    assistantContent || 'No assistant response available',
+  ].join('\n');
+
+  try {
+    const llm = getLLMProvider(settings.DEFAULT_LLM_PROVIDER, settings.DEFAULT_LLM_MODEL);
+    const llmResponse = await llm.generate({
+      messages: [{ role: 'user', content: prompt }],
+      systemPrompt: 'You create concise, human-readable chat titles.',
+      temperature: 0.1,
+      maxTokens: 24,
+      requestContext,
+    });
+
+    const generatedTitle = normalizeGeneratedTitle(llmResponse?.content || '');
+    if (generatedTitle) {
+      return generatedTitle;
+    }
+  } catch (error) {
+    console.warn('Conversation title generation failed, falling back to placeholder title handling.', error?.message || error);
+  }
+
+  const fallbackSource = `${assistantContent || ''}\n${userContent || ''}`;
+  const fallbackTitle = normalizeGeneratedTitle(fallbackSource);
+  return fallbackTitle || '';
 }
 
 async function findOwnedSession(sessionsCollection, sessionId, userId) {
@@ -1914,13 +2055,39 @@ async function startServer() {
         return;
       }
 
+      if (path === '/api/ask/progress' && req.method === 'GET') {
+        const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+        const requestId = urlParsed.searchParams.get('requestId');
+        if (!requestId) {
+          setJsonHeaders(res, 400);
+          res.end(JSON.stringify({ error: 'requestId parameter is required.' }));
+          return;
+        }
+
+        const progress = getRequestProgress(requestId);
+        setJsonHeaders(res, progress ? 200 : 404);
+        res.end(JSON.stringify(progress || { requestId, status: 'not_found', stageIndex: 0, currentStage: 'queued', message: 'Preparing your response...', steps: [] }));
+        return;
+      }
+
+      const progressRouteMatch = path.match(/^\/api\/ask\/progress\/([^/]+)$/);
+      if (progressRouteMatch && req.method === 'GET') {
+        const requestId = decodeURIComponent(progressRouteMatch[1]);
+        const progress = getRequestProgress(requestId);
+        setJsonHeaders(res, progress ? 200 : 404);
+        res.end(JSON.stringify(progress || { requestId, status: 'not_found', stageIndex: 0, currentStage: 'queued', message: 'Preparing your response...', steps: [] }));
+        return;
+      }
+
       if (path === '/api/ask' && req.method === 'POST') {
         // Wrap entire RAG request in comprehensive tracing
         const executeRAGRequest = async () => {
           const payload = await getRequestBody(req);
+          const requestId = payload?.requestId || payload?.request_id || null;
           req.requestContext = createRequestContext({
             sessionId: payload?.session_id || null,
             messageId: null,
+            requestId,
           });
           const question = payload.question;
           // Distinguishes real end-user chatbot traffic from internal callers
@@ -1935,6 +2102,15 @@ async function startServer() {
             res.end(JSON.stringify({ error: 'Question parameter is required and cannot be empty.' }));
             return;
           }
+
+          const progressRequestId = requestId || req.requestContext?.requestId || `req-${randomUUID()}`;
+          req.requestContext.requestId = progressRequestId;
+          updateRequestProgress(progressRequestId, {
+            stageIndex: 0,
+            currentStage: 'queued',
+            message: 'Preparing your response...',
+            status: 'in_progress',
+          });
 
           console.log(`[RAG Endpoint] Received question: "${question.trim()}"`);
 
@@ -2028,6 +2204,13 @@ async function startServer() {
                   console.error('[RAG Endpoint] Failed to build guardrail-blocked evaluation document:', buildError);
                 }
 
+                updateRequestProgress(progressRequestId, {
+                  stageIndex: 5,
+                  currentStage: 'completed',
+                  message: 'Finalizing your response...',
+                  status: 'completed',
+                });
+
                 setJsonHeaders(res, 200);
                 res.end(JSON.stringify({
                   answer: guardrailResult.response || 'Your request cannot be processed.',
@@ -2046,6 +2229,12 @@ async function startServer() {
             }
           } catch (gErr) {
             console.error('[RAG Endpoint] Guardrails error:', gErr?.message || gErr);
+            updateRequestProgress(progressRequestId, {
+              stageIndex: 5,
+              currentStage: 'completed',
+              message: 'Finalizing your response...',
+              status: 'failed',
+            });
             await traceError({
               errorType: 'GuardrailsError',
               errorMessage: gErr?.message || String(gErr),
@@ -2069,6 +2258,13 @@ async function startServer() {
             // If expansion fails, expandLegalQuery() safely falls back
             // to the original user question.
             const { expandLegalQuery } = require('./agentSystem');
+
+            updateRequestProgress(progressRequestId, {
+              stageIndex: 1,
+              currentStage: 'understanding',
+              message: 'Understanding your question...',
+              status: 'in_progress',
+            });
 
             const expansionStartedAt = Date.now();
             const queryExpansion = await traceQueryExpansion({
@@ -2135,6 +2331,13 @@ async function startServer() {
             );
 
             // Existing embedding search remains completely unchanged.
+            updateRequestProgress(progressRequestId, {
+              stageIndex: 2,
+              currentStage: 'retrieving',
+              message: 'Finding relevant information...',
+              status: 'in_progress',
+            });
+
             retrievalStartedAt = Date.now();
             const candidateResults = await traceRetrieval({
               query: retrievalQuery,
@@ -2414,6 +2617,13 @@ What is the penalty for violating this provision?`;
           }
           console.log('[RAG Endpoint] Answer generated successfully.');
 
+          updateRequestProgress(progressRequestId, {
+            stageIndex: 4,
+            currentStage: 'preparing',
+            message: 'Preparing your answer...',
+            status: 'in_progress',
+          });
+
           const parsedResponse =
             parseAnswerAndSuggestions(answerText);
 
@@ -2681,6 +2891,13 @@ What is the penalty for violating this provision?`;
             });
           }
 
+          updateRequestProgress(progressRequestId, {
+            stageIndex: 5,
+            currentStage: 'completed',
+            message: 'Finalizing your response...',
+            status: 'completed',
+          });
+
           setJsonHeaders(res, 200);
           res.end(JSON.stringify({
             requestId: req.requestContext?.requestId || null,
@@ -2720,12 +2937,6 @@ What is the penalty for violating this provision?`;
 
         // Execute with root tracing
         try {
-          const payload = await getRequestBody(req);
-          const requestId = req.requestContext?.requestId || `req-${Date.now()}`;
-          const sessionId = payload?.session_id || req.requestContext?.sessionId || null;
-          const userId = getAuthenticatedUserId(req);
-          const question = payload?.question || '';
-
           await executeRAGRequest();
         } catch (rootErr) {
           console.error('[RAG Endpoint] Root execution error:', rootErr);
@@ -3104,8 +3315,17 @@ What is the penalty for violating this provision?`;
             message_count: session.message_count + 2
           };
 
-          if ((session.title === 'New chat' || session.title === 'New RAG Search') && payload.content) {
-            sessionUpdate.title = payload.content.trim().slice(0, 50);
+          const shouldGenerateTitle = !session.title || session.title === 'New chat' || session.title === 'New RAG Search' || session.title === '';
+          if (shouldGenerateTitle && payload.content) {
+            const generatedTitle = await generateConversationTitle({
+              userContent: payload.content,
+              assistantContent: assistantMsgDoc.content,
+              requestContext: req.requestContext,
+            });
+
+            if (generatedTitle) {
+              sessionUpdate.title = generatedTitle;
+            }
           }
 
           await sessionsCollection.updateOne(
@@ -3113,10 +3333,22 @@ What is the penalty for violating this provision?`;
             { $set: sessionUpdate }
           );
 
+          const updatedSession = await sessionsCollection.findOne({ _id: session._id, user_id: userId });
+
           setJsonHeaders(res, 200);
           res.end(JSON.stringify({
             userMessage: userMsgDoc,
-            assistantMessage: assistantMsgDoc
+            assistantMessage: assistantMsgDoc,
+            session: updatedSession ? {
+              session_id: updatedSession.session_id,
+              title: updatedSession.title || 'New chat',
+              mode: updatedSession.mode || 'chat',
+              created_at: updatedSession.created_at,
+              updated_at: updatedSession.updated_at,
+              last_message_at: updatedSession.last_message_at,
+              message_count: updatedSession.message_count,
+              status: updatedSession.status || 'active',
+            } : null,
           }));
         } catch (error) {
           console.error('Send message failed', error);
@@ -3138,16 +3370,32 @@ What is the penalty for violating this provision?`;
           const payload = await getRequestBody(req);
           const { session_id, message_id, feedback } = payload;
 
-          if (!session_id || !message_id || !feedback) {
+          if (!session_id || !message_id) {
             setJsonHeaders(res, 400);
-            res.end(JSON.stringify({ error: 'session_id, message_id, and feedback are required.' }));
+            res.end(JSON.stringify({ error: 'session_id and message_id are required.' }));
+            return;
+          }
+
+          const validFeedback = feedback === null || feedback === 'up' || feedback === 'down' || feedback === undefined;
+          if (!validFeedback) {
+            setJsonHeaders(res, 400);
+            res.end(JSON.stringify({ error: 'feedback must be "up", "down", or null.' }));
             return;
           }
 
           const messagesCollection = db.collection('chat_messages');
+          const updatePayload = {
+            updated_at: new Date().toISOString(),
+          };
+          if (feedback === undefined || feedback === null) {
+            updatePayload.feedback = null;
+          } else {
+            updatePayload.feedback = feedback;
+          }
+
           const result = await messagesCollection.updateOne(
             { session_id, message_id, user_id: userId },
-            { $set: { feedback: feedback, updated_at: new Date().toISOString() } }
+            { $set: updatePayload }
           );
 
           if (result.matchedCount === 0) {
@@ -3157,7 +3405,7 @@ What is the penalty for violating this provision?`;
           }
 
           setJsonHeaders(res, 200);
-          res.end(JSON.stringify({ success: true }));
+          res.end(JSON.stringify({ success: true, feedback: updatePayload.feedback }));
         } catch (error) {
           console.error('Submit feedback failed', error);
           setJsonHeaders(res, 500);
