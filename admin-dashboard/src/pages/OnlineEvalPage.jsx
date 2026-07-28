@@ -108,10 +108,10 @@ function ServerLogsTimeline({ logs }) {
     <div className="space-y-4">
       <div className="rounded-lg border border-indigo-500/20 bg-indigo-500/5 p-3 text-xs leading-relaxed text-ink">
         <p className="font-semibold text-indigo-400 flex items-center gap-1.5">
-          <Sparkles className="h-4 w-4" /> Client Execution Summary
+          <Sparkles className="h-4 w-4" /> Backend Execution Summary
         </p>
         <p className="mt-1 text-muted">
-          This timeline explains step-by-step how the legal query was processed behind the scenes—from safety guardrails to statutory expansion, database retrieval, legal response synthesis, and quality auditing.
+          This timeline presents the complete backend logs step-by-step—including guardrails evaluation, query expansion, database/cache retrieval, legal response synthesis, and audit scoring.
         </p>
       </div>
 
@@ -461,7 +461,7 @@ export default function OnlineEvalPage() {
                   }`}
                 >
                   <Layers className="h-3.5 w-3.5" />
-                  Behind-the-Scenes Logs ({detail.serverLogs?.length || 0})
+                  Backend Logs ({detail.serverLogs?.length || 0})
                 </button>
                 <button
                   onClick={() => setDrawerTab('overview')}

@@ -216,8 +216,12 @@ def vector_search(cnx, query_text, top_k=5, source_filter=None, query_vec=None, 
     scored = []
     for idx, score in enumerate(scores):
         meta = metadata[idx]
-        if source_filter and meta["source_table"] != source_filter:
-            continue
+        if source_filter:
+            if source_filter.startswith("!"):
+                if meta["source_table"] == source_filter[1:]:
+                    continue
+            elif meta["source_table"] != source_filter:
+                continue
         
         res = dict(meta)
         res["score"] = float(score)
@@ -243,8 +247,12 @@ def keyword_search(cnx, query_text, top_k=5, source_filter=None):
         """
         params = [top_k, query_text]
         if source_filter:
-            sql += " WHERE d.SourceTable = ?"
-            params.append(source_filter)
+            if source_filter.startswith("!"):
+                sql += " WHERE d.SourceTable <> ?"
+                params.append(source_filter[1:])
+            else:
+                sql += " WHERE d.SourceTable = ?"
+                params.append(source_filter)
         sql += " ORDER BY ft.RANK DESC"
         cur.execute(sql, params)
         rows = cur.fetchall()
@@ -274,8 +282,12 @@ def _keyword_search_fallback(cnx, query_text, top_k, source_filter):
     """
     params = [top_k * 4] + [f"%{t}%" for t in terms]
     if source_filter:
-        sql += " AND SourceTable = ?"
-        params.append(source_filter)
+        if source_filter.startswith("!"):
+            sql += " AND SourceTable <> ?"
+            params.append(source_filter[1:])
+        else:
+            sql += " AND SourceTable = ?"
+            params.append(source_filter)
     cur.execute(sql, params)
     rows = cur.fetchall()
     cur.close()

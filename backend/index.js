@@ -622,6 +622,49 @@ function rerankSearchResults(query, results, topK = 5) {
   return relevantResults.slice(0, topK);
 }
 
+async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = null) {
+  const targetQuestion = originalQuestion || retrievalQuery;
+
+  // Step 1: Prioritized search in Legislation table (max 3-4 chunks, fetch 10 candidates & rerank top 4)
+  let legislationCandidates = [];
+  try {
+    legislationCandidates = await runPythonSearch(retrievalQuery, 10, true, 'Legislation');
+  } catch (err) {
+    console.error('[Prioritized Search] Legislation search failed:', err.message);
+  }
+
+  let legislationResults = [];
+  if (Array.isArray(legislationCandidates) && legislationCandidates.length > 0) {
+    legislationResults = rerankSearchResults(targetQuestion, legislationCandidates, 4);
+  }
+
+  // Step 2: Search across all other tables (max 5 chunks, fetch 15 candidates & rerank top 5)
+  let otherCandidates = [];
+  try {
+    otherCandidates = await runPythonSearch(retrievalQuery, 15, true, '!Legislation');
+  } catch (err) {
+    console.error('[Prioritized Search] Other tables search failed:', err.message);
+  }
+
+  let otherResults = [];
+  if (Array.isArray(otherCandidates) && otherCandidates.length > 0) {
+    otherResults = rerankSearchResults(targetQuestion, otherCandidates, 5);
+  }
+
+  // Step 3: Combine legislation chunks (max 3-4 if any) + all other tables (max 5)
+  const combinedResults = [...legislationResults, ...otherResults];
+  const candidateCount = (Array.isArray(legislationCandidates) ? legislationCandidates.length : 0) +
+                         (Array.isArray(otherCandidates) ? otherCandidates.length : 0);
+
+  combinedResults.legislationResults = legislationResults;
+  combinedResults.otherResults = otherResults;
+  combinedResults.candidateCount = candidateCount;
+  combinedResults.legislationCandidatesCount = Array.isArray(legislationCandidates) ? legislationCandidates.length : 0;
+  combinedResults.otherCandidatesCount = Array.isArray(otherCandidates) ? otherCandidates.length : 0;
+
+  return combinedResults;
+}
+
 function runPythonCitation(sourceTable, recordId, parentId = null) {
   return new Promise((resolve, reject) => {
     let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
@@ -2134,54 +2177,45 @@ async function startServer() {
               `[RAG Endpoint] Retrieval query: "${retrievalQuery}"`
             );
 
-            // Existing embedding search remains completely unchanged.
+            // Prioritized legal document retrieval: Legislation table (max 3-4 chunks) + all other tables (max 5 chunks)
             retrievalStartedAt = Date.now();
-            const candidateResults = await traceRetrieval({
+            results = await traceRetrieval({
               query: retrievalQuery,
-              topK: 15,
+              topK: 9,
               performSearch: async () => {
-                return await runPythonSearch(retrievalQuery, 15, true);
+                return await performPrioritizedLegalSearch(retrievalQuery, question);
               },
               requestContext: req.requestContext,
               metadata: {
-                component: 'retrieval',
+                component: 'prioritized_retrieval',
                 requestId: req.requestContext.requestId,
                 sessionId: req.requestContext.sessionId,
               },
             });
             retrievalTimeMs = Date.now() - retrievalStartedAt;
 
-            // Rerank against the ORIGINAL user question.
-            // This prevents query expansion from changing the user's intent.
-            results = await traceReranking({
-              originalQuestion: question,
-              candidateCount: Array.isArray(candidateResults) ? candidateResults.length : 0,
-              rerankResults: async () => {
-                return rerankSearchResults(question, candidateResults, 5);
-              },
-              requestContext: req.requestContext,
-              metadata: {
-                component: 'reranking',
-                requestId: req.requestContext.requestId,
-                sessionId: req.requestContext.sessionId,
-              },
-            });
+            const legislationResults = results?.legislationResults || [];
+            const otherResults = results?.otherResults || [];
+            const candidateCount = results?.candidateCount || 0;
 
             serverLogs.push({
               step: 3,
               agent: 'Document Retrieval & Legal Reranker Agent',
-              title: 'Step 3: Database Search & Legal Document Reranking',
+              title: 'Step 3: Database Search & Prioritized Legal Reranking',
               status: Array.isArray(results) && results.length > 0 ? 'completed' : 'failed',
               timeMs: retrievalTimeMs,
               provider: 'FastEmbed / Cosine Reranker',
               model: 'text-embedding-3-large',
-              summary: `Searched millions of corporate law records via hybrid vector search. Retrieved ${candidateResults ? candidateResults.length : 0} initial candidates and reranked top ${results ? results.length : 0} verified legal sources.`,
+              summary: `Prioritized retrieval fetched ${legislationResults.length} legislation chunks (max 3-4) + ${otherResults.length} other table chunks (max 5), total ${results.length} verified legal sources.`,
               details: {
                 retrievalQuery: retrievalQuery,
-                candidatesFound: candidateResults ? candidateResults.length : 0,
-                topRerankedCount: results ? results.length : 0,
+                candidatesFound: candidateCount,
+                legislationCount: legislationResults.length,
+                otherTablesCount: otherResults.length,
+                topRerankedCount: results.length,
                 topSourcesPreview: Array.isArray(results) ? results.map((r, idx) => ({
                   rank: idx + 1,
+                  table: r.source_table || 'Unknown',
                   title: r.doc_title || 'Untitled',
                   sections: r.sections || 'General',
                   score: r.backend_relevance_score ? Number(r.backend_relevance_score).toFixed(2) : '—'
@@ -2190,7 +2224,7 @@ async function startServer() {
             });
 
             console.log(
-              `[RAG Endpoint] Retrieved ${candidateResults.length} candidates and reranked to ${results.length} results.`
+              `[RAG Endpoint] Retrieved ${candidateCount} candidates (${legislationResults.length} legislation + ${otherResults.length} other tables) and reranked to ${results.length} results.`
             );
 
             const retrievalLogDocument = buildRetrievalLogDocument({
@@ -2317,7 +2351,7 @@ What is the penalty for violating this provision?`;
           const userContent = userContentParts.join('\n\n');
 
           const endpointFallbackTiers = [
-            { provider: settings.DEFAULT_LLM_PROVIDER || 'deepseek', model: settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro' },
+            { provider: settings.DEFAULT_LLM_PROVIDER || 'openai', model: settings.DEFAULT_LLM_MODEL || 'gpt-4.1-mini' },
             { provider: 'openai', model: process.env.OPENAI_MODEL || 'gpt-4.1-mini' },
             { provider: 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' },
             { provider: 'groq', model: process.env.GROQ_LLAMA_MODEL || 'llama-3.3-70b-versatile' },
@@ -2912,7 +2946,8 @@ What is the penalty for violating this provision?`;
             console.log(`[RAG Session Flow] Executing search for question: "${payload.content}"`);
             let results = [];
             try {
-              results = await runPythonSearch(payload.content, 5, true);
+              const prioritizedOutcome = await performPrioritizedLegalSearch(payload.content, payload.content);
+              results = prioritizedOutcome.results || [];
             } catch (searchErr) {
               console.error('[RAG Session Flow] Search execution failed:', searchErr);
               setJsonHeaders(res, 500);
@@ -3254,5 +3289,7 @@ module.exports = {
   persistRetrievalLog,
   ensureIndexes,
   startServer,
+  runPythonSearch,
+  performPrioritizedLegalSearch,
 };
 

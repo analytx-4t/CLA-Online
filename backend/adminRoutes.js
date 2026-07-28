@@ -1044,12 +1044,12 @@ function generateFallbackServerLogs(doc) {
     {
       step: 3,
       agent: 'Document Retrieval & Legal Reranker Agent',
-      title: 'Step 3: Database Search & Legal Document Reranking',
+      title: 'Step 3: Database Search & Prioritized Legal Reranking',
       status: retrievedCount > 0 ? 'completed' : 'failed',
       timeMs: retrievalTimeMs,
       provider: 'FastEmbed / Cosine Reranker',
       model: 'text-embedding-3-large',
-      summary: `Searched Indian corporate law database using hybrid vector search and reranked top ${retrievedCount} verified legal source chunks.`,
+      summary: `Searched Indian corporate law database with Legislation priority (max 3-4 legislation + max 5 other sources), reranked top ${retrievedCount} verified legal source chunks.`,
       details: {
         retrievalQuery: `${question} statutory compliance`,
         candidatesFound: Math.max(retrievedCount * 3, 5),
@@ -1111,4 +1111,5 @@ function generateFallbackServerLogs(doc) {
 
 module.exports = {
   handleAdminRoutes,
+  generateFallbackServerLogs,
 };

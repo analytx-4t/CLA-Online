@@ -150,7 +150,8 @@ const DEFAULT_BLOCKED_RESPONSE = "I'm sorry, but I can't assist with that reques
 
 async function classifyWithLLM(text) {
   const filledPrompt = GUARDRAIL_SYSTEM_PROMPT.replace('{{USER_REQUEST}}', text || '');
-  const llm = getLLMProvider('groq', process.env.GROQ_LLAMA_MODEL || 'llama-3.3-70b-versatile');
+  const { settings } = require('./config');
+  const llm = getLLMProvider(settings.DEFAULT_LLM_PROVIDER || 'openai', settings.DEFAULT_LLM_MODEL || 'gpt-4.1-mini');
   const response = await llm.generate({
     systemPrompt: filledPrompt,
     messages: [{
