@@ -307,21 +307,46 @@ def _keyword_search_fallback(cnx, query_text, top_k, source_filter):
 
 # ---------- RECIPROCAL RANK FUSION ----------
 
-def reciprocal_rank_fusion(vector_results, keyword_results, k=60, top_k=5):
-    """Merge by rank position, not raw score."""
+def reciprocal_rank_fusion(
+    vector_results,
+    keyword_results,
+    k=60,
+    top_k=5,
+    semantic_weight=0.8,
+    keyword_weight=0.2,
+):
+    """
+    Merge semantic and keyword retrieval results using Weighted Reciprocal Rank Fusion (RRF).
+
+    - Semantic (vector) search contributes 80% by default.
+    - Keyword search contributes 20% by default.
+    """
+
     scores = {}
     items = {}
+
+    # Semantic (Vector) Search - 80% weight
     for rank, r in enumerate(vector_results):
         eid = r["embedding_id"]
-        scores[eid] = scores.get(eid, 0) + 1 / (k + rank + 1)
+        scores[eid] = scores.get(eid, 0) + (
+            semantic_weight / (k + rank + 1)
+        )
         items.setdefault(eid, r)
+
+    # Keyword Search - 20% weight
     for rank, r in enumerate(keyword_results):
         eid = r["embedding_id"]
-        scores[eid] = scores.get(eid, 0) + 1 / (k + rank + 1)
+        scores[eid] = scores.get(eid, 0) + (
+            keyword_weight / (k + rank + 1)
+        )
         items.setdefault(eid, r)
 
     merged = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    return [{**items[eid], "rrf_score": score} for eid, score in merged[:top_k]]
+
+    return [
+        {**items[eid], "rrf_score": score}
+        for eid, score in merged[:top_k]
+    ]
 
 # ---------- ORIGINAL ROW RETRIEVAL (parent + child, every column) ----------
 
