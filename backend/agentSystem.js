@@ -50,12 +50,19 @@ function loadAgentPrompts() {
 
 // Helper to assemble prompts with shared context and common rules
 function assemblePrompt(rawPrompt, prompts) {
+  if (!rawPrompt) return '';
   let assembled = rawPrompt;
   if (assembled.includes('[SHARED LEGAL CONTEXT]')) {
-    assembled = assembled.replace('[SHARED LEGAL CONTEXT]', prompts.SHARED_LEGAL_CONTEXT);
+    assembled = assembled.replace('[SHARED LEGAL CONTEXT]', prompts.SHARED_LEGAL_CONTEXT || '');
   }
   if (assembled.includes('[COMMON RULES]')) {
-    assembled = assembled.replace('[COMMON RULES]', prompts.COMMON_RULES);
+    assembled = assembled.replace('[COMMON RULES]', prompts.COMMON_RULES || '');
+  }
+  if (prompts && prompts.COMMON_RULES && !assembled.includes('RULES FOR ALL AGENTS:')) {
+    assembled = `${prompts.COMMON_RULES}\n\n${assembled}`;
+  }
+  if (prompts && prompts.SHARED_LEGAL_CONTEXT && !assembled.includes('AUTHORITY ORDER')) {
+    assembled = `${prompts.SHARED_LEGAL_CONTEXT}\n\n${assembled}`;
   }
   return assembled;
 }

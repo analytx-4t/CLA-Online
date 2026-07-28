@@ -2499,17 +2499,11 @@ async function startServer() {
             ? `\n\nThe user has also attached one or more documents (see ATTACHED DOCUMENT CONTEXT below). You may draw on their content, but only to the extent it concerns corporate/commercial law matters within your scope as CLA. If an attached document is unrelated to corporate law (e.g. personal, unrelated business, or off-topic content), disregard it and rely on the Search Context alone. Do not use numbered citation tags like [1] for attached document content — those are reserved for the Search Context sources; refer to attached material in prose instead (e.g. "the agreement you attached").`
             : '';
 
-          const systemPrompt = `You are a professional legal research assistant for Indian corporate and commercial law.
-You must answer the user's question grounding your answer strictly and ONLY in the provided context (the Search Context below, and any ATTACHED DOCUMENT CONTEXT).
-Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."${attachmentPromptRules}
+          const { loadAgentPrompts } = require('./agentSystem');
+          const agentPrompts = loadAgentPrompts();
+          const baseSummarizerPrompt = agentPrompts.Content_Summarizer_Agent || `You are a professional legal research assistant for Indian corporate and commercial law. You write the final answer grounding your answer strictly and ONLY in the provided context. If no relevant authority is found, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."`;
 
-Style and Tone Requirements:
-- Write in a natural, cohesive, humanized legal advisory tone. Do not just copy-paste blocks from the database.
-- Present a clear, structured legal explanation.
-- Use Markdown formatting for structure: headings (e.g., "### Heading"), bullet points, numbered lists, tables (where data can be formatted in columns), and bold text for key legal terms or sections.
-- Avoid printing raw file names or titles inline in the text.
-- Use numerical citation tags like [1], [2], [3] to cite which source(s) the information came from. The citation number must correspond to the Source number provided in the context (e.g. use [1] for [Source 1], [2] for [Source 2]).
-- Ensure the output is clean and complete.
+          const systemPrompt = `${baseSummarizerPrompt}${attachmentPromptRules}
 
 At the end of your response, add the tag '---SUGGESTIONS---' followed by 3 relevant follow-up questions the user might ask next, one per line.
 Example:
