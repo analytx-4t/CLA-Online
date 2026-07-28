@@ -1,8 +1,8 @@
 const crypto = require('crypto');
 
-function createRequestContext({ sessionId, messageId } = {}) {
+function createRequestContext({ sessionId, messageId, requestId } = {}) {
   return {
-    requestId: crypto.randomUUID(),
+    requestId: requestId || crypto.randomUUID(),
     sessionId,
     messageId,
     timestamp: new Date().toISOString(),

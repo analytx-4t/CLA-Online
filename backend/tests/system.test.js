@@ -353,6 +353,16 @@ test.describe('CLAOnline Enterprise Integration System Tests', () => {
     assert.ok(msgRes.body.assistantMessage, 'Should return assistant response');
     assert.strictEqual(msgRes.body.assistantMessage.metadata.route, 'DIALOG');
 
+    const sessionsAfterReply = await makeRequest('GET', '/api/chat/sessions');
+    assert.strictEqual(sessionsAfterReply.status, 200);
+    const updatedSession = sessionsAfterReply.body.sessions.find(s => s.session_id === sessionId);
+    assert.ok(updatedSession, 'Session should remain available after the first reply');
+    assert.ok(updatedSession.title, 'Session should receive a persisted title');
+    assert.notStrictEqual(updatedSession.title, 'New chat');
+    assert.notStrictEqual(updatedSession.title, 'New RAG Search');
+    assert.notStrictEqual(updatedSession.title, 'Hello system test chatbot!');
+    assert.ok(updatedSession.title.split(/\s+/).length <= 6, 'Generated title should remain concise');
+
     // 3.5. Post sentiment feedback to the assistant message
     const assistantMsgId = msgRes.body.assistantMessage.message_id;
     const feedbackRes = await makeRequest('POST', '/api/chat/feedback', {
