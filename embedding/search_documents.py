@@ -268,19 +268,32 @@ def keyword_search(cnx, query_text, top_k=5, source_filter=None):
         return _keyword_search_fallback(cnx, query_text, top_k, source_filter)
 
 
+_STOP_WORDS = {
+    'the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'under', 
+    'what', 'which', 'how', 'is', 'are', 'was', 'were', 'be', 'been', 'with', 
+    'by', 'from', 'this', 'that', 'about', 'such', 'into', 'than', 'can', 'should',
+    'does', 'do', 'did', 'required', 'requirement', 'requirements'
+}
+
 def _keyword_search_fallback(cnx, query_text, top_k, source_filter):
-    terms = [t for t in re.findall(r"\w+", query_text) if len(t) > 2]
+    all_terms = [t for t in re.findall(r"\w+", query_text) if len(t) > 2]
+    terms = [t for t in all_terms if t.lower() not in _STOP_WORDS]
+    if not terms:
+        terms = all_terms
     if not terms:
         return []
 
     cur = cnx.cursor()
-    like_clauses = " OR ".join(["ChunkText LIKE ?"] * len(terms))
+    like_clauses = " OR ".join(["(ChunkText LIKE ? OR DocTitle LIKE ? OR LawTitle LIKE ? OR Sections LIKE ? OR Subject LIKE ?)"] * len(terms))
     sql = f"""
         SELECT TOP (?) {_SELECT_COLS.replace('Embedding,', '')}
         FROM dbo.DocumentEmbeddings WITH (NOLOCK)
         WHERE ({like_clauses})
     """
-    params = [top_k * 4] + [f"%{t}%" for t in terms]
+    params = [top_k * 4]
+    for t in terms:
+        p = f"%{t}%"
+        params.extend([p, p, p, p, p])
     if source_filter:
         if source_filter.startswith("!"):
             sql += " AND SourceTable <> ?"
@@ -439,9 +452,74 @@ def get_original_content_bulk(cnx, results):
                 "parent": parent_by_id.get(it["parent_id"]) if it.get("parent_id") is not None else None
             }
 
+def cohere_rerank_python(query_text, candidate_results, top_k=5):
+    api_key = os.environ.get("COHERE_API_KEY")
+    if not api_key or not candidate_results:
+        return candidate_results[:top_k]
+
+    import urllib.request
+
+    formatted_docs = []
+    for r in candidate_results:
+        title = r.get("law_title") or r.get("doc_title") or ""
+        sections = r.get("sections") or ""
+        cat = r.get("category") or ""
+        subj = r.get("subject") or ""
+        chunk = r.get("chunk_text") or ""
+
+        parts = []
+        if title: parts.append(f"Title: {title}")
+        if sections: parts.append(f"Sections: {sections}")
+        if cat: parts.append(f"Category: {cat}")
+        if subj: parts.append(f"Subject: {subj}")
+        parts.append(f"Content: {chunk}")
+        formatted_docs.append(" | ".join(parts))
+
+    try:
+        url = "https://api.cohere.com/v2/rerank"
+        payload = json.dumps({
+            "model": "rerank-v3.5",
+            "query": query_text,
+            "documents": formatted_docs,
+            "top_n": min(len(candidate_results), top_k * 2)
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+        )
+
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            cohere_results = data.get("results", [])
+
+            reranked = []
+            for item in cohere_results:
+                idx = item.get("index")
+                score = item.get("relevance_score", 0.0)
+                if idx < len(candidate_results):
+                    res = dict(candidate_results[idx])
+                    res["cohere_relevance_score"] = float(score)
+                    res["backend_relevance_score"] = float(score)
+                    res["rerank_method"] = "cohere_rerank_v3.5"
+                    reranked.append(res)
+
+            if reranked:
+                sys.stderr.write(f"[Python Cohere Rerank] Reranked {len(candidate_results)} candidates down to {len(reranked[:top_k])}\n")
+                return reranked[:top_k]
+    except Exception as e:
+        sys.stderr.write(f"[Python Cohere Rerank Warning] API error: {e}. Falling back to default RRF order.\n")
+
+    return candidate_results[:top_k]
+
+
 # ---------- MAIN ENTRY POINT ----------
 
-def search(query_text, top_k=5, hybrid=True, source_filter=None, with_original_content=True):
+def search(query_text, top_k=5, hybrid=True, source_filter=None, with_original_content=True, enable_cohere=True):
     """Primary function a backend endpoint should call. Reuse single database connection."""
     from concurrent.futures import ThreadPoolExecutor
 
@@ -454,8 +532,12 @@ def search(query_text, top_k=5, hybrid=True, source_filter=None, with_original_c
         future_cache = executor.submit(load_or_refresh_embeddings, None)
 
         # Retrieve outputs of tasks
-        query_vec = future_embed.result()
-        
+        try:
+            query_vec = future_embed.result()
+        except Exception as emb_err:
+            sys.stderr.write(f"[Search Warning] Query embedding failed: {emb_err}. Proceeding with keyword search fallback.\n")
+            query_vec = None
+
         try:
             vectors, metadata = future_cache.result()
         except Exception as cache_err:
@@ -467,14 +549,25 @@ def search(query_text, top_k=5, hybrid=True, source_filter=None, with_original_c
         cnx = future_cnx.result()
 
     try:
-        vector_results = vector_search(cnx, query_text, top_k=top_k * 3, source_filter=source_filter,
-                                       query_vec=query_vec, vectors=vectors, metadata=metadata)
+        candidate_k = top_k * 3 if enable_cohere else top_k
+        vector_results = []
+        if query_vec is not None:
+            try:
+                vector_results = vector_search(cnx, query_text, top_k=candidate_k, source_filter=source_filter,
+                                               query_vec=query_vec, vectors=vectors, metadata=metadata)
+            except Exception as v_err:
+                sys.stderr.write(f"[Vector Search Error] {v_err}\n")
 
         if hybrid:
-            keyword_results = keyword_search(cnx, query_text, top_k=top_k * 3, source_filter=source_filter)
-            results = reciprocal_rank_fusion(vector_results, keyword_results, top_k=top_k)
+            keyword_results = keyword_search(cnx, query_text, top_k=candidate_k, source_filter=source_filter)
+            candidates = reciprocal_rank_fusion(vector_results, keyword_results, top_k=candidate_k)
         else:
-            results = vector_results[:top_k]
+            candidates = vector_results
+
+        if enable_cohere and os.environ.get("COHERE_API_KEY"):
+            results = cohere_rerank_python(query_text, candidates, top_k=top_k)
+        else:
+            results = candidates[:top_k]
 
         if with_original_content:
             get_original_content_bulk(cnx, results)

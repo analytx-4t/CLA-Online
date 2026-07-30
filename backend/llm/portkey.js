@@ -113,7 +113,12 @@ function getPortkeyModel(provider, model) {
     );
   }
 
-  return `${providerSlug}/${model}`;
+  let actualModel = model;
+  if (provider === 'deepseek' && (model === 'deepseek-v4-pro' || model === 'deepseek-v4-flash' || model === 'deepseek-pro')) {
+    actualModel = 'deepseek-chat';
+  }
+
+  return `${providerSlug}/${actualModel}`;
 }
 
 async function executeChatCompletionDirect({
@@ -271,10 +276,10 @@ async function createChatCompletion({
   // gemini/deepseek-flash/groq remain after it as further-degraded options so a single
   // provider outage doesn't take the whole chat down.
   const fallbackChain = [
+    { provider: 'groq', model: process.env.GROQ_LLAMA_MODEL || 'llama-3.3-70b-versatile' },
+    { provider: 'deepseek', model: process.env.DEEPSEEK_FLASH_MODEL || 'deepseek-v4-flash' },
     { provider: 'openai', model: process.env.OPENAI_MODEL || 'gpt-4.1-mini' },
     { provider: 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' },
-    { provider: 'deepseek', model: process.env.DEEPSEEK_FLASH_MODEL || 'deepseek-v4-flash' },
-    { provider: 'groq', model: process.env.GROQ_LLAMA_MODEL || 'llama-3.3-70b-versatile' },
   ];
 
   const remainingFallbacks = fallbackChain.filter(

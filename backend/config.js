@@ -18,8 +18,8 @@ const settings = {
   GROQ_MODEL_RAGAS: process.env.GROQ_MODEL_RAGAS || '',
   GROQ_MISTRAL_MODEL: process.env.GROQ_MISTRAL_MODEL || '',
 
-  DEFAULT_LLM_PROVIDER: process.env.DEFAULT_LLM_PROVIDER || 'openai',
-  DEFAULT_LLM_MODEL: process.env.DEFAULT_LLM_MODEL || 'gpt-4.1-mini',
+  DEFAULT_LLM_PROVIDER: process.env.DEFAULT_LLM_PROVIDER || 'deepseek',
+  DEFAULT_LLM_MODEL: process.env.DEFAULT_LLM_MODEL || 'deepseek-v4-pro',
 
   // Embedding Configuration
   EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || 'openai',

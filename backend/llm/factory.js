@@ -8,8 +8,8 @@ const { settings } = require('../config');
 const providerCache = new Map();
 
 function getLLMProvider(provider = settings.DEFAULT_LLM_PROVIDER, model = null) {
-  const normalizedProvider = (provider || settings.DEFAULT_LLM_PROVIDER || 'openai').toLowerCase();
-  const cacheKey = `${normalizedProvider}:${model || settings.DEFAULT_LLM_MODEL || 'default'}`;
+  const normalizedProvider = (provider || settings.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase();
+  const cacheKey = `${normalizedProvider}:${model || settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro'}`;
 
   if (providerCache.has(cacheKey)) {
     return providerCache.get(cacheKey);

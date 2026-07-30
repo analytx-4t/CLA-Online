@@ -28,6 +28,7 @@ const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./res
 const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
 const { createRequestContext } = require('./requestContext');
 const { handleAdminRoutes } = require('./adminRoutes');
+const { cohereRerank } = require('./cohereReranker');
 const { Server } = require('socket.io');
 
 let logfire;
@@ -659,7 +660,28 @@ function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
     child.stdin.end();
   });
 }
-function rerankSearchResults(query, results, topK = 5) {
+async function rerankSearchResults(query, results, topK = 5) {
+  if (!Array.isArray(results) || results.length === 0) {
+    return [];
+  }
+
+  // Primary: Cohere Rerank API (v3.5)
+  if (process.env.COHERE_API_KEY) {
+    try {
+      const cohereResults = await cohereRerank(query, results, topK);
+      if (Array.isArray(cohereResults) && cohereResults.length > 0) {
+        return cohereResults;
+      }
+    } catch (err) {
+      console.warn('[Reranker Warning] Cohere Rerank API failed, falling back to local heuristic reranker:', err.message);
+    }
+  }
+
+  // Fallback: Local Heuristic Reranker
+  return heuristicRerankSearchResults(query, results, topK);
+}
+
+function heuristicRerankSearchResults(query, results, topK = 5) {
   if (!Array.isArray(results) || results.length === 0) {
     return [];
   }
@@ -766,42 +788,46 @@ function rerankSearchResults(query, results, topK = 5) {
 async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = null) {
   const targetQuestion = originalQuestion || retrievalQuery;
 
-  // Step 1: Prioritized search in Legislation table (max 3-4 chunks, fetch 10 candidates & rerank top 4)
+  // Step 1: Candidate retrieval in parallel (Legislation max 10 candidates, Other tables max 15 candidates)
   let legislationCandidates = [];
-  try {
-    legislationCandidates = await runPythonSearch(retrievalQuery, 10, true, 'Legislation');
-  } catch (err) {
-    console.error('[Prioritized Search] Legislation search failed:', err.message);
-  }
-
-  let legislationResults = [];
-  if (Array.isArray(legislationCandidates) && legislationCandidates.length > 0) {
-    legislationResults = rerankSearchResults(targetQuestion, legislationCandidates, 4);
-  }
-
-  // Step 2: Search across all other tables (max 5 chunks, fetch 15 candidates & rerank top 5)
   let otherCandidates = [];
+
   try {
-    otherCandidates = await runPythonSearch(retrievalQuery, 15, true, '!Legislation');
+    const [legRes, othRes] = await Promise.all([
+      runPythonSearch(retrievalQuery, 10, true, 'Legislation').catch(err => {
+        console.error('[Prioritized Search] Legislation search failed:', err.message);
+        return [];
+      }),
+      runPythonSearch(retrievalQuery, 15, true, '!Legislation').catch(err => {
+        console.error('[Prioritized Search] Other tables search failed:', err.message);
+        return [];
+      })
+    ]);
+    legislationCandidates = Array.isArray(legRes) ? legRes : [];
+    otherCandidates = Array.isArray(othRes) ? othRes : [];
   } catch (err) {
-    console.error('[Prioritized Search] Other tables search failed:', err.message);
+    console.error('[Prioritized Search] Candidate retrieval failed:', err.message);
   }
 
-  let otherResults = [];
-  if (Array.isArray(otherCandidates) && otherCandidates.length > 0) {
-    otherResults = rerankSearchResults(targetQuestion, otherCandidates, 5);
-  }
+  // Step 2: Rerank Legislation (top 4) and Other tables (top 5) concurrently using Cohere Reranker
+  const [legislationResults, otherResults] = await Promise.all([
+    legislationCandidates.length > 0
+      ? rerankSearchResults(targetQuestion, legislationCandidates, 4)
+      : Promise.resolve([]),
+    otherCandidates.length > 0
+      ? rerankSearchResults(targetQuestion, otherCandidates, 5)
+      : Promise.resolve([])
+  ]);
 
   // Step 3: Combine legislation chunks (max 3-4 if any) + all other tables (max 5)
   const combinedResults = [...legislationResults, ...otherResults];
-  const candidateCount = (Array.isArray(legislationCandidates) ? legislationCandidates.length : 0) +
-                         (Array.isArray(otherCandidates) ? otherCandidates.length : 0);
+  const candidateCount = legislationCandidates.length + otherCandidates.length;
 
   combinedResults.legislationResults = legislationResults;
   combinedResults.otherResults = otherResults;
   combinedResults.candidateCount = candidateCount;
-  combinedResults.legislationCandidatesCount = Array.isArray(legislationCandidates) ? legislationCandidates.length : 0;
-  combinedResults.otherCandidatesCount = Array.isArray(otherCandidates) ? otherCandidates.length : 0;
+  combinedResults.legislationCandidatesCount = legislationCandidates.length;
+  combinedResults.otherCandidatesCount = otherCandidates.length;
 
   return combinedResults;
 }
