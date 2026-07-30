@@ -15,7 +15,7 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const COHERE_API_ENDPOINT = 'https://api.cohere.com/v2/rerank';
 const DEFAULT_MODEL = process.env.COHERE_RERANK_MODEL || 'rerank-v3.5';
-const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_TIMEOUT_MS = 15000;
 
 /**
  * Formats a document chunk into a rich, structured text representation
@@ -105,7 +105,7 @@ async function cohereRerank(query, documents, topK = 5, options = {}) {
         model: model,
         query: query.trim(),
         documents: formattedDocs,
-        top_n: Math.min(documents.length, Math.max(topK * 2, 10)) // Request candidate slice
+        top_n: Math.min(documents.length, Math.max(topK * 2, 30)) // Request comprehensive candidate slice
       }),
       signal: controller.signal
     });
@@ -155,7 +155,7 @@ async function cohereRerank(query, documents, topK = 5, options = {}) {
 
     // Filter out chunks below minScore threshold if we have strong top candidates
     const bestScore = scoredDocs[0]?.cohere_final_score || 0;
-    const effectiveMinScore = Math.min(minScore, bestScore * 0.1);
+    const effectiveMinScore = Math.min(minScore, bestScore * 0.01);
 
     const relevantDocs = scoredDocs.filter(d => d.cohere_final_score >= effectiveMinScore);
 

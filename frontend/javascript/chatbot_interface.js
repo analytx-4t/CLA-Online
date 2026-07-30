@@ -918,8 +918,9 @@ function renderSourceCitations(container, message) {
       detailsHtml += `<span class="citation-detail-item${extraClass ? ' ' + extraClass : ''}"><strong class="citation-detail-label">${label}</strong><span class="citation-detail-value">${safeValue}</span></span>`;
     };
 
-    if (s.title || !s.category) addDetail('Title', s.title || 'Untitled Document', 'is-title');
-    if (s.category) addDetail('Category', s.category);
+    const isModelName = (str) => typeof str === 'string' && (str.includes('text-embedding') || str.includes('embedding-3'));
+    if (s.title || !s.category || isModelName(s.category)) addDetail('Title', s.title || 'Untitled Document', 'is-title');
+    if (s.category && !isModelName(s.category)) addDetail('Category', s.category);
     if (s.subject) addDetail('Subject', s.subject);
     if (s.author) addDetail('Author', s.author);
     if (s.sections) addDetail('Section', s.sections);

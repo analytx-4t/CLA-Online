@@ -245,7 +245,8 @@ async function expandLegalQuery(userMessage) {
           keywords = kwStr
             .split(',')
             .map(keyword => cleanParsedValue(keyword))
-            .filter(Boolean);
+            .filter(k => k && !/^Rule\s+\d+$/i.test(k.trim()))
+            .slice(0, 10);
         }
 
         continue;

@@ -68,8 +68,8 @@ async function testQuery(question) {
 
 async function main() {
   try {
-    await testQuery('What are the Corporate Social Responsibility (CSR) compliance requirements and mandatory spending threshold under Section 135 of Companies Act 2013?');
-    await testQuery('What is the legal procedure and board approval required for Related Party Transactions under Section 188 of the Companies Act 2013?');
+    await testQuery('Unlisted co wants to buy back some shares. What resolution do we need u/s 68, and is there anything in law that could block it?');
+    await testQuery('Our multi-state co-op society invested in a company now in CIRP. RP says we\'re not in the "same line of business". Is that read off our bye-laws or off actual turnover and profit?');
   } catch (err) {
     console.error('Benchmark Error:', err);
   }

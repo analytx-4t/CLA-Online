@@ -776,52 +776,61 @@ function heuristicRerankSearchResults(query, results, topK = 5) {
   // Keep results that are reasonably close to the strongest
   // backend relevance score. This prevents unrelated documents
   // from being included merely to fill the requested topK.
-  const minimumRelativeScore = bestScore * 0.5;
+  const minimumRelativeScore = Math.max(0.1, bestScore * 0.05);
 
   const relevantResults = ranked.filter(
     result =>
       result.backend_relevance_score >= minimumRelativeScore
   );
 
-  return relevantResults.slice(0, topK);
+  return (relevantResults.length > 0 ? relevantResults : ranked).slice(0, topK);
 }
 
-async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = null) {
+async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = null, expansionKeywords = []) {
   const normRetrieval = normalizeLegalQuery(retrievalQuery);
   const targetQuestion = normalizeLegalQuery(originalQuestion || retrievalQuery);
 
-  // Step 1: Candidate retrieval in parallel (Legislation max 10 candidates, Other tables max 15 candidates)
+  // For keyword (SQL LIKE) fallback, use a focused string: original question + top keywords
+  // This avoids the bloated expanded paragraph being tokenized into noise by the Python fallback
+  const keywordFocusedQuery = [
+    originalQuestion || originalQuestion,
+    ...expansionKeywords.slice(0, 8)
+  ].filter(Boolean).join(' ');
+  const normKeywordQuery = normalizeLegalQuery(keywordFocusedQuery || retrievalQuery);
+
+  console.log(`[Prioritized Search] Keyword-focused query: "${normKeywordQuery.slice(0, 200)}..."`)
+
+  // Step 1: Sequential candidate retrieval (avoids ODBC connection contention)
+  // Legislation max 35 candidates, Other tables max 60 candidates
   let legislationCandidates = [];
   let otherCandidates = [];
 
   try {
-    const [legRes, othRes] = await Promise.all([
-      runPythonSearch(normRetrieval, 10, true, 'Legislation').catch(err => {
-        console.error('[Prioritized Search] Legislation search failed:', err.message);
-        return [];
-      }),
-      runPythonSearch(normRetrieval, 15, true, '!Legislation').catch(err => {
-        console.error('[Prioritized Search] Other tables search failed:', err.message);
-        return [];
-      })
-    ]);
+    const legRes = await runPythonSearch(normKeywordQuery, 35, true, 'Legislation').catch(err => {
+      console.error('[Prioritized Search] Legislation search failed:', err.message);
+      return [];
+    });
+    const othRes = await runPythonSearch(normKeywordQuery, 60, true, '!Legislation').catch(err => {
+      console.error('[Prioritized Search] Other tables search failed:', err.message);
+      return [];
+    });
     legislationCandidates = Array.isArray(legRes) ? legRes : [];
     otherCandidates = Array.isArray(othRes) ? othRes : [];
   } catch (err) {
     console.error('[Prioritized Search] Candidate retrieval failed:', err.message);
   }
 
-  // Step 2: Rerank Legislation (top 4) and Other tables (top 5) concurrently using Cohere Reranker
+  // Step 2: Rerank Legislation (top 15) and Other tables (top 20) concurrently using Cohere Reranker
   const [legislationResults, otherResults] = await Promise.all([
     legislationCandidates.length > 0
-      ? rerankSearchResults(targetQuestion, legislationCandidates, 4)
+      ? rerankSearchResults(targetQuestion, legislationCandidates, 15)
       : Promise.resolve([]),
     otherCandidates.length > 0
-      ? rerankSearchResults(targetQuestion, otherCandidates, 5)
+      ? rerankSearchResults(targetQuestion, otherCandidates, 20)
       : Promise.resolve([])
   ]);
 
-  // Step 3: Combine legislation chunks (max 3-4 if any) + all other tables (max 5)
+  // Step 3: Combine legislation chunks (max 15) + all other tables (max 20), up to 35 comprehensive chunks
   const combinedResults = [...legislationResults, ...otherResults];
   const candidateCount = legislationCandidates.length + otherCandidates.length;
 
@@ -2413,7 +2422,7 @@ async function startServer() {
               query: retrievalQuery,
               topK: 9,
               performSearch: async () => {
-                return await performPrioritizedLegalSearch(retrievalQuery, question);
+                return await performPrioritizedLegalSearch(retrievalQuery, question, expansionKeywords);
               },
               requestContext: req.requestContext,
               metadata: {
@@ -2529,7 +2538,7 @@ async function startServer() {
 
           const { loadAgentPrompts } = require('./agentSystem');
           const agentPrompts = loadAgentPrompts();
-          const baseSummarizerPrompt = agentPrompts.Content_Summarizer_Agent || `You are a professional legal research assistant for Indian corporate and commercial law. You write the final answer grounding your answer strictly and ONLY in the provided context. If no relevant authority is found, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."`;
+          const baseSummarizerPrompt = agentPrompts.Content_Summarizer_Agent || `You are a professional legal research assistant for Indian corporate and commercial law. You answer STRICTLY and EXCLUSIVELY from the Search Context provided — never from your own knowledge. Read ALL retrieved chunks and synthesize a complete answer by combining relevant information across all sources. If a chunk contains any part of the answer, use it. Only say "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question." if every single chunk is completely unrelated to the question.`;
 
           const systemPrompt = `${baseSummarizerPrompt}${attachmentPromptRules}
 
@@ -2899,6 +2908,12 @@ What is the penalty for violating this provision?`;
 
             const sourceKey = `${title}:::${fileName}`;
 
+            const getCategory = (res) => {
+              const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
+              if (cat && (String(cat).includes('text-embedding') || String(cat).includes('embedding-3'))) return null;
+              return cat;
+            };
+
             if (!seenSources.has(sourceKey)) {
               seenSources.add(sourceKey);
               uniqueSources.push({
@@ -2910,7 +2925,7 @@ What is the penalty for violating this provision?`;
                 excerpt: truncateExcerpt(r.chunk_text),
                 author: (r.original && r.original.parent && r.original.parent.Author) || null,
                 sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-                category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+                category: getCategory(r),
                 subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
                 doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
                 vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
@@ -2939,7 +2954,7 @@ What is the penalty for violating this provision?`;
               excerpt: truncateExcerpt(r.chunk_text),
               author: (r.original && r.original.parent && r.original.parent.Author) || null,
               sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-              category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+              category: getCategory(r),
               subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
               doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
               vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
