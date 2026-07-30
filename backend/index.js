@@ -833,9 +833,22 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
   // Step 3: Combine up to 35 total chunks:
   // - 3-5 chunks from Legislation table (if any matched)
   // - Remaining quota (up to 35 total) filled from best suited chunks of all other tables
-  const legSlice = legislationResults.slice(0, 5);
+  // Cap max 3 chunks per document title to avoid cluttering with 30 duplicate chunks of a single case
+  const capPerDoc = (results, maxPerDoc = 3) => {
+    const docCounts = {};
+    return results.filter(r => {
+      const title = (r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled').trim().toLowerCase();
+      docCounts[title] = (docCounts[title] || 0) + 1;
+      return docCounts[title] <= maxPerDoc;
+    });
+  };
+
+  const filteredLegislation = capPerDoc(legislationResults, 5);
+  const filteredOther = capPerDoc(otherResults, 3);
+
+  const legSlice = filteredLegislation.slice(0, 5);
   const remainingQuota = 35 - legSlice.length;
-  const otherSlice = otherResults.slice(0, remainingQuota);
+  const otherSlice = filteredOther.slice(0, remainingQuota);
 
   const combinedResults = [...legSlice, ...otherSlice];
   const candidateCount = legislationCandidates.length + otherCandidates.length;
@@ -2544,16 +2557,22 @@ async function startServer() {
 
           const { loadAgentPrompts } = require('./agentSystem');
           const agentPrompts = loadAgentPrompts();
-          const baseSummarizerPrompt = agentPrompts.Content_Summarizer_Agent || `You are a professional legal research assistant for Indian corporate and commercial law. Answer STRICTLY from the Search Context only — never from your own knowledge. Read ALL chunks and combine relevant information into one answer. Write in a clean, flowing legal-memo style: start with a direct opening paragraph, use bold thematic section headers (not lettered items like a. b. c.), cite [Source N] after every fact, end with a Sources list and the line "This is legal research, not legal advice. Please verify against the primary source." Only output "I could not find authority on this in the CLAOnline database." if every chunk is completely unrelated to the question.`;
+          const baseSummarizerPrompt = agentPrompts.Content_Summarizer_Agent || `You are a professional legal research assistant for Indian corporate and commercial law. Answer STRICTLY from the Search Context only — never from your own knowledge. Read ALL chunks and combine relevant information into one answer. Write in a clean, flowing legal-memo style: start directly with a 2-3 sentence legal answer, use bold thematic section headers, cite [Source N] inline (max 1-2 citations per bracket), and end with "This is legal research, not legal advice. Please verify against the primary source." Only output "I could not find authority on this in the CLAOnline database." if every chunk is completely unrelated to the question.`;
 
-          const systemPrompt = `${baseSummarizerPrompt}${attachmentPromptRules}
+          const formattingRules = `
 
-At the end of your response, add the tag '---SUGGESTIONS---' followed by 3 relevant follow-up questions the user might ask next, one per line.
+CRITICAL READABILITY & FORMATTING RULES:
+1. NO META OPENING: NEVER start your answer with "Based solely on...", "Based on the retrieved...", "According to the database...", or any meta-disclaimer. Start IMMEDIATELY with a direct 2-3 sentence legal answer.
+2. MINIMAL CLEAN INLINE CITATIONS: Keep inline citations concise. Cite at most 1 to 2 specific source numbers per statement (e.g. [Source 1] or [Source 1, 2]). NEVER output long strings or ranges of citations like [Source 6, 7, 8, 9, 10, 11, 12...].
+3. NO MANUAL SOURCES SECTION: Do NOT output a manual "**Sources:**" text section or bullet list at the end of your answer. The user interface automatically renders the interactive Source Citations panel below your message.
+4. MANDATORY FOLLOW-UP QUESTIONS: At the very end of your response, ALWAYS append the exact tag '---SUGGESTIONS---' followed by 3 relevant follow-up questions the user might ask next, one per line.
 Example:
 ---SUGGESTIONS---
 What are the requirements for board resolutions under Section 135?
 Are private companies exempt from these regulations?
 What is the penalty for violating this provision?`;
+
+          const systemPrompt = `${baseSummarizerPrompt}${attachmentPromptRules}${formattingRules}`;
 
           // Answer synthesis: GPT-4.1-mini primary, DeepSeek v4 Pro fallback
           let llm;
