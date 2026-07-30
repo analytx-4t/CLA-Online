@@ -2882,9 +2882,8 @@ What is the penalty for violating this provision?`;
               });
             });
           }
-          // Find all bracketed citation numbers, e.g., [1], [2]
-          const uniqueSources = [];
-          const seenSources = new Set();
+          // Build sources array for all retrieved chunks (preserves 1-to-1 mapping with text sources list)
+          const allSources = [];
 
           if (Array.isArray(results)) {
             results.forEach((r, idx) => {
@@ -2894,33 +2893,28 @@ What is the penalty for violating this provision?`;
                 (r.original && r.original.parent && r.original.parent.FileName) ||
                 'Unknown';
 
-              const sourceKey = `${r.source_table || ''}:::${r.record_id || r.parent_id || idx}:::${title}`;
-
               const getCategory = (res) => {
                 const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
                 if (cat && (String(cat).includes('text-embedding') || String(cat).includes('embedding-3'))) return null;
                 return cat;
               };
 
-              if (!seenSources.has(sourceKey)) {
-                seenSources.add(sourceKey);
-                uniqueSources.push({
-                  title,
-                  filename: fileName,
-                  source_table: r.source_table,
-                  record_id: r.record_id,
-                  parent_id: r.parent_id,
-                  excerpt: truncateExcerpt(r.chunk_text),
-                  author: (r.original && r.original.parent && r.original.parent.Author) || null,
-                  sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-                  category: getCategory(r),
-                  subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
-                  doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
-                  vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
-                  issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
-                  issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
-                });
-              }
+              allSources.push({
+                title,
+                filename: fileName,
+                source_table: r.source_table,
+                record_id: r.record_id,
+                parent_id: r.parent_id,
+                excerpt: truncateExcerpt(r.chunk_text),
+                author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+                category: getCategory(r),
+                subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+                doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+                vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+                issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+                issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+              });
             });
           }
 
@@ -2937,7 +2931,7 @@ What is the penalty for violating this provision?`;
             answer: answerText,
             suggestions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
             follow_up_questions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
-            sources: uniqueSources,
+            sources: allSources,
             searchResults: results.map(r => ({
               embedding_id: r.embedding_id,
               source_table: r.source_table,
