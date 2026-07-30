@@ -1076,6 +1076,8 @@ function generateFallbackServerLogs(doc) {
         sourcesUsed: retrievedCount,
         answerLength: (doc.answer || '').length,
         suggestionsGenerated: Array.isArray(doc.suggestions) ? doc.suggestions.length : 0,
+        systemPrompt: doc.metadata?.systemPrompt || "You are an authoritative Indian Legal Assistant specialized in corporate and statutory law. Synthesize a precise, grounded answer based strictly on retrieved legal sources.",
+        userPrompt: question,
       },
     },
     {

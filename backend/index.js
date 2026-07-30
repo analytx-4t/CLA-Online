@@ -2704,6 +2704,8 @@ What is the penalty for violating this provision?`;
               sourcesUsed: results.length,
               suggestionsGenerated: suggestions.length,
               answerLength: answerText.length,
+              systemPrompt: systemPrompt,
+              userPrompt: userContent,
             },
           });
 

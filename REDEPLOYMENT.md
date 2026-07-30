@@ -37,7 +37,15 @@ cd /var/www/cla-online
 pm2 restart cla-backend
 ```
 
-### Step 6: Verify Deployment
+### Step 6: Reload Nginx (Recommended Best Practice)
+```bash
+sudo systemctl reload nginx
+```
+> **Note on Nginx & Browser Refresh:**
+> - **Is an Nginx restart required?** Strictly speaking, if `/etc/nginx/sites-available/...` config didn't change, Nginx automatically serves updated static files from the build folder. However, running `sudo systemctl reload nginx` is **0-downtime (<0.1s)** and ensures file descriptor caches are refreshed.
+> - **Browser Hard Refresh**: Users/Admins should press `Ctrl + Shift + R` (Windows) or `Cmd + Shift + R` (Mac) to ensure their browser loads the updated frontend bundles immediately without relying on old browser cache.
+
+### Step 7: Verify Deployment
 ```bash
 # Check PM2 status
 pm2 status

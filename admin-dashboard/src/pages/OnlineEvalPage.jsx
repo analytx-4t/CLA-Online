@@ -72,6 +72,49 @@ function omitTimings(metadata) {
   return rest;
 }
 
+function SystemPromptViewer({ prompt, userPrompt }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!prompt) return null;
+
+  const previewText = prompt.length > 220 ? prompt.substring(0, 220) + '...' : prompt;
+
+  return (
+    <div className="mt-2.5 rounded-lg border border-purple-500/30 bg-purple-500/10 p-3 text-xs space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="font-bold text-purple-400 flex items-center gap-1.5 text-[11px] uppercase tracking-wider">
+          <Cpu className="h-3.5 w-3.5 text-purple-400" /> System Prompt & Instructions
+        </span>
+        {prompt.length > 220 && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded(!expanded);
+            }}
+            className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+          >
+            {expanded ? 'See Less ▲' : 'See More ▼'}
+          </button>
+        )}
+      </div>
+
+      <div className="rounded border border-line bg-surface p-2.5 font-mono text-[11px] leading-relaxed text-muted max-h-60 overflow-y-auto whitespace-pre-wrap">
+        {expanded ? prompt : previewText}
+      </div>
+
+      {userPrompt && expanded && (
+        <div className="pt-2 border-t border-line space-y-1">
+          <span className="font-bold text-teal-400 text-[10px] uppercase tracking-wider">User Content & Context Payload:</span>
+          <div className="rounded border border-line bg-surface p-2 font-mono text-[11px] leading-relaxed text-muted max-h-48 overflow-y-auto whitespace-pre-wrap">
+            {userPrompt}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ServerLogsTimeline({ logs }) {
   const [expandedSteps, setExpandedSteps] = useState({ 1: true, 2: true, 3: true, 4: true, 5: true });
 
@@ -172,9 +215,13 @@ function ServerLogsTimeline({ logs }) {
                       </div>
                     )}
                     {log.details.expandedQuery && (
-                      <div>
-                        <span className="text-muted font-medium">Expanded Query: </span>
-                        <span className="text-ink font-semibold">{log.details.expandedQuery}</span>
+                      <div className="rounded-md border border-indigo-500/30 bg-indigo-500/10 p-2.5 my-1.5">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 mb-1">
+                          Expanded Query (Legal NLP Agent)
+                        </div>
+                        <div className="text-xs font-semibold text-ink leading-normal">
+                          {log.details.expandedQuery}
+                        </div>
                       </div>
                     )}
                     {Array.isArray(log.details.keywords) && log.details.keywords.length > 0 && (
@@ -215,6 +262,9 @@ function ServerLogsTimeline({ logs }) {
                         <span>Suggestions: <strong className="text-ink">{log.details.suggestionsGenerated}</strong></span>
                         <span>Answer Length: <strong className="text-ink">{log.details.answerLength} chars</strong></span>
                       </div>
+                    )}
+                    {log.details.systemPrompt && (
+                      <SystemPromptViewer prompt={log.details.systemPrompt} userPrompt={log.details.userPrompt} />
                     )}
                     {log.details.faithfulness !== undefined && (
                       <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-line text-[11px]">
