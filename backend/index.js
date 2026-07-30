@@ -29,6 +29,7 @@ const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attac
 const { createRequestContext } = require('./requestContext');
 const { handleAdminRoutes } = require('./adminRoutes');
 const { cohereRerank } = require('./cohereReranker');
+const { normalizeLegalQuery } = require('./legalQueryNormalizer');
 const { Server } = require('socket.io');
 
 let logfire;
@@ -786,7 +787,8 @@ function heuristicRerankSearchResults(query, results, topK = 5) {
 }
 
 async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = null) {
-  const targetQuestion = originalQuestion || retrievalQuery;
+  const normRetrieval = normalizeLegalQuery(retrievalQuery);
+  const targetQuestion = normalizeLegalQuery(originalQuestion || retrievalQuery);
 
   // Step 1: Candidate retrieval in parallel (Legislation max 10 candidates, Other tables max 15 candidates)
   let legislationCandidates = [];
@@ -794,11 +796,11 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
 
   try {
     const [legRes, othRes] = await Promise.all([
-      runPythonSearch(retrievalQuery, 10, true, 'Legislation').catch(err => {
+      runPythonSearch(normRetrieval, 10, true, 'Legislation').catch(err => {
         console.error('[Prioritized Search] Legislation search failed:', err.message);
         return [];
       }),
-      runPythonSearch(retrievalQuery, 15, true, '!Legislation').catch(err => {
+      runPythonSearch(normRetrieval, 15, true, '!Legislation').catch(err => {
         console.error('[Prioritized Search] Other tables search failed:', err.message);
         return [];
       })

@@ -208,8 +208,10 @@ function loadColangScriptedResponses() {
 function classifyLocal(text) {
   const lowered = (text || '').toLowerCase();
 
-  // Prefer specific matches for farewells and thanks
-  if (/\b(bye|goodbye|see you|see you later)\b/i.test(lowered)) {
+  // Prefer specific matches for farewells and thanks, excluding legal terms like "bye-laws"
+  const isBye = /\bbye\b/i.test(lowered) && !/\bbye[- ]?laws?\b/i.test(lowered);
+  const isOtherFarewell = /\b(goodbye|see you|see you later)\b/i.test(lowered);
+  if (isBye || isOtherFarewell) {
     return {
       triggered: true,
       category: 'GOODBYE',
@@ -284,10 +286,20 @@ function matchesScriptedPattern(text, pattern) {
   // Word-boundary match, not a plain substring test: a naive `includes()`
   // would flag "which sections apply" as a "hi" greeting.
   const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (pattern.toLowerCase() === 'bye' && /\bbye[- ]?laws?\b/i.test(text)) {
+    return false;
+  }
   return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
 }
 
 async function checkGuardrails(text) {
+  if (typeof text === 'string') {
+    text = text
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/\u2013|\u2014/g, '-');
+  }
+
   // First, consult .co scripted rules for deterministic dialog responses
   try {
     const scripted = loadColangScriptedResponses();
@@ -401,4 +413,4 @@ async function checkGuardrails(text) {
   }
 }
 
-module.exports = { checkGuardrails };
+module.exports = { checkGuardrails, classifyLocal };

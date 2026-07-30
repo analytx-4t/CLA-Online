@@ -10,9 +10,6 @@ define flow scripted dialog
     "{\"allowed\": false, \"category\": \"DIALOG\", \"response\": \"Hi! Welcome to CLA. I'm here to help with your Indian corporate and legal questions, including Company Law, SEBI, FEMA, taxation, labour laws, contracts, and compliance matters.\"}"
 
   # Goodbyes
-  else if "bye" in $user_request
-    "{\"allowed\": false, \"category\": \"GOODBYE\", \"response\": \"Goodbye! It was a pleasure assisting you. If you need help with Indian corporate law or compliance in the future, I'll be here to assist.\"}"
-
   else if "goodbye" in $user_request
     "{\"allowed\": false, \"category\": \"GOODBYE\", \"response\": \"Goodbye! It was a pleasure assisting you. If you need help with Indian corporate law or compliance in the future, I'll be here to assist.\"}"
 

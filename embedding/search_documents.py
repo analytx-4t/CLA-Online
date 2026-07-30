@@ -39,7 +39,9 @@ load_dotenv()
 SQL_CONN_STR = os.environ["SQL_CONN_STR"]
 EMBEDDING_MODEL = "text-embedding-3-large"
 
-_openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+_openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=0, timeout=3.0)
+
+_OPENAI_QUOTA_EXHAUSTED = False
 
 # ---------- EMBEDDING THE USER'S QUERY ----------
 
@@ -47,8 +49,17 @@ def embed_query(query_text):
     """text-embedding-3-large has no asymmetric-retrieval task format (unlike
     gemini-embedding-2) — the query text is embedded as-is, same as a document
     chunk (see prepare_document_text() in embed_documents.py)."""
-    result = _openai_client.embeddings.create(model=EMBEDDING_MODEL, input=[query_text])
-    return np.array(result.data[0].embedding, dtype=np.float32)
+    global _OPENAI_QUOTA_EXHAUSTED
+    if os.environ.get("DISABLE_OPENAI_EMBEDDINGS") == "true" or _OPENAI_QUOTA_EXHAUSTED:
+        raise Exception("OpenAI API quota exhausted (instant fallback active)")
+    try:
+        result = _openai_client.embeddings.create(model=EMBEDDING_MODEL, input=[query_text])
+        return np.array(result.data[0].embedding, dtype=np.float32)
+    except Exception as e:
+        if "insufficient_quota" in str(e).lower() or "quota" in str(e).lower():
+            _OPENAI_QUOTA_EXHAUSTED = True
+            sys.stderr.write("[Search Notice] OpenAI quota exhausted. Activated instant keyword search fallback.\n")
+        raise e
 
 
 def _bytes_to_vector(b):
@@ -67,6 +78,11 @@ _SELECT_COLS = """
     Embedding, EmbeddingModel, EmbeddingDim, Category, Subject,
     Sections, DocTitle, LawTitle, DocDate
 """
+
+_COLS_NO_EMB = [
+    'embedding_id', 'source_table', 'record_id', 'parent_id', 'chunk_text',
+    'category', 'subject', 'sections', 'doc_title', 'law_title', 'doc_date'
+]
 
 
 def _row_to_result(row, extra=None):
@@ -272,11 +288,31 @@ _STOP_WORDS = {
     'the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'under', 
     'what', 'which', 'how', 'is', 'are', 'was', 'were', 'be', 'been', 'with', 
     'by', 'from', 'this', 'that', 'about', 'such', 'into', 'than', 'can', 'should',
-    'does', 'do', 'did', 'required', 'requirement', 'requirements'
+    'does', 'do', 'did', 'required', 'requirement', 'requirements',
+    'wants', 'some', 'need', 'there', 'anything', 'that', 'could', 'block',
+    'read', 'off', 'our', 'actual', 'turnover', 'profit', 'says', 'we', 'us',
+    'same', 'now', 'line', 'business'
 }
 
+def normalize_legal_query_py(query_text):
+    if not query_text:
+        return query_text
+    q = str(query_text)
+    q = re.sub(r"\bu/s\.?\s*(\d+[A-Za-z]?)\b", r"Section \1", q, flags=re.IGNORECASE)
+    q = re.sub(r"\bu/sec\.?\s*(\d+[A-Za-z]?)\b", r"Section \1", q, flags=re.IGNORECASE)
+    q = re.sub(r"\bsec\.?\s*(\d+[A-Za-z]?)\b", r"Section \1", q, flags=re.IGNORECASE)
+    q = re.sub(r"\bart\.?\s*(\d+[A-Za-z]?)\b", r"Article \1", q, flags=re.IGNORECASE)
+    q = re.sub(r"\br/w\b", "read with", q, flags=re.IGNORECASE)
+    q = re.sub(r"\bunlisted co\b", "unlisted company", q, flags=re.IGNORECASE)
+    q = re.sub(r"\bpvt ltd\b", "private limited", q, flags=re.IGNORECASE)
+    q = re.sub(r"\bcirp\b", "Corporate Insolvency Resolution Process (CIRP)", q, flags=re.IGNORECASE)
+    q = re.sub(r"\brp\b", "Resolution Professional (RP)", q, flags=re.IGNORECASE)
+    q = re.sub(r"\bcoc\b", "Committee of Creditors (CoC)", q, flags=re.IGNORECASE)
+    return q
+
 def _keyword_search_fallback(cnx, query_text, top_k, source_filter):
-    all_terms = [t for t in re.findall(r"\w+", query_text) if len(t) > 2]
+    query_text = normalize_legal_query_py(query_text)
+    all_terms = [t for t in re.findall(r"\b[A-Za-z0-9]+\b", query_text) if len(t) > 2 or t.isdigit()]
     terms = [t for t in all_terms if t.lower() not in _STOP_WORDS]
     if not terms:
         terms = all_terms
@@ -290,10 +326,11 @@ def _keyword_search_fallback(cnx, query_text, top_k, source_filter):
         FROM dbo.DocumentEmbeddings WITH (NOLOCK)
         WHERE ({like_clauses})
     """
-    params = [top_k * 4]
+    params = [top_k * 10]
     for t in terms:
         p = f"%{t}%"
         params.extend([p, p, p, p, p])
+
     if source_filter:
         if source_filter.startswith("!"):
             sql += " AND SourceTable <> ?"
@@ -301,9 +338,43 @@ def _keyword_search_fallback(cnx, query_text, top_k, source_filter):
         else:
             sql += " AND SourceTable = ?"
             params.append(source_filter)
+
     cur.execute(sql, params)
     rows = cur.fetchall()
     cur.close()
+
+    if not rows:
+        return []
+
+    # Score and rank candidates in Python instantly (< 1ms)
+    scored_rows = []
+    term_set = set(t.lower() for t in terms)
+    sec_numbers = set(re.findall(r"\b\d+\b", query_text))
+
+    for row in rows:
+        dict_row = dict(zip(_COLS_NO_EMB, row))
+        text = (dict_row.get('chunk_text') or '').lower()
+        doc_title = (dict_row.get('doc_title') or '').lower()
+        sections = (dict_row.get('sections') or '').lower()
+        law_title = (dict_row.get('law_title') or '').lower()
+
+        score = 0
+        for term in term_set:
+            if term in text: score += 2
+            if term in doc_title: score += 3
+            if term in law_title: score += 3
+            if term in sections: score += 4
+
+        for sec in sec_numbers:
+            if f"section {sec}" in text or f"sec {sec}" in text or f"s. {sec}" in text or f"section {sec}" in sections:
+                score += 15
+            elif sec in sections or sec in text:
+                score += 5
+
+        scored_rows.append((score, dict_row))
+
+    scored_rows.sort(key=lambda x: x[0], reverse=True)
+    return [item[1] for item in scored_rows[:top_k]]
 
     results = []
     for row in rows:
