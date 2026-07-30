@@ -64,12 +64,12 @@ function setJsonHeaders(res, statusCode) {
 
 function getProgressStageMeta(stageIndex) {
   const mapping = {
-    0: { currentStage: 'queued', message: 'Preparing your response...' },
-    1: { currentStage: 'understanding', message: 'Understanding your question...' },
-    2: { currentStage: 'retrieving', message: 'Finding relevant information...' },
-    3: { currentStage: 'reviewing', message: 'Reviewing the retrieved information...' },
-    4: { currentStage: 'preparing', message: 'Preparing your answer...' },
-    5: { currentStage: 'completed', message: 'Finalizing your response...' },
+    0: { currentStage: 'queued', message: 'Preparing your response' },
+    1: { currentStage: 'understanding', message: 'Understanding your question' },
+    2: { currentStage: 'retrieving', message: 'Finding relevant information' },
+    3: { currentStage: 'reviewing', message: 'Reviewing the retrieved information' },
+    4: { currentStage: 'preparing', message: 'Preparing your answer' },
+    5: { currentStage: 'completed', message: 'Finalizing your response' },
   };
 
   return mapping[stageIndex] || mapping[0];
@@ -82,7 +82,7 @@ function updateRequestProgress(requestId, patch = {}) {
     status: 'in_progress',
     stageIndex: 0,
     currentStage: 'queued',
-    message: 'Preparing your response...',
+    message: 'Preparing your response',
     steps: [],
     startedAt: new Date().toISOString(),
   };
@@ -2146,7 +2146,7 @@ async function startServer() {
 
         const progress = getRequestProgress(requestId);
         setJsonHeaders(res, progress ? 200 : 404);
-        res.end(JSON.stringify(progress || { requestId, status: 'not_found', stageIndex: 0, currentStage: 'queued', message: 'Preparing your response...', steps: [] }));
+        res.end(JSON.stringify(progress || { requestId, status: 'not_found', stageIndex: 0, currentStage: 'queued', message: 'Preparing your response', steps: [] }));
         return;
       }
 
@@ -2155,7 +2155,7 @@ async function startServer() {
         const requestId = decodeURIComponent(progressRouteMatch[1]);
         const progress = getRequestProgress(requestId);
         setJsonHeaders(res, progress ? 200 : 404);
-        res.end(JSON.stringify(progress || { requestId, status: 'not_found', stageIndex: 0, currentStage: 'queued', message: 'Preparing your response...', steps: [] }));
+        res.end(JSON.stringify(progress || { requestId, status: 'not_found', stageIndex: 0, currentStage: 'queued', message: 'Preparing your response', steps: [] }));
         return;
       }
 
@@ -2342,7 +2342,7 @@ async function startServer() {
             updateRequestProgress(progressRequestId, {
               stageIndex: 1,
               currentStage: 'understanding',
-              message: 'Understanding your question...',
+              message: 'Understanding your question',
               status: 'in_progress',
             });
 
@@ -2414,7 +2414,7 @@ async function startServer() {
             updateRequestProgress(progressRequestId, {
               stageIndex: 2,
               currentStage: 'retrieving',
-              message: 'Finding relevant information...',
+              message: 'Finding relevant information',
               status: 'in_progress',
             });
             retrievalStartedAt = Date.now();
@@ -2689,7 +2689,7 @@ What is the penalty for violating this provision?`;
           updateRequestProgress(progressRequestId, {
             stageIndex: 4,
             currentStage: 'preparing',
-            message: 'Preparing your answer...',
+            message: 'Preparing your answer',
             status: 'in_progress',
           });
 
@@ -2877,101 +2877,51 @@ What is the penalty for violating this provision?`;
             });
           }
           // Find all bracketed citation numbers, e.g., [1], [2]
-          const citationRegex = /\[([1-9])\]/g;
-          let match;
-          const citedIndices = new Set();
-          while ((match = citationRegex.exec(answerText)) !== null) {
-            const idx = parseInt(match[1], 10) - 1;
-            if (idx >= 0 && idx < results.length) {
-              citedIndices.add(idx);
-            }
-          }
-
-          // Fallback to title/filename matching if no numerical citations found
-          if (citedIndices.size === 0) {
-            for (let i = 0; i < results.length; i++) {
-              const r = results[i];
-              const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-              const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-                (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-              if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) ||
-                answerText.toLowerCase().includes(fileName.toLowerCase())) {
-                citedIndices.add(i);
-              }
-            }
-          }
-
           const uniqueSources = [];
           const seenSources = new Set();
-          citedIndices.forEach(idx => {
-            const r = results[idx];
-            const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-            const fileName =
-              (r.original && r.original.child && r.original.child.FileName) ||
-              (r.original && r.original.parent && r.original.parent.FileName) ||
-              'Unknown';
 
-            const sourceKey = `${title}:::${fileName}`;
+          if (Array.isArray(results)) {
+            results.forEach((r, idx) => {
+              const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+              const fileName =
+                (r.original && r.original.child && r.original.child.FileName) ||
+                (r.original && r.original.parent && r.original.parent.FileName) ||
+                'Unknown';
 
-            const getCategory = (res) => {
-              const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
-              if (cat && (String(cat).includes('text-embedding') || String(cat).includes('embedding-3'))) return null;
-              return cat;
-            };
+              const sourceKey = `${r.source_table || ''}:::${r.record_id || r.parent_id || idx}:::${title}`;
 
-            if (!seenSources.has(sourceKey)) {
-              seenSources.add(sourceKey);
-              uniqueSources.push({
-                title,
-                filename: fileName,
-                source_table: r.source_table,
-                record_id: r.record_id,
-                parent_id: r.parent_id,
-                excerpt: truncateExcerpt(r.chunk_text),
-                author: (r.original && r.original.parent && r.original.parent.Author) || null,
-                sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-                category: getCategory(r),
-                subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
-                doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
-                vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
-                issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
-                issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
-              });
-            }
-          });
+              const getCategory = (res) => {
+                const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
+                if (cat && (String(cat).includes('text-embedding') || String(cat).includes('embedding-3'))) return null;
+                return cat;
+              };
 
-          // Fallback to top result's source if no explicit citation found in answer (and answer isn't no-match).
-          // Skipped when the answer was grounded in an attachment instead — attaching an unrelated DB
-          // source to an answer that only describes the user's own document would be misleading.
-          if (uniqueSources.length === 0 && results.length > 0 && !attachmentContext &&
-            !answerText.toLowerCase().includes("nothing relevant found") &&
-            !answerText.toLowerCase().includes("could not find authority")) {
-            const r = results[0];
-            const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-            const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-              (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-            uniqueSources.push({
-              title,
-              filename: fileName,
-              source_table: r.source_table,
-              record_id: r.record_id,
-              parent_id: r.parent_id,
-              excerpt: truncateExcerpt(r.chunk_text),
-              author: (r.original && r.original.parent && r.original.parent.Author) || null,
-              sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-              category: getCategory(r),
-              subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
-              doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
-              vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
-              issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
-              issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+              if (!seenSources.has(sourceKey)) {
+                seenSources.add(sourceKey);
+                uniqueSources.push({
+                  title,
+                  filename: fileName,
+                  source_table: r.source_table,
+                  record_id: r.record_id,
+                  parent_id: r.parent_id,
+                  excerpt: truncateExcerpt(r.chunk_text),
+                  author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                  sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+                  category: getCategory(r),
+                  subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+                  doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+                  vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+                  issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+                  issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+                });
+              }
             });
           }
 
           updateRequestProgress(progressRequestId, {
             stageIndex: 5,
             currentStage: 'completed',
-            message: 'Finalizing your response...',
+            message: 'Finalizing your response',
             status: 'completed',
           });
 

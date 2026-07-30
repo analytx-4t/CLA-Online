@@ -7,12 +7,9 @@
 // decomposition. The prompt text itself is parsed out of eval_agent.md at
 // startup, so that file is the single source of truth for prompt wording.
 //
-// Judge model: gpt-5 primary, deepseek-v4-pro fallback — a fixed two-tier
+// Judge model: gpt-4.1-mini primary, deepseek-v4-pro fallback — a fixed two-tier
 // chain specific to the judge, called directly via executeChatCompletionDirect
-// rather than createChatCompletion's shared chat fallback chain (which is
-// tuned for the main CLA chatbot — deepseek primary, then openai/groq/gemini
-// in that order — and shouldn't change just because the judge's preference
-// is different).
+// rather than createChatCompletion's shared chat fallback chain.
 
 const fs = require('fs');
 const path = require('path');
@@ -31,18 +28,10 @@ const SECTION_HEADERS = {
 };
 
 const JUDGE_TIMEOUT_MS = 90000;
-// Reasoning models (deepseek-v4-pro, and gpt-5's reasoning tiers) spend most
-// of their completion-token budget on hidden reasoning before ever emitting
-// the final JSON. A small maxTokens (e.g. 400) gets exhausted mid-reasoning
-// and returns empty content with finish_reason "length" — confirmed by
-// direct testing. These prompts are long, multi-step audits, so give
-// generous headroom. gpt-5 is additionally pinned to reasoning_effort: 'low'
-// in portkey.js, but real retrieved contexts run longer than test fixtures,
-// so keep this budget generous as a second line of defense.
 const JUDGE_MAX_TOKENS = 8000;
 
 const JUDGE_PRIMARY_PROVIDER = 'openai';
-const JUDGE_PRIMARY_MODEL = process.env.JUDGE_PRIMARY_MODEL || 'gpt-5';
+const JUDGE_PRIMARY_MODEL = process.env.JUDGE_PRIMARY_MODEL || 'gpt-4.1-mini';
 const JUDGE_FALLBACK_PROVIDER = 'deepseek';
 const JUDGE_FALLBACK_MODEL = process.env.JUDGE_FALLBACK_MODEL || process.env.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro';
 
@@ -185,11 +174,8 @@ async function callJudgeProvider(provider, model, metricKey, userPayload, reques
 }
 
 const JUDGE_FALLBACK_TIERS = [
-  { provider: 'openai', model: process.env.JUDGE_PRIMARY_MODEL || 'gpt-5' },
-  { provider: 'openai', model: 'gpt-4.1-mini' },
+  { provider: 'openai', model: process.env.JUDGE_PRIMARY_MODEL || 'gpt-4.1-mini' },
   { provider: 'deepseek', model: process.env.JUDGE_FALLBACK_MODEL || 'deepseek-v4-pro' },
-  { provider: 'groq', model: 'llama-3.3-70b-versatile' },
-  { provider: 'gemini', model: 'gemini-2.5-flash' },
 ];
 
 async function callJudgeWithCascade(metricKey, userPayload, requestContext) {

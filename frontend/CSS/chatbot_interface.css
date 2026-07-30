@@ -257,6 +257,8 @@ textarea#messageInput{flex:1;min-height:40px;max-height:140px;padding:8px 10px;b
 textarea#messageInput::placeholder{color:var(--muted)}
 .send-btn{border:none;padding:0 14px;height:40px;border-radius:18px;background:var(--primary);color:#fff;cursor:pointer;transition:background 0.16s ease;display:flex;align-items:center;justify-content:center}
 .send-btn:hover{background:#0e9f4c}
+.send-btn.stop-btn{background:#dc2626;color:#ffffff;gap:4px}
+.send-btn.stop-btn:hover{background:#b91c1c}
 @media (max-width:1080px){
   .chat-panel{width:300px}
 }

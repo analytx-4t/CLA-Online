@@ -28,6 +28,56 @@ let isDeletingSession = false;
 let sessionMenuPortal = null;
 let isAutoScrollEnabled = true; // Track if auto-scroll should be active
 let sidebarResizeActive = false;
+let activeAbortController = null;
+
+function cleanLoadingText(text) {
+  if (!text) return 'Preparing your response';
+  return text.replace(/\.\.\.$/, '').replace(/\.$/, '').trim();
+}
+
+function setSendButtonState(isProcessing) {
+  if (!sendBtn) return;
+  if (isProcessing) {
+    sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="margin-right:5px;"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>Stop';
+    sendBtn.classList.add('stop-btn');
+    sendBtn.setAttribute('aria-label', 'Stop generating response');
+    sendBtn.setAttribute('title', 'Stop generating response');
+  } else {
+    sendBtn.innerHTML = 'Send';
+    sendBtn.classList.remove('stop-btn');
+    sendBtn.setAttribute('aria-label', 'Send message');
+    sendBtn.setAttribute('title', 'Send message');
+  }
+}
+
+function handleStopGenerating() {
+  if (activeAbortController) {
+    activeAbortController.abort();
+    activeAbortController = null;
+  }
+  const sessionId = activeProcessingSessionId || currentSessionId;
+  const thinkingId = activeProcessingMessageId;
+
+  clearProcessingIndicator();
+  isSendingMessage = false;
+  setSendButtonState(false);
+
+  if (sessionId && thinkingId && messagesBySession[sessionId]) {
+    messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingId);
+    messagesBySession[sessionId].push({
+      message_id: 'stopped-' + Date.now(),
+      session_id: sessionId,
+      role: 'assistant',
+      content: 'Generation stopped by user.',
+      created_at: nowISO(),
+      metadata: { isStopped: true }
+    });
+  }
+
+  renderSessions();
+  renderMessages();
+  updateWelcomeCard();
+}
 
 function getApiBaseUrl() {
   const configuredBaseUrl = (window.__CLA_API_BASE_URL__ || '').toString().trim();
@@ -149,7 +199,7 @@ function updateThinkingMessage(sessionId, messageId, messageText, stageIndex) {
   thinkingMessage.metadata = thinkingMessage.metadata || {};
   thinkingMessage.metadata.isThinking = true;
   thinkingMessage.metadata.processingStage = stageIndex;
-  thinkingMessage.content = messageText;
+  thinkingMessage.content = cleanLoadingText(messageText);
   return true;
 }
 
@@ -163,7 +213,7 @@ function startBackendProgressPolling(sessionId, messageId, requestId) {
   thinkingMessage.metadata = thinkingMessage.metadata || {};
   thinkingMessage.metadata.isThinking = true;
   thinkingMessage.metadata.processingStage = 0;
-  thinkingMessage.content = 'Preparing your response...';
+  thinkingMessage.content = cleanLoadingText('Preparing your response');
 
   activeProcessingSessionId = sessionId;
   activeProcessingMessageId = messageId;
@@ -190,7 +240,7 @@ function startBackendProgressPolling(sessionId, messageId, requestId) {
 
       const progress = await response.json();
       const stageIndex = Number(progress?.stageIndex || progress?.stage || 0);
-      const messageText = progress?.message || 'Preparing your response...';
+      const messageText = cleanLoadingText(progress?.message || 'Preparing your response');
       const isCompleted = progress?.status === 'completed' || progress?.currentStage === 'completed' || stageIndex >= 5;
 
       if (!Number.isFinite(stageIndex) || stageIndex <= activeProgressStageIndex) {
@@ -1151,14 +1201,17 @@ function renderMessages() {
       if (message.metadata?.isThinking) {
         const statusBubble = document.createElement('div');
         statusBubble.className = 'assistant-processing';
+
+        const text = document.createElement('span');
+        text.className = 'processing-text';
+        text.textContent = cleanLoadingText(message.content || 'Preparing a clear response');
+
         const dots = document.createElement('span');
         dots.className = 'processing-dots';
         dots.innerHTML = '<span></span><span></span><span></span>';
-        const text = document.createElement('span');
-        text.className = 'processing-text';
-        text.textContent = message.content || 'Preparing a clear response...';
-        statusBubble.appendChild(dots);
-        statusBubble.appendChild(text);
+
+        statusBubble.appendChild(text); // LIVE TEXT FIRST
+        statusBubble.appendChild(dots); // MOVING DOTS AFTER LIVE TEXT
         contentDiv.appendChild(statusBubble);
       } else if (messagesToAnimate.has(message.message_id)) {
         messagesToAnimate.delete(message.message_id); // prevent re-animation
@@ -1432,6 +1485,8 @@ async function handleUserSend() {
   }
 
   isSendingMessage = true;
+  setSendButtonState(true);
+  activeAbortController = new AbortController();
 
   const currentSession = getCurrentSession();
   let activeSession = currentSession;
@@ -1474,7 +1529,7 @@ async function handleUserSend() {
     message_id: thinkingMessageId,
     session_id: sessionId,
     role: 'assistant',
-    content: 'Preparing your response...',
+    content: cleanLoadingText('Preparing your response'),
     created_at: nowISO(),
     metadata: { isThinking: true }
   };
@@ -1493,6 +1548,7 @@ async function handleUserSend() {
       headers: {
         'Content-Type': 'application/json',
       },
+      signal: activeAbortController ? activeAbortController.signal : undefined,
       body: JSON.stringify({ question: text, attachments: attachmentsForContext, requestId: progressRequestId })
     });
 
@@ -1575,6 +1631,10 @@ async function handleUserSend() {
       }
     }
   } catch (error) {
+    if (error.name === 'AbortError') {
+      console.log('[RAG] Generation request aborted by user.');
+      return;
+    }
     console.error('Failed to send message:', error);
     clearProcessingIndicator();
     messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
@@ -1588,6 +1648,8 @@ async function handleUserSend() {
     });
   } finally {
     isSendingMessage = false;
+    activeAbortController = null;
+    setSendButtonState(false);
     renderSessions();
     renderMessages();
     updateWelcomeCard();
@@ -1624,13 +1686,19 @@ function resizeTextArea() {
 }
 
 sendBtn?.addEventListener('click', () => {
-  handleUserSend();
+  if (isSendingMessage) {
+    handleStopGenerating();
+  } else {
+    handleUserSend();
+  }
 });
 
 messageInput?.addEventListener('keydown', event => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
-    handleUserSend();
+    if (!isSendingMessage) {
+      handleUserSend();
+    }
   }
 });
 
