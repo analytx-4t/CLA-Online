@@ -56,7 +56,105 @@ pm2 logs cla-backend --lines 50
 
 ---
 
-## Part 2: Updating Embedding Cache (Optional)
+## Part 2: Deploying Second Environment (`claonline2.analytx4t.com` & `adminclaonline2.analytx4t.com`)
+
+To run the second prompt version (`promptttt.md`) simultaneously alongside the original version:
+
+### Step 1: Clone / Copy Code to Second Directory
+```bash
+sudo cp -r /var/www/cla-online /var/www/cla-online2
+sudo chown -R ubuntu:ubuntu /var/www/cla-online2
+cd /var/www/cla-online2
+```
+
+### Step 2: Configure Environment for Version 2
+Edit `/var/www/cla-online2/.env` (or create if missing):
+```env
+PORT=3001
+PROMPT_FILE=promptttt.md
+MONGODB_URI=mongodb+srv://<USER>:<PASS>@<CLUSTER>.mongodb.net/cla_legal_chat?retryWrites=true&w=majority
+OPENAI_API_KEY=sk-proj-xxxx
+SQL_CONN_STR=Driver={ODBC Driver 18 for SQL Server};Server=<SERVER>.database.windows.net,1433;Database=<DB>;Uid=<USER>;Pwd=<PASS>;Encrypt=yes;TrustServerCertificate=yes;Connection Timeout=60;
+COHERE_API_KEY=xxxx
+```
+
+### Step 3: Rebuild Admin Dashboard for Version 2
+```bash
+cd /var/www/cla-online2/admin-dashboard
+npm install
+npm run build
+cd /var/www/cla-online2
+```
+
+### Step 4: Configure Nginx Site for Version 2 (`/etc/nginx/sites-available/cla-online2`)
+Create `/etc/nginx/sites-available/cla-online2`:
+```nginx
+server {
+    server_name claonline2.analytx4t.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 300s;
+    }
+}
+
+server {
+    server_name adminclaonline2.analytx4t.com;
+
+    location / {
+        root /var/www/cla-online2/admin-dashboard/dist;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_read_timeout 300s;
+    }
+
+    location /socket.io/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+Enable site, test Nginx & Reload:
+```bash
+sudo ln -s /etc/nginx/sites-available/cla-online2 /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### Step 5: Obtain SSL Certificates with Certbot
+```bash
+sudo certbot --nginx -d claonline2.analytx4t.com -d adminclaonline2.analytx4t.com
+```
+
+### Step 6: Start Version 2 in PM2
+```bash
+cd /var/www/cla-online2
+pm2 start backend/index.js --name "cla-backend2"
+pm2 save
+```
+
+---
+
+## Part 3: Updating Embedding Cache (Optional)
 
 If you updated vector data in SQL Server or changed embedding models:
 

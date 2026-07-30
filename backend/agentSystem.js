@@ -6,7 +6,9 @@ const { getLLMProvider } = require('./llm/factory');
 // Helper to load and parse prompts dynamically from the markdown file
 function loadAgentPrompts() {
   try {
-    const filePath = path.resolve(__dirname, '../CLAOnline_Agent_Prompts_FINAL.md');
+    const { settings } = require('./config');
+    const promptFileName = process.env.PROMPT_FILE || settings.PROMPT_FILE || 'CLAOnline_Agent_Prompts_FINAL.md';
+    const filePath = path.resolve(__dirname, '..', promptFileName);
     const content = fs.readFileSync(filePath, 'utf8');
 
     const sections = {};

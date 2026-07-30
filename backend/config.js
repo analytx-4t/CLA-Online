@@ -22,6 +22,8 @@ const settings = {
   DEFAULT_LLM_PROVIDER: process.env.DEFAULT_LLM_PROVIDER || 'deepseek',
   DEFAULT_LLM_MODEL: process.env.DEFAULT_LLM_MODEL || 'deepseek-v4-pro',
 
+  PROMPT_FILE: process.env.PROMPT_FILE || 'CLAOnline_Agent_Prompts_FINAL.md',
+
   // Embedding Configuration
   EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || 'openai',
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL || 'text-embedding-3-large',
