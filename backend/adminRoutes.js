@@ -1049,7 +1049,7 @@ function generateFallbackServerLogs(doc) {
       timeMs: retrievalTimeMs,
       provider: 'FastEmbed / Cosine Reranker',
       model: 'text-embedding-3-large',
-      summary: `Searched Indian corporate law database with Legislation priority (max 3-4 legislation + max 5 other sources), reranked top ${retrievedCount} verified legal source chunks.`,
+      summary: `Searched Indian corporate law database with Legislation priority (3-5 legislation + other sources, up to 35 total), reranked top ${retrievedCount} verified legal source chunks.`,
       details: {
         retrievalQuery: `${question} statutory compliance`,
         candidatesFound: Math.max(retrievedCount * 3, 5),

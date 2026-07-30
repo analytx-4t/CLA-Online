@@ -820,22 +820,28 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
     console.error('[Prioritized Search] Candidate retrieval failed:', err.message);
   }
 
-  // Step 2: Rerank Legislation (top 15) and Other tables (top 20) concurrently using Cohere Reranker
+  // Step 2: Rerank Legislation (top 5) and Other tables (top 35) using Cohere Reranker
   const [legislationResults, otherResults] = await Promise.all([
     legislationCandidates.length > 0
-      ? rerankSearchResults(targetQuestion, legislationCandidates, 15)
+      ? rerankSearchResults(targetQuestion, legislationCandidates, 5)
       : Promise.resolve([]),
     otherCandidates.length > 0
-      ? rerankSearchResults(targetQuestion, otherCandidates, 20)
+      ? rerankSearchResults(targetQuestion, otherCandidates, 35)
       : Promise.resolve([])
   ]);
 
-  // Step 3: Combine legislation chunks (max 15) + all other tables (max 20), up to 35 comprehensive chunks
-  const combinedResults = [...legislationResults, ...otherResults];
+  // Step 3: Combine up to 35 total chunks:
+  // - 3-5 chunks from Legislation table (if any matched)
+  // - Remaining quota (up to 35 total) filled from best suited chunks of all other tables
+  const legSlice = legislationResults.slice(0, 5);
+  const remainingQuota = 35 - legSlice.length;
+  const otherSlice = otherResults.slice(0, remainingQuota);
+
+  const combinedResults = [...legSlice, ...otherSlice];
   const candidateCount = legislationCandidates.length + otherCandidates.length;
 
-  combinedResults.legislationResults = legislationResults;
-  combinedResults.otherResults = otherResults;
+  combinedResults.legislationResults = legSlice;
+  combinedResults.otherResults = otherSlice;
   combinedResults.candidateCount = candidateCount;
   combinedResults.legislationCandidatesCount = legislationCandidates.length;
   combinedResults.otherCandidatesCount = otherCandidates.length;
@@ -2445,7 +2451,7 @@ async function startServer() {
               timeMs: retrievalTimeMs,
               provider: 'FastEmbed / Cosine Reranker',
               model: 'text-embedding-3-large',
-              summary: `Prioritized retrieval fetched ${legislationResults.length} legislation chunks (max 3-4) + ${otherResults.length} other table chunks (max 5), total ${results.length} verified legal sources.`,
+              summary: `Prioritized retrieval fetched ${legislationResults.length} legislation chunks (3-5 max) + ${otherResults.length} other table chunks (up to 35 max total), total ${results.length} verified legal sources.`,
               details: {
                 retrievalQuery: retrievalQuery,
                 candidatesFound: candidateCount,
@@ -3494,10 +3500,6 @@ What is the penalty for violating this provision?`;
         console.log('[RAGAS Live] Client disconnected');
       });
     });
-
-    server.timeout = 300000;
-    server.keepAliveTimeout = 300000;
-    server.headersTimeout = 305000;
 
     server.listen(PORT, () => {
       const embeddingConfig = getEmbeddingConfig();
