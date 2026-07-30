@@ -2538,7 +2538,7 @@ async function startServer() {
 
           const { loadAgentPrompts } = require('./agentSystem');
           const agentPrompts = loadAgentPrompts();
-          const baseSummarizerPrompt = agentPrompts.Content_Summarizer_Agent || `You are a professional legal research assistant for Indian corporate and commercial law. You answer STRICTLY and EXCLUSIVELY from the Search Context provided — never from your own knowledge. Read ALL retrieved chunks and synthesize a complete answer by combining relevant information across all sources. If a chunk contains any part of the answer, use it. Only say "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question." if every single chunk is completely unrelated to the question.`;
+          const baseSummarizerPrompt = agentPrompts.Content_Summarizer_Agent || `You are a professional legal research assistant for Indian corporate and commercial law. Answer STRICTLY from the Search Context only — never from your own knowledge. Read ALL chunks and combine relevant information into one answer. Write in a clean, flowing legal-memo style: start with a direct opening paragraph, use bold thematic section headers (not lettered items like a. b. c.), cite [Source N] after every fact, end with a Sources list and the line "This is legal research, not legal advice. Please verify against the primary source." Only output "I could not find authority on this in the CLAOnline database." if every chunk is completely unrelated to the question.`;
 
           const systemPrompt = `${baseSummarizerPrompt}${attachmentPromptRules}
 
@@ -2549,9 +2549,14 @@ What are the requirements for board resolutions under Section 135?
 Are private companies exempt from these regulations?
 What is the penalty for violating this provision?`;
 
-          const provider = settings.DEFAULT_LLM_PROVIDER;
-          const model = settings.DEFAULT_LLM_MODEL;
-          const llm = getLLMProvider(provider, model);
+          // Answer synthesis: GPT-4.1-mini primary, DeepSeek v4 Pro fallback
+          let llm;
+          try {
+            llm = getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini');
+          } catch (e) {
+            console.warn('[RAG Synthesis] GPT-4.1-mini unavailable, falling back to DeepSeek v4 Pro:', e.message);
+            llm = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
+          }
 
           const userContentParts = [`Question: ${question}`];
           if (contextBlock) {

@@ -152,7 +152,16 @@ function cleanParsedValue(value) {
  */
 async function expandLegalQuery(userMessage) {
   const prompts = loadAgentPrompts();
-  const defaultProvider = getLLMProvider();
+  const { settings } = require('./config');
+
+  // Query Expansion uses GPT-5 for best semantic enrichment; fallback to DeepSeek v4 Pro
+  let expansionProvider;
+  try {
+    expansionProvider = getLLMProvider('openai', settings.OPENAI_GPT5_MODEL || 'gpt-5');
+  } catch (e) {
+    console.warn('[Query Expansion] GPT-5 provider init failed, falling back to DeepSeek v4 Pro:', e.message);
+    expansionProvider = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
+  }
 
   console.log(
     `[Query Expansion] Expanding legal query: "${userMessage}"`
@@ -165,7 +174,7 @@ async function expandLegalQuery(userMessage) {
     );
 
     const expansionResponse = await generateWithRetry(
-      defaultProvider,
+      expansionProvider,
       {
         messages: [
           {

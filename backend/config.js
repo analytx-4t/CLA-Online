@@ -4,6 +4,7 @@ const settings = {
   // LLM Providers
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
   OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+  OPENAI_GPT5_MODEL: process.env.OPENAI_GPT5_MODEL || 'gpt-5',
 
   DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || '',
   DEEPSEEK_PRO_MODEL: process.env.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro',
