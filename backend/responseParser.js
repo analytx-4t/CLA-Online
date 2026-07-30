@@ -92,6 +92,10 @@ function parseAnswerAndSuggestions(rawAnswer) {
       .slice(0, 3);
   }
 
+  // Strip any trailing manual "Sources:" section from text response
+  // (The UI frontend renders the interactive Source Citations panel automatically)
+  answer = answer.replace(/\n+\s*(?:###?\s*)?(?:\*\*|__)?\s*Sources:?\s*(?:\*\*|__)?[\s\S]*$/i, '').trim();
+
   return {
     answer,
     suggestions: normalizeFollowUpQuestions(suggestions)
