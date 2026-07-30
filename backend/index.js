@@ -3495,6 +3495,10 @@ What is the penalty for violating this provision?`;
       });
     });
 
+    server.timeout = 300000;
+    server.keepAliveTimeout = 300000;
+    server.headersTimeout = 305000;
+
     server.listen(PORT, () => {
       const embeddingConfig = getEmbeddingConfig();
       console.log("\n=== RAG Pipeline Configuration ===");
