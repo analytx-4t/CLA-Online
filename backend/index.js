@@ -820,35 +820,43 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
     console.error('[Prioritized Search] Candidate retrieval failed:', err.message);
   }
 
-  // Step 2: Rerank Legislation (top 5) and Other tables (top 35) using Cohere Reranker
+  // Step 2: Rerank Legislation (top candidates) and Other tables (top candidates) using Cohere Reranker
   const [legislationResults, otherResults] = await Promise.all([
     legislationCandidates.length > 0
-      ? rerankSearchResults(targetQuestion, legislationCandidates, 5)
+      ? rerankSearchResults(targetQuestion, legislationCandidates, 20)
       : Promise.resolve([]),
     otherCandidates.length > 0
-      ? rerankSearchResults(targetQuestion, otherCandidates, 35)
+      ? rerankSearchResults(targetQuestion, otherCandidates, 60)
       : Promise.resolve([])
   ]);
 
-  // Step 3: Combine up to 35 total chunks:
-  // - 3-5 chunks from Legislation table (if any matched)
-  // - Remaining quota (up to 35 total) filled from best suited chunks of all other tables
-  // Cap max 3 chunks per document title to avoid cluttering with 30 duplicate chunks of a single case
-  const capPerDoc = (results, maxPerDoc = 3) => {
-    const docCounts = {};
-    return results.filter(r => {
-      const title = (r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled').trim().toLowerCase();
-      docCounts[title] = (docCounts[title] || 0) + 1;
-      return docCounts[title] <= maxPerDoc;
-    });
+  // Step 3: Apply per-table top-3 cap:
+  // - Top 3 chunks from Legislation table (if any matched)
+  // - Top 3 chunks from EACH other source table independently
+  // This ensures every table contributes fairly, and no single table monopolizes context.
+  const TOP_CHUNKS_PER_TABLE = 3;
+
+  // Helper: group results by source_table and take top N per group
+  const capPerTable = (results, maxPerTable = TOP_CHUNKS_PER_TABLE) => {
+    const tableBuckets = {};
+    for (const r of results) {
+      const tableKey = (r.source_table || 'unknown').trim().toLowerCase();
+      if (!tableBuckets[tableKey]) tableBuckets[tableKey] = [];
+      if (tableBuckets[tableKey].length < maxPerTable) {
+        tableBuckets[tableKey].push(r);
+      }
+    }
+    // Flatten all buckets back into a single array, sorted by relevance score descending
+    return Object.values(tableBuckets)
+      .flat()
+      .sort((a, b) => (b.backend_relevance_score || 0) - (a.backend_relevance_score || 0));
   };
 
-  const filteredLegislation = capPerDoc(legislationResults, 5);
-  const filteredOther = capPerDoc(otherResults, 3);
+  // Legislation: top 3 chunks from legislation table
+  const legSlice = legislationResults.slice(0, TOP_CHUNKS_PER_TABLE);
 
-  const legSlice = filteredLegislation.slice(0, 5);
-  const remainingQuota = 35 - legSlice.length;
-  const otherSlice = filteredOther.slice(0, remainingQuota);
+  // Other tables: top 3 per source_table, flattened
+  const otherSlice = capPerTable(otherResults, TOP_CHUNKS_PER_TABLE);
 
   const combinedResults = [...legSlice, ...otherSlice];
   const candidateCount = legislationCandidates.length + otherCandidates.length;
@@ -2247,6 +2255,10 @@ async function startServer() {
               timeMs: guardrailTimeMs,
               provider: 'groq',
               model: 'llama-3.3-70b-versatile',
+              agentRole: 'Intent Router & Safety Filter',
+              agentMandate: 'Acts as the first line of defense. Classifies the user message into one of five routes: OFF_TOPIC (not Indian corporate/commercial law), JAILBREAK (attempts to extract prompts or break rules), SENSITIVE (personal legal advice or harmful content), DIALOG (greetings/help/bye), or LEGAL (genuine legal research). Blocks non-LEGAL queries immediately before any retrieval or generation runs.',
+              agentInput: 'Raw user question (verbatim)',
+              agentOutput: 'Route decision (LEGAL / OFF_TOPIC / JAILBREAK / SENSITIVE / DIALOG). If LEGAL, passes to Query Expansion Agent.',
               summary: guardrailResult?.action === 'RESPOND'
                 ? `Safety system flagged query in category "${guardrailResult.category || 'policy'}". Workflow stopped.`
                 : 'Checked user question for safety, tone, and corporate law relevance. Approved to proceed.',
@@ -2396,6 +2408,10 @@ async function startServer() {
               timeMs: expansionTimeMs,
               provider: settings.DEFAULT_LLM_PROVIDER || 'groq',
               model: settings.DEFAULT_LLM_MODEL || 'llama-3.3-70b-versatile',
+              agentRole: 'Legal NLP & Semantic Enrichment Specialist',
+              agentMandate: 'Transforms the raw user question into a canonical, statutory-enriched query paragraph optimized for hybrid (Dense Vector + BM25) retrieval. Maps informal or misspelled terms to exact statutory titles (e.g. "company act" → "Companies Act, 2013"), bridges section numbers to their topic names (e.g. Section 135 ↔ CSR), and extracts structured metadata filters (Act, Regulator, Court). Never answers the question — solely enriches it for the retrieval engine.',
+              agentInput: 'Classified user question (route = LEGAL) from Safety Guardrail Agent',
+              agentOutput: 'EXPANDED_QUERY (rich canonical paragraph), KEYWORDS (statutory terms list), SUGGESTED_FILTERS (Act/Regulator/Court), CLARIFYING_QUESTION (if needed)',
               summary: 'Analyzed your question and expanded it with key Indian statutory section numbers, legal synonyms, and technical keywords for maximum database coverage.',
               details: {
                 originalQuery: question.trim(),
@@ -2462,9 +2478,13 @@ async function startServer() {
               title: 'Step 3: Database Search & Prioritized Legal Reranking',
               status: Array.isArray(results) && results.length > 0 ? 'completed' : 'failed',
               timeMs: retrievalTimeMs,
-              provider: 'FastEmbed / Cosine Reranker',
+              provider: 'FastEmbed / Cohere Reranker',
               model: 'text-embedding-3-large',
-              summary: `Prioritized retrieval fetched ${legislationResults.length} legislation chunks (3-5 max) + ${otherResults.length} other table chunks (up to 35 max total), total ${results.length} verified legal sources.`,
+              agentRole: 'Multi-Table Retrieval & Per-Table Reranker',
+              agentMandate: 'Searches all 8 legal source tables (Article, Caselaw, Circular, Commentary, Procedure, Legislation, Notification, Query) using the expanded query. Applies a per-table cap of top 3 most relevant chunks per table, ensuring balanced coverage across all source types. Uses Cohere Rerank API (v3.5) for semantic relevance scoring, with a local heuristic reranker as fallback.',
+              agentInput: 'Expanded legal query + keywords from Query Expansion Agent',
+              agentOutput: 'Ranked list of top-3 chunks per source table, passed as context to the CLA Legal Advisor Agent',
+              summary: `Per-table retrieval: top 3 chunks from Legislation + top 3 per other table (${otherResults.length} chunks across other tables). Total ${results.length} verified legal sources fed to answer generation.`,
               details: {
                 retrievalQuery: retrievalQuery,
                 candidatesFound: candidateCount,
@@ -2736,6 +2756,10 @@ What is the penalty for violating this provision?`;
             timeMs: llmTimeMs,
             provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
             model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
+            agentRole: 'Content Summarizer & Legal Answer Writer (Content_Summarizer_Agent)',
+            agentMandate: 'Synthesizes the final legal answer STRICTLY from the retrieved document chunks — never from its own training knowledge. Reads ALL retrieved chunks and combines relevant information into one coherent answer written in legal-memo style. Respects the authority hierarchy (Primary Legislation > Notification > Circular > Judicial decisions by court rank > Secondary/editorial). Cites inline using [Source N] (max 1–2 citations per bracket). Also generates 3–4 follow-up questions via the Follow_Up_Question_Agent.',
+            agentInput: 'Top-3-per-table reranked document chunks + user question + Content_Summarizer_Agent system prompt',
+            agentOutput: 'Structured legal answer with inline citations + 3 suggested follow-up questions',
             summary: 'Synthesized a clear, grounded legal answer with inline numerical citations [1], [2] based strictly on the retrieved document context.',
             details: {
               provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,

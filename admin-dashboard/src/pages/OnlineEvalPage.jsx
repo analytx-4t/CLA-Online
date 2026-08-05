@@ -14,7 +14,10 @@ import {
   CheckCircle2, 
   AlertTriangle, 
   Clock, 
-  Layers 
+  Layers,
+  ArrowRight,
+  BookOpen,
+  Zap
 } from 'lucide-react';
 import SearchBox from '../components/SearchBox';
 import FilterBar from '../components/FilterBar';
@@ -23,6 +26,148 @@ import StatusPill from '../components/StatusPill';
 import Drawer from '../components/Drawer';
 import MetricCard from '../components/MetricCard';
 import MarkdownContent from '../components/MarkdownContent';
+
+// Static agent mandate descriptions (sourced from CLAOnline_Agent_Prompts_FINAL.md)
+const AGENT_DESCRIPTIONS = {
+  1: {
+    role: 'Intent Router & Safety Filter',
+    mandate: 'Acts as the first line of defense. Classifies the user message into one of five routes: OFF_TOPIC, JAILBREAK, SENSITIVE, DIALOG, or LEGAL. Blocks non-LEGAL queries immediately before any retrieval or generation runs.',
+    input: 'Raw user question (verbatim)',
+    output: 'Route decision (LEGAL / OFF_TOPIC / JAILBREAK / SENSITIVE / DIALOG). If LEGAL, passes to Query Expansion Agent.',
+    badge: 'Supervisor_Agent',
+    color: 'emerald',
+  },
+  2: {
+    role: 'Legal NLP & Semantic Enrichment Specialist',
+    mandate: 'Transforms the raw user question into a canonical, statutory-enriched query paragraph optimized for hybrid (Dense Vector + BM25) retrieval. Maps informal terms to exact statutory titles, bridges section numbers to their topic names (e.g. Section 135 ↔ CSR), and extracts structured metadata filters. Never answers the question — solely enriches it for retrieval.',
+    input: 'Classified user question (route = LEGAL) from Safety Guardrail Agent',
+    output: 'EXPANDED_QUERY (rich canonical paragraph), KEYWORDS (statutory terms list), SUGGESTED_FILTERS (Act/Regulator/Court), CLARIFYING_QUESTION (if needed)',
+    badge: 'Query_Expansion_Agent',
+    color: 'blue',
+  },
+  3: {
+    role: 'Multi-Table Retrieval & Per-Table Reranker',
+    mandate: 'Searches all 8 legal source tables (Article, Caselaw, Circular, Commentary, Procedure, Legislation, Notification, Query) using the expanded query. Applies a hard cap of top 3 most relevant chunks per table, ensuring balanced coverage across all source types. Uses Cohere Rerank API (v3.5) for semantic relevance scoring, with a local heuristic reranker as fallback.',
+    input: 'Expanded legal query + keywords from Query Expansion Agent',
+    output: 'Ranked list of top-3 chunks per source table, passed as context to the CLA Legal Advisor Agent',
+    badge: 'Retrieval + Reranker',
+    color: 'amber',
+  },
+  4: {
+    role: 'Content Summarizer & Legal Answer Writer',
+    mandate: 'Synthesizes the final legal answer STRICTLY from the retrieved document chunks — never from its own training knowledge. Reads ALL retrieved chunks, respects the authority hierarchy (Legislation > Notification > Circular > Caselaw > Secondary), writes in legal-memo style with inline citations [Source N], and never outputs a manual Sources section. Produces 3–4 follow-up research questions via the Follow_Up_Question_Agent.',
+    input: 'Top-3-per-table reranked document chunks + user question + Content_Summarizer_Agent system prompt',
+    output: 'Structured legal answer with inline citations [Source N] + 3–4 suggested follow-up questions',
+    badge: 'Content_Summarizer_Agent',
+    color: 'purple',
+  },
+};
+
+const COLOR_MAP = {
+  emerald: {
+    border: 'border-emerald-500/30',
+    bg: 'bg-emerald-500/8',
+    title: 'text-emerald-400',
+    badge: 'bg-emerald-500/15 text-emerald-400',
+    divider: 'border-emerald-500/20',
+    arrow: 'text-emerald-400',
+  },
+  blue: {
+    border: 'border-blue-500/30',
+    bg: 'bg-blue-500/8',
+    title: 'text-blue-400',
+    badge: 'bg-blue-500/15 text-blue-400',
+    divider: 'border-blue-500/20',
+    arrow: 'text-blue-400',
+  },
+  amber: {
+    border: 'border-amber-500/30',
+    bg: 'bg-amber-500/8',
+    title: 'text-amber-400',
+    badge: 'bg-amber-500/15 text-amber-400',
+    divider: 'border-amber-500/20',
+    arrow: 'text-amber-400',
+  },
+  purple: {
+    border: 'border-purple-500/30',
+    bg: 'bg-purple-500/8',
+    title: 'text-purple-400',
+    badge: 'bg-purple-500/15 text-purple-400',
+    divider: 'border-purple-500/20',
+    arrow: 'text-purple-400',
+  },
+};
+
+function AgentMandatePanel({ log }) {
+  // Prefer backend-injected fields; fall back to static descriptions
+  const staticDesc = AGENT_DESCRIPTIONS[log.step];
+  if (!staticDesc && !log.agentMandate) return null;
+
+  const role = log.agentRole || staticDesc?.role || '';
+  const mandate = log.agentMandate || staticDesc?.mandate || '';
+  const agentInput = log.agentInput || staticDesc?.input || '';
+  const agentOutput = log.agentOutput || staticDesc?.output || '';
+  const badge = staticDesc?.badge || log.agent || '';
+  const colorKey = staticDesc?.color || 'purple';
+  const c = COLOR_MAP[colorKey] || COLOR_MAP.purple;
+
+  return (
+    <div className={`mt-3 rounded-lg border ${c.border} ${c.bg} p-3 text-xs space-y-2.5`}>
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <BookOpen className={`h-3.5 w-3.5 ${c.title}`} />
+          <span className={`font-bold text-[11px] uppercase tracking-wider ${c.title}`}>
+            Agent Mandate & Role
+          </span>
+        </div>
+        <span className={`rounded px-2 py-0.5 text-[10px] font-mono font-semibold ${c.badge}`}>
+          {badge}
+        </span>
+      </div>
+
+      {/* Role */}
+      {role && (
+        <div>
+          <span className="text-muted font-semibold">Role: </span>
+          <span className="text-ink font-medium">{role}</span>
+        </div>
+      )}
+
+      {/* Mandate */}
+      {mandate && (
+        <div className={`rounded-md border ${c.divider} bg-surface p-2 leading-relaxed text-ink`}>
+          {mandate}
+        </div>
+      )}
+
+      {/* Input → Output flow */}
+      {(agentInput || agentOutput) && (
+        <div className="space-y-1.5">
+          {agentInput && (
+            <div className="flex items-start gap-1.5">
+              <Zap className={`h-3 w-3 mt-0.5 shrink-0 ${c.arrow}`} />
+              <div>
+                <span className="font-semibold text-muted">Input: </span>
+                <span className="text-ink">{agentInput}</span>
+              </div>
+            </div>
+          )}
+          {agentOutput && (
+            <div className="flex items-start gap-1.5">
+              <ArrowRight className={`h-3 w-3 mt-0.5 shrink-0 ${c.arrow}`} />
+              <div>
+                <span className="font-semibold text-muted">Output: </span>
+                <span className="text-ink">{agentOutput}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 const statusOptions = ['All', 'completed', 'blocked', 'failed'];
 const providerOptions = ['All', 'groq', 'openai', 'gemini', 'deepseek'];
@@ -202,6 +347,11 @@ function ServerLogsTimeline({ logs }) {
                     </span>
                   )}
                 </div>
+
+                {/* Agent Mandate Panel — shown for steps 1-4 */}
+                {isOpen && log.step <= 4 && (
+                  <AgentMandatePanel log={log} />
+                )}
 
                 {/* Expanded Flow Parameters */}
                 {isOpen && log.details && (
