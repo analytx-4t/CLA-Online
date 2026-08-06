@@ -13,33 +13,25 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Load project environment variables
 load_dotenv(PROJECT_ROOT / ".env")
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY") or os.getenv("GROQ_API_KEY")
 
-if not GROQ_API_KEY:
-    raise RuntimeError("GROQ_API_KEY is not configured in the root .env")
+if not DEEPSEEK_API_KEY:
+    raise RuntimeError("DEEPSEEK_API_KEY is not configured in the root .env")
 
-# This classification task is a single structured completion call — it doesn't
-# use any Colang flows/rails — so it talks to Groq's OpenAI-compatible endpoint
-# directly instead of going through nemoguardrails' LLMRails.generate_async().
-# That higher-level entry point runs its own internal flow/prompt templating
-# on top of whatever messages you pass it, which was silently mangling our
-# carefully-built classification prompt (the model kept reporting the
-# <user_request> block as empty, even though it demonstrably was not, when
-# inspected directly before being handed to generate_async).
-GROQ_MODEL = "llama-3.3-70b-versatile"
-GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_PRO_MODEL") or "deepseek-chat"
+DEEPSEEK_CHAT_URL = "https://api.deepseek.com/chat/completions"
 
 
 async def call_groq(messages, temperature=0.0, max_tokens=300):
     def _do_request():
         response = requests.post(
-            GROQ_CHAT_URL,
+            DEEPSEEK_CHAT_URL,
             headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": GROQ_MODEL,
+                "model": DEEPSEEK_MODEL,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
@@ -51,6 +43,7 @@ async def call_groq(messages, temperature=0.0, max_tokens=300):
 
     result = await asyncio.to_thread(_do_request)
     return result["choices"][0]["message"]["content"]
+
 
 
 GUARDRAIL_SYSTEM_PROMPT = """

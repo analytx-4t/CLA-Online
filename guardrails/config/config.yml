@@ -46,7 +46,8 @@ system_prompt: |
 models:
   - type: main
     engine: openai
-    model: llama-3.3-70b-versatile
+    model: deepseek-chat
     parameters:
-      base_url: https://api.groq.com/openai/v1
+      base_url: https://api.deepseek.com
+
 

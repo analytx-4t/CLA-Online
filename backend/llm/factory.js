@@ -8,34 +8,18 @@ const { settings } = require('../config');
 const providerCache = new Map();
 
 function getLLMProvider(provider = settings.DEFAULT_LLM_PROVIDER, model = null) {
-  const normalizedProvider = (provider || settings.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase();
-  const cacheKey = `${normalizedProvider}:${model || settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro'}`;
+  const targetModel = model || settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro';
+  const cacheKey = `deepseek:${targetModel}`;
 
   if (providerCache.has(cacheKey)) {
     return providerCache.get(cacheKey);
   }
 
-  let instance;
-  switch (normalizedProvider) {
-    case 'openai':
-      instance = new OpenAIProvider({ model });
-      break;
-    case 'deepseek':
-      instance = new DeepSeekProvider({ model });
-      break;
-    case 'gemini':
-      instance = new GeminiProvider({ model });
-      break;
-    case 'groq':
-      instance = new GroqProvider({ model });
-      break;
-    default:
-      throw new Error(`Unsupported provider: ${provider}`);
-  }
-
+  const instance = new DeepSeekProvider({ model: targetModel });
   providerCache.set(cacheKey, instance);
   return instance;
 }
+
 
 module.exports = {
   getLLMProvider,

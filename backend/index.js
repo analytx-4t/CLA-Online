@@ -28,6 +28,7 @@ const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./res
 const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
 const { createRequestContext } = require('./requestContext');
 const { handleAdminRoutes } = require('./adminRoutes');
+const { getEvaluationToggle } = require('./settingsStore');
 const { cohereRerank } = require('./cohereReranker');
 const { normalizeLegalQuery } = require('./legalQueryNormalizer');
 const { Server } = require('socket.io');
@@ -456,6 +457,7 @@ function buildEvaluationResultDocument({
     similarityScores: Array.isArray(similarityScores) ? similarityScores : [],
     retrievalTime: Number.isFinite(retrievalTime) ? retrievalTime : null,
     evaluationStatus: evaluationStatus || (evaluationData?.status === 'failed' ? 'failed' : 'completed'),
+    metricsCalculated: evaluationData.metricsCalculated ?? (evaluationData.faithfulness !== null && evaluationData.faithfulness !== undefined),
     evaluationTimeMs: Number.isFinite(evaluationTimeMs) ? evaluationTimeMs : null,
     suggestions: Array.isArray(suggestions) ? suggestions : [],
     errorMessage: errorMessage || (Array.isArray(evaluationData?.errors) && evaluationData.errors.length ? evaluationData.errors.join('; ') : null),
@@ -830,11 +832,12 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
       : Promise.resolve([])
   ]);
 
-  // Step 3: Apply per-table top-3 cap:
-  // - Top 3 chunks from Legislation table (if any matched)
-  // - Top 3 chunks from EACH other source table independently
+  // Step 3: Apply per-table top-5 cap:
+  // - Top 5 chunks from Legislation table (if any matched)
+  // - Top 5 chunks from EACH other source table independently
   // This ensures every table contributes fairly, and no single table monopolizes context.
-  const TOP_CHUNKS_PER_TABLE = 3;
+  const TOP_CHUNKS_PER_TABLE = 5;
+
 
   // Helper: group results by source_table and take top N per group
   const capPerTable = (results, maxPerTable = TOP_CHUNKS_PER_TABLE) => {
@@ -2406,8 +2409,8 @@ async function startServer() {
               title: 'Step 2: Query Expansion & Legal Understanding',
               status: 'completed',
               timeMs: expansionTimeMs,
-              provider: settings.DEFAULT_LLM_PROVIDER || 'groq',
-              model: settings.DEFAULT_LLM_MODEL || 'llama-3.3-70b-versatile',
+              provider: settings.DEFAULT_LLM_PROVIDER || 'deepseek',
+              model: settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro',
               agentRole: 'Legal NLP & Semantic Enrichment Specialist',
               agentMandate: 'Transforms the raw user question into a canonical, statutory-enriched query paragraph optimized for hybrid (Dense Vector + BM25) retrieval. Maps informal or misspelled terms to exact statutory titles (e.g. "company act" → "Companies Act, 2013"), bridges section numbers to their topic names (e.g. Section 135 ↔ CSR), and extracts structured metadata filters (Act, Regulator, Court). Never answers the question — solely enriches it for the retrieval engine.',
               agentInput: 'Classified user question (route = LEGAL) from Safety Guardrail Agent',
@@ -2481,10 +2484,11 @@ async function startServer() {
               provider: 'FastEmbed / Cohere Reranker',
               model: 'text-embedding-3-large',
               agentRole: 'Multi-Table Retrieval & Per-Table Reranker',
-              agentMandate: 'Searches all 8 legal source tables (Article, Caselaw, Circular, Commentary, Procedure, Legislation, Notification, Query) using the expanded query. Applies a per-table cap of top 3 most relevant chunks per table, ensuring balanced coverage across all source types. Uses Cohere Rerank API (v3.5) for semantic relevance scoring, with a local heuristic reranker as fallback.',
+              agentMandate: 'Searches all 8 legal source tables (Article, Caselaw, Circular, Commentary, Procedure, Legislation, Notification, Query) using the expanded query. Applies a per-table cap of top 5 most relevant chunks per table, ensuring balanced coverage across all source types. Uses Cohere Rerank API (v3.5) for semantic relevance scoring, with a local heuristic reranker as fallback.',
               agentInput: 'Expanded legal query + keywords from Query Expansion Agent',
-              agentOutput: 'Ranked list of top-3 chunks per source table, passed as context to the CLA Legal Advisor Agent',
-              summary: `Per-table retrieval: top 3 chunks from Legislation + top 3 per other table (${otherResults.length} chunks across other tables). Total ${results.length} verified legal sources fed to answer generation.`,
+              agentOutput: 'Ranked list of top-5 chunks per source table, passed as context to the CLA Legal Advisor Agent',
+              summary: `Per-table retrieval: top 5 chunks from Legislation + top 5 per other table (${otherResults.length} chunks across other tables). Total ${results.length} verified legal sources fed to answer generation.`,
+
               details: {
                 retrievalQuery: retrievalQuery,
                 candidatesFound: candidateCount,
@@ -2594,14 +2598,9 @@ What is the penalty for violating this provision?`;
 
           const systemPrompt = `${baseSummarizerPrompt}${attachmentPromptRules}${formattingRules}`;
 
-          // Answer synthesis: GPT-4.1-mini primary, DeepSeek v4 Pro fallback
-          let llm;
-          try {
-            llm = getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini');
-          } catch (e) {
-            console.warn('[RAG Synthesis] GPT-4.1-mini unavailable, falling back to DeepSeek v4 Pro:', e.message);
-            llm = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
-          }
+          // Answer synthesis: DeepSeek v4 Pro primary
+          const llm = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
+
 
           const userContentParts = [`Question: ${question}`];
           if (contextBlock) {
@@ -2634,10 +2633,7 @@ What is the penalty for violating this provision?`;
           const userContent = userContentParts.join('\n\n');
 
           const endpointFallbackTiers = [
-            { provider: settings.DEFAULT_LLM_PROVIDER || 'openai', model: settings.DEFAULT_LLM_MODEL || 'gpt-4.1-mini' },
-            { provider: 'openai', model: process.env.OPENAI_MODEL || 'gpt-4.1-mini' },
-            { provider: 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' },
-            { provider: 'groq', model: process.env.GROQ_LLAMA_MODEL || 'llama-3.3-70b-versatile' },
+            { provider: 'deepseek', model: settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro' },
           ];
 
           const uniqueTiers = [];
@@ -2784,65 +2780,102 @@ What is the penalty for violating this provision?`;
 
           const runEvaluationAndPersist = async () => {
               const evaluationStartedAt = Date.now();
+              const isEvaluationEnabled = await getEvaluationToggle(db);
 
-              try {
-                console.log(
-                  `[Eval] Starting 5-metric evaluation with ${ragasContexts.length} contexts...`
-                );
-
-                evaluation = await runFullEvaluation({
-                  question,
-                  answer: answerText,
-                  contexts: ragasContexts,
-                  groundTruth: goldenRecord?.answer || null,
-                  requestContext: req.requestContext,
-                });
-
-                console.log(
-                  '[Eval] Evaluation completed:',
-                  JSON.stringify(evaluation, null, 2)
-                );
-              } catch (evaluationError) {
-                console.error(
-                  '[Eval] Evaluation failed:',
-                  evaluationError
-                );
-
+              if (!isEvaluationEnabled) {
+                console.log('[Eval] Online evaluation toggle is turned OFF by Admin (Token Saver Active). Skipping LLM Judge evaluation.');
                 evaluation = {
-                  status: 'failed',
-                  errors: [evaluationError.message],
+                  status: 'completed',
+                  metricsCalculated: false,
+                  faithfulness: null,
+                  answerRelevancy: null,
+                  contextPrecision: null,
+                  contextRecall: null,
+                  piiLeakage: null,
+                  overallScore: null,
+                  judgeProvider: 'deepseek',
+                  judgeModel: 'deepseek-chat',
+                  evaluationTimeMs: 0,
                 };
-              }
 
-              const evaluationTimeMs = Number.isFinite(evaluation?.evaluationTimeMs) ? evaluation.evaluationTimeMs : (Date.now() - evaluationStartedAt);
-              const evaluationStatus = evaluation?.status === 'failed' ? 'failed' : 'completed';
-
-              serverLogs.push({
-                step: 5,
-                agent: 'AI Quality Judge Agent',
-                title: 'Step 5: Quality Assessment & RAGAS Metric Scoring',
-                status: evaluationStatus,
-                timeMs: evaluationTimeMs,
-                provider: evaluation?.judgeProvider || 'openai',
-                model: evaluation?.judgeModel || 'gpt-4.1-mini',
-                summary: evaluationStatus === 'completed'
-                  ? 'Evaluated response accuracy across 5 key quality metrics (Faithfulness, Relevancy, Context Precision, Recall, and PII Protection).'
-                  : 'Metric quality evaluation failed or did not finish.',
-                details: {
-                  faithfulness: evaluation?.faithfulness ?? null,
-                  answerRelevancy: evaluation?.answerRelevancy ?? null,
-                  contextPrecision: evaluation?.contextPrecision ?? null,
-                  contextRecall: evaluation?.contextRecall ?? null,
-                  piiLeakage: evaluation?.piiLeakage ?? null,
-                  reasons: {
-                    faithfulnessReason: evaluation?.faithfulnessReason || null,
-                    answerRelevancyReason: evaluation?.answerRelevancyReason || null,
-                    contextPrecisionReason: evaluation?.contextPrecisionReason || null,
-                    contextRecallReason: evaluation?.contextRecallReason || null,
-                    piiLeakageReason: evaluation?.piiLeakageReason || null,
+                serverLogs.push({
+                  step: 5,
+                  agent: 'AI Quality Judge Agent',
+                  title: 'Step 5: Quality Assessment (Skipped - Token Saver Active)',
+                  status: 'completed',
+                  timeMs: 0,
+                  provider: 'deepseek',
+                  model: 'deepseek-chat',
+                  summary: 'RAGAS quality metrics scoring was disabled by Admin to save LLM tokens. Execution completed without judge evaluation.',
+                  details: {
+                    metricsCalculated: false,
+                    reason: 'Admin Evaluation Toggle is turned OFF (Token Saver Mode)',
                   },
-                },
-              });
+                });
+              } else {
+                try {
+                  console.log(
+                    `[Eval] Starting 5-metric evaluation with ${ragasContexts.length} contexts...`
+                  );
+
+                  evaluation = await runFullEvaluation({
+                    question,
+                    answer: answerText,
+                    contexts: ragasContexts,
+                    groundTruth: goldenRecord?.answer || null,
+                    requestContext: req.requestContext,
+                  });
+
+                  evaluation.metricsCalculated = true;
+
+                  console.log(
+                    '[Eval] Evaluation completed:',
+                    JSON.stringify(evaluation, null, 2)
+                  );
+                } catch (evaluationError) {
+                  console.error(
+                    '[Eval] Evaluation failed:',
+                    evaluationError
+                  );
+
+                  evaluation = {
+                    status: 'failed',
+                    metricsCalculated: false,
+                    errors: [evaluationError.message],
+                  };
+                }
+
+                const evaluationTimeMs = Number.isFinite(evaluation?.evaluationTimeMs) ? evaluation.evaluationTimeMs : (Date.now() - evaluationStartedAt);
+                const evaluationStatus = evaluation?.status === 'failed' ? 'failed' : 'completed';
+
+                serverLogs.push({
+                  step: 5,
+                  agent: 'AI Quality Judge Agent',
+                  title: 'Step 5: Quality Assessment & RAGAS Metric Scoring',
+                  status: evaluationStatus,
+                  timeMs: evaluationTimeMs,
+                  provider: evaluation?.judgeProvider || 'deepseek',
+                  model: evaluation?.judgeModel || 'deepseek-chat',
+                  summary: evaluationStatus === 'completed'
+                    ? 'Evaluated response accuracy across 5 key quality metrics (Faithfulness, Relevancy, Context Precision, Recall, and PII Protection).'
+                    : 'Metric quality evaluation failed or did not finish.',
+                  details: {
+                    metricsCalculated: true,
+                    faithfulness: evaluation?.faithfulness ?? null,
+                    answerRelevancy: evaluation?.answerRelevancy ?? null,
+                    contextPrecision: evaluation?.contextPrecision ?? null,
+                    contextRecall: evaluation?.contextRecall ?? null,
+                    piiLeakage: evaluation?.piiLeakage ?? null,
+                    reasons: {
+                      faithfulnessReason: evaluation?.faithfulnessReason || null,
+                      answerRelevancyReason: evaluation?.answerRelevancyReason || null,
+                      contextPrecisionReason: evaluation?.contextPrecisionReason || null,
+                      contextRecallReason: evaluation?.contextRecallReason || null,
+                      piiLeakageReason: evaluation?.piiLeakageReason || null,
+                    },
+                  },
+                });
+              }
 
               try {
                 const evaluationDocument = buildEvaluationResultDocument({

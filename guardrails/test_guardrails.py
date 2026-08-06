@@ -7,13 +7,13 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-groq_key = os.getenv("GROQ_API_KEY")
+deepseek_key = os.getenv("DEEPSEEK_API_KEY")
 
-if not groq_key:
-    raise RuntimeError("GROQ_API_KEY is missing from the root .env")
+if not deepseek_key:
+    raise RuntimeError("DEEPSEEK_API_KEY is missing from the root .env")
 
 # NeMo's OpenAI engine reads the OpenAI-compatible API key
-os.environ["OPENAI_API_KEY"] = groq_key
+os.environ["OPENAI_API_KEY"] = deepseek_key
 
 from nemoguardrails import RailsConfig, LLMRails
 
@@ -21,7 +21,8 @@ from nemoguardrails import RailsConfig, LLMRails
 async def main():
     config_path = PROJECT_ROOT / "guardrails" / "config"
 
-    print("Groq key loaded:", bool(groq_key))
+    print("DeepSeek key loaded:", bool(deepseek_key))
+
     print("Loading configuration...")
 
     config = RailsConfig.from_path(str(config_path))

@@ -452,9 +452,48 @@ export default function OnlineEvalPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
   const [drawerTab, setDrawerTab] = useState('logs');
+  const [evalToggle, setEvalToggle] = useState(true);
+  const [toggling, setToggling] = useState(false);
   const latestRequestRef = useRef(0);
   const socketRef = useRef(null);
   const pollTimerRef = useRef(null);
+
+  const loadToggleState = async () => {
+    try {
+      const response = await fetch('/api/admin/settings/evaluation-toggle');
+      if (response.ok) {
+        const payload = await response.json();
+        if (typeof payload?.enabled === 'boolean') {
+          setEvalToggle(payload.enabled);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load evaluation toggle state', err);
+    }
+  };
+
+  const handleToggleSwitch = async () => {
+    const nextVal = !evalToggle;
+    setToggling(true);
+    try {
+      const response = await fetch('/api/admin/settings/evaluation-toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: nextVal }),
+      });
+      if (response.ok) {
+        const payload = await response.json();
+        if (typeof payload?.enabled === 'boolean') {
+          setEvalToggle(payload.enabled);
+          loadStats();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update evaluation toggle state', err);
+    } finally {
+      setToggling(false);
+    }
+  };
 
   const loadData = async ({ showLoader = true, refresh = false } = {}) => {
     if (showLoader) setLoading(true);
@@ -533,6 +572,7 @@ export default function OnlineEvalPage() {
   };
 
   useEffect(() => {
+    loadToggleState();
     loadData({ showLoader: true });
     loadStats();
   }, []);
@@ -572,11 +612,36 @@ export default function OnlineEvalPage() {
     { header: 'Timestamp', accessor: 'timestamp', width: '12%', render: (row) => formatTimestamp(row.timestamp) },
     { header: 'Question', accessor: 'question', width: '22%', render: (row) => row.question || '—' },
     { header: 'Model', accessor: 'model', width: '10%', render: (row) => row.model || '—' },
-    { header: 'Faithfulness', accessor: 'faithfulness', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.faithfulness)}</span> },
-    { header: 'Answer Relevancy', accessor: 'answerRelevancy', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.answerRelevancy)}</span> },
-    { header: 'Context Recall', accessor: 'contextRecall', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.contextRecall)}</span> },
-    { header: 'Context Precision', accessor: 'contextPrecision', width: '8%', render: (row) => <span className="tnum">{formatMetric(row.contextPrecision)}</span> },
-    { header: 'PII Leakage', accessor: 'piiLeakage', width: '8%', render: (row) => <span className="tnum">{formatLeakageMetric(row.piiLeakage)}</span> },
+    {
+      header: 'Faithfulness',
+      accessor: 'faithfulness',
+      width: '8%',
+      render: (row) => (row.metricsCalculated === false || row.faithfulness === null ? <span className="text-muted/60 text-xs italic">N/A (Skipped)</span> : <span className="tnum">{formatMetric(row.faithfulness)}</span>),
+    },
+    {
+      header: 'Answer Relevancy',
+      accessor: 'answerRelevancy',
+      width: '8%',
+      render: (row) => (row.metricsCalculated === false || row.answerRelevancy === null ? <span className="text-muted/60 text-xs italic">N/A (Skipped)</span> : <span className="tnum">{formatMetric(row.answerRelevancy)}</span>),
+    },
+    {
+      header: 'Context Recall',
+      accessor: 'contextRecall',
+      width: '8%',
+      render: (row) => (row.metricsCalculated === false || row.contextRecall === null ? <span className="text-muted/60 text-xs italic">N/A (Skipped)</span> : <span className="tnum">{formatMetric(row.contextRecall)}</span>),
+    },
+    {
+      header: 'Context Precision',
+      accessor: 'contextPrecision',
+      width: '8%',
+      render: (row) => (row.metricsCalculated === false || row.contextPrecision === null ? <span className="text-muted/60 text-xs italic">N/A (Skipped)</span> : <span className="tnum">{formatMetric(row.contextPrecision)}</span>),
+    },
+    {
+      header: 'PII Leakage',
+      accessor: 'piiLeakage',
+      width: '8%',
+      render: (row) => (row.metricsCalculated === false || row.piiLeakage === null ? <span className="text-muted/60 text-xs italic">N/A (Skipped)</span> : <span className="tnum">{formatLeakageMetric(row.piiLeakage)}</span>),
+    },
     { header: 'Status', accessor: 'evaluationStatus', width: '8%', render: (row) => <StatusPill label={(row.evaluationStatus || 'unknown').toUpperCase()} tone={getStatusTone(row.evaluationStatus)} /> },
     { header: 'Actions', accessor: 'action', width: '8%', render: (row) => <button onClick={(e) => { e.stopPropagation(); loadDetail(row.requestId); }} className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-accent">View <ChevronRight size={14} /></button> },
   ];
@@ -584,13 +649,61 @@ export default function OnlineEvalPage() {
   return (
     <div className="space-y-4">
       <section className="space-y-4">
+        {/* RAGAS Toggle Switch Control Banner */}
+        <div className="card p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 border border-line bg-surface shadow-sm rounded-xl">
+          <div className="flex items-start gap-3">
+            <div className={`p-2.5 rounded-lg border transition-colors ${evalToggle ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-amber-500/30 bg-amber-500/10 text-amber-400'}`}>
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-bold text-ink">RAGAS Quality Evaluation Engine</h3>
+                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border ${evalToggle ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-400' : 'border-amber-500/30 bg-amber-500/15 text-amber-400'}`}>
+                  {evalToggle ? '● Metrics Active' : '⚡ Token Saver Mode Active'}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted leading-relaxed">
+                {evalToggle
+                  ? 'Calculating Faithfulness, Relevancy, Context Precision, Recall, and PII Leakage metrics per request via LLM Judge.'
+                  : 'Metric calculation disabled by Admin to save LLM tokens. Requests remain logged without running evaluation judges.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
+            <span className="text-xs font-semibold text-muted">
+              {evalToggle ? 'Evaluation Enabled' : 'Evaluation Disabled'}
+            </span>
+            <button
+              type="button"
+              disabled={toggling}
+              onClick={handleToggleSwitch}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                evalToggle ? 'bg-emerald-500' : 'bg-slate-700'
+              } ${toggling ? 'opacity-50 cursor-not-allowed' : ''}`}
+              role="switch"
+              aria-checked={evalToggle}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  evalToggle ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
         <div className="card grid grid-cols-2 gap-x-4 gap-y-5 p-4 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-line">
-          <MetricCard title="Total Evaluations" value={stats?.totalEvaluations ?? '—'} caption="All saved" />
-          <div className="pl-4"><MetricCard title="Faithfulness" value={stats ? formatPercent(stats.avgFaithfulness) : '—'} /></div>
-          <div className="pl-4"><MetricCard title="Answer Relevancy" value={stats ? formatPercent(stats.avgAnswerRelevancy) : '—'} /></div>
-          <div className="pl-4"><MetricCard title="Context Precision" value={stats ? formatPercent(stats.avgContextPrecision) : '—'} /></div>
-          <div className="pl-4"><MetricCard title="Context Recall" value={stats ? formatPercent(stats.avgContextRecall) : '—'} /></div>
-          <div className="pl-4"><MetricCard title="PII Leakage" value={stats ? formatLeakagePercent(stats.avgPiiLeakage) : '—'} /></div>
+          <MetricCard
+            title="Total Evaluations"
+            value={stats?.totalEvaluations ?? '—'}
+            caption={stats?.skippedCount > 0 ? `${stats.skippedCount} token saver skipped` : 'All logged'}
+          />
+          <div className="pl-4"><MetricCard title="Faithfulness" value={stats ? formatPercent(stats.avgFaithfulness) : '—'} caption={stats?.evaluatedCount ? `Avg of ${stats.evaluatedCount} evaluated` : null} /></div>
+          <div className="pl-4"><MetricCard title="Answer Relevancy" value={stats ? formatPercent(stats.avgAnswerRelevancy) : '—'} caption={stats?.evaluatedCount ? `Avg of ${stats.evaluatedCount} evaluated` : null} /></div>
+          <div className="pl-4"><MetricCard title="Context Precision" value={stats ? formatPercent(stats.avgContextPrecision) : '—'} caption={stats?.evaluatedCount ? `Avg of ${stats.evaluatedCount} evaluated` : null} /></div>
+          <div className="pl-4"><MetricCard title="Context Recall" value={stats ? formatPercent(stats.avgContextRecall) : '—'} caption={stats?.evaluatedCount ? `Avg of ${stats.evaluatedCount} evaluated` : null} /></div>
+          <div className="pl-4"><MetricCard title="PII Leakage" value={stats ? formatLeakagePercent(stats.avgPiiLeakage) : '—'} caption={stats?.evaluatedCount ? `Avg of ${stats.evaluatedCount} evaluated` : null} /></div>
         </div>
 
         <div className="card overflow-hidden p-3">
@@ -707,6 +820,14 @@ export default function OnlineEvalPage() {
                   </div>
                   <div className="rounded-lg bg-surface-muted p-3">
                     <p className="text-[10px] uppercase tracking-[0.24em] text-muted">Metrics</p>
+                    {detail.metricsCalculated === false && (
+                      <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-300 flex items-start gap-2">
+                        <Zap className="h-4 w-4 shrink-0 mt-0.5 text-amber-400" />
+                        <div>
+                          <span className="font-bold">Metric Scoring Bypassed:</span> This query was executed with the Admin Evaluation Toggle turned OFF (Token Saver Mode). LLM quality judge calls were skipped to conserve API tokens.
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-2 space-y-3 text-sm text-ink">
                       {[
                         ['Faithfulness', detail.faithfulness, detail.faithfulnessReason, formatMetric],
@@ -718,7 +839,11 @@ export default function OnlineEvalPage() {
                         <div key={label} className="border-b border-line pb-2 last:border-0 last:pb-0">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-muted">{label}</span>
-                            <span className="tnum font-semibold">{format(value)}</span>
+                            <span className="tnum font-semibold">
+                              {detail.metricsCalculated === false || value === null || value === undefined
+                                ? <span className="text-muted/60 text-xs italic font-normal">N/A (Skipped)</span>
+                                : format(value)}
+                            </span>
                           </div>
                           {reason && <p className="mt-1 text-xs leading-relaxed text-muted">{reason}</p>}
                         </div>

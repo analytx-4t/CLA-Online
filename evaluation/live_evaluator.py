@@ -1,4 +1,4 @@
-﻿import ast
+import ast
 import json
 import os
 import sys
@@ -59,7 +59,13 @@ def run_evaluation_from_dataset(dataset_rows):
         }
     )
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+    llm = ChatOpenAI(
+        model=os.getenv("DEEPSEEK_PRO_MODEL") or "deepseek-chat",
+        api_key=deepseek_key,
+        base_url="https://api.deepseek.com",
+        temperature=0,
+    )
     embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
 
     result = evaluate(

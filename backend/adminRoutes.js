@@ -9,10 +9,28 @@ function setJsonHeaders(res, statusCode) {
 
 const { handleGoldenDatasetRoutes } = require('./goldenDataset/routes');
 const { settings: llmSettings, getProviderHealth } = require('./config');
+const { getEvaluationToggle, setEvaluationToggle } = require('./settingsStore');
 
 function sendJson(res, statusCode, payload) {
   setJsonHeaders(res, statusCode);
   res.end(JSON.stringify(payload));
+}
+
+function parseJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
+    req.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on('error', (err) => reject(err));
+  });
 }
 
 function parseDateRange(value) {
@@ -35,6 +53,7 @@ function normalizeRagasRecord(item) {
     question: item.question || null,
     overallScore: item.overallScore ?? null,
     evaluationStatus: item.evaluationStatus || null,
+    metricsCalculated: item.metricsCalculated ?? (item.faithfulness !== null && item.faithfulness !== undefined),
     provider: item.provider || null,
     model: item.model || null,
     faithfulness: item.faithfulness ?? null,
@@ -198,6 +217,9 @@ async function handleAdminRoutes(req, res, db) {
           active: true,
           mode: 'LLM classification (Groq) with regex fallback chain',
         },
+        evaluation: {
+          onlineEvaluationEnabled: await getEvaluationToggle(db),
+        },
         database: {
           name: process.env.MONGODB_DATABASE || null,
           connected: Boolean(db),
@@ -208,6 +230,33 @@ async function handleAdminRoutes(req, res, db) {
       res.end(JSON.stringify({ error: 'Unable to load settings.' }));
     }
 
+    return true;
+  }
+
+  if (path === '/api/admin/settings/evaluation-toggle' && req.method === 'GET') {
+    try {
+      const enabled = await getEvaluationToggle(db);
+      sendJson(res, 200, { success: true, enabled });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: 'Unable to fetch evaluation toggle state.' });
+    }
+    return true;
+  }
+
+  if (path === '/api/admin/settings/evaluation-toggle' && req.method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const enabled = await setEvaluationToggle(db, body.enabled);
+      sendJson(res, 200, {
+        success: true,
+        enabled,
+        message: enabled
+          ? 'Online evaluation metrics enabled.'
+          : 'Online evaluation metrics disabled (Token Saver Active).',
+      });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: 'Unable to update evaluation toggle.' });
+    }
     return true;
   }
 
@@ -238,6 +287,7 @@ async function handleAdminRoutes(req, res, db) {
           question: 1,
           overallScore: 1,
           evaluationStatus: 1,
+          metricsCalculated: 1,
           provider: 1,
           model: 1,
           sessionId: 1,
@@ -337,10 +387,9 @@ async function handleAdminRoutes(req, res, db) {
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
 
       // Score averages (overall/faithfulness/relevancy/precision/recall/PII) are
-      // computed only from non-failed rows — a failed evaluation has no real
-      // metric values to average in, and mixing it in would understate scores
-      // that were never actually produced. Counts (total/success/failed/time)
-      // still reflect every row so the failure rate itself stays accurate.
+      // computed strictly from evaluated queries (where metricsCalculated !== false and
+      // scores are present). Skipped evaluations (Token Saver Active) are excluded from metric
+      // averages to prevent distorting quality percentages, but are included in totalEvaluations count.
       const pipeline = [
         { $match: BASE_RAGAS_MATCH },
         {
@@ -352,12 +401,32 @@ async function handleAdminRoutes(req, res, db) {
                   totalEvaluations: { $sum: 1 },
                   successCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'completed'] }, 1, 0] } },
                   failedCount: { $sum: { $cond: [{ $eq: ['$evaluationStatus', 'failed'] }, 1, 0] } },
+                  skippedCount: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $or: [
+                            { $eq: ['$metricsCalculated', false] },
+                            { $eq: ['$faithfulness', null] },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
                   avgEvaluationTime: { $avg: '$evaluationTimeMs' },
                 },
               },
             ],
             scores: [
-              { $match: { evaluationStatus: 'completed' } },
+              {
+                $match: {
+                  evaluationStatus: 'completed',
+                  metricsCalculated: { $ne: false },
+                  faithfulness: { $ne: null },
+                },
+              },
               {
                 $group: {
                   _id: null,
@@ -367,6 +436,7 @@ async function handleAdminRoutes(req, res, db) {
                   avgContextRecall: { $avg: '$contextRecall' },
                   avgPiiLeakage: { $avg: '$piiLeakage' },
                   avgOverallScore: { $avg: '$overallScore' },
+                  evaluatedCount: { $sum: 1 },
                 },
               },
             ],
@@ -408,6 +478,8 @@ async function handleAdminRoutes(req, res, db) {
       const totalEvaluations = Number(aggregate.totalEvaluations || 0);
       const successCount = Number(aggregate.successCount || 0);
       const failedCount = Number(aggregate.failedCount || 0);
+      const skippedCount = Number(aggregate.skippedCount || 0);
+      const evaluatedCount = Number(aggregate.evaluatedCount || Math.max(0, totalEvaluations - skippedCount));
       const successRate = totalEvaluations > 0 ? successCount / totalEvaluations : 0;
       const failureRate = totalEvaluations > 0 ? failedCount / totalEvaluations : 0;
 
@@ -415,6 +487,8 @@ async function handleAdminRoutes(req, res, db) {
         success: true,
         data: {
           totalEvaluations,
+          evaluatedCount,
+          skippedCount,
           avgFaithfulness: aggregate.avgFaithfulness ?? null,
           avgAnswerRelevancy: aggregate.avgAnswerRelevancy ?? null,
           avgContextPrecision: aggregate.avgContextPrecision ?? null,

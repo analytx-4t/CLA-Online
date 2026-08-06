@@ -238,8 +238,8 @@ async function executeChatCompletionDirect({
 }
 
 async function createChatCompletion({
-  provider,
-  model,
+  provider = 'deepseek',
+  model = process.env.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro',
   messages = [],
   systemPrompt = '',
   temperature = 0.2,
@@ -248,77 +248,27 @@ async function createChatCompletion({
   traceId,
   requestContext,
 }) {
-  let primaryError = null;
-  try {
-    const response = await executeChatCompletionDirect({
-      provider,
-      model,
-      messages,
-      systemPrompt,
-      temperature,
-      maxTokens,
-      metadata,
-      traceId,
-      requestContext,
-    });
+  const targetProvider = provider || 'deepseek';
+  const targetModel = model || process.env.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro';
 
-    const content = response?.choices?.[0]?.message?.content;
-    if (content && typeof content === 'string' && content.trim().length > 0) {
-      return response;
-    }
-    console.warn(`Primary provider ${provider} (${model}) returned an empty response. Initiating fallback chain...`);
-  } catch (error) {
-    primaryError = error;
-    console.warn(`Primary provider ${provider} (${model}) failed: ${error.message || error}. Initiating fallback chain...`);
+  const response = await executeChatCompletionDirect({
+    provider: targetProvider,
+    model: targetModel,
+    messages,
+    systemPrompt,
+    temperature,
+    maxTokens,
+    metadata,
+    traceId,
+    requestContext,
+  });
+
+  const content = response?.choices?.[0]?.message?.content;
+  if (content && typeof content === 'string' && content.trim().length > 0) {
+    return response;
   }
-
-  // openai goes first: it's the designated fallback for the primary (deepseek-v4-pro).
-  // gemini/deepseek-flash/groq remain after it as further-degraded options so a single
-  // provider outage doesn't take the whole chat down.
-  const fallbackChain = [
-    { provider: 'groq', model: process.env.GROQ_LLAMA_MODEL || 'llama-3.3-70b-versatile' },
-    { provider: 'deepseek', model: process.env.DEEPSEEK_FLASH_MODEL || 'deepseek-v4-flash' },
-    { provider: 'openai', model: process.env.OPENAI_MODEL || 'gpt-4.1-mini' },
-    { provider: 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' },
-  ];
-
-  const remainingFallbacks = fallbackChain.filter(
-    f => !(f.provider === provider && f.model === model)
-  );
-
-  for (const fallback of remainingFallbacks) {
-    if (!providerSlugs[fallback.provider]) {
-      continue;
-    }
-    try {
-      console.log(`Attempting fallback to ${fallback.provider} (${fallback.model})...`);
-      const response = await executeChatCompletionDirect({
-        provider: fallback.provider,
-        model: fallback.model,
-        messages,
-        systemPrompt,
-        temperature,
-        maxTokens,
-        metadata,
-        traceId,
-        requestContext,
-      });
-
-      const content = response?.choices?.[0]?.message?.content;
-      if (content && typeof content === 'string' && content.trim().length > 0) {
-        console.log(`Fallback to ${fallback.provider} (${fallback.model}) successful.`);
-        return response;
-      }
-      console.warn(`Fallback to ${fallback.provider} (${fallback.model}) returned an empty response.`);
-    } catch (fallbackError) {
-      console.warn(`Fallback to ${fallback.provider} (${fallback.model}) failed: ${fallbackError.message || fallbackError}`);
-    }
-  }
-
-  if (primaryError) {
-    throw primaryError;
-  }
-  throw new Error(`All LLM providers failed or returned empty responses.`);
+  
+  throw new Error(`Provider ${targetProvider} (${targetModel}) returned an empty response.`);
 }
 
 async function createFallbackChatCompletion({
@@ -329,42 +279,20 @@ async function createFallbackChatCompletion({
   metadata = {},
   traceId,
   requestContext,
-  configId = process.env.PORTKEY_CONFIG_ID,
 }) {
-  if (!configId) {
-    throw new Error('Portkey Config ID is not configured.');
-  }
-
-  const finalMessages = [
-    ...(systemPrompt
-      ? [{ role: 'system', content: systemPrompt }]
-      : []),
-    ...messages,
-  ];
-
-  const { metadata: requestContextMetadata, traceId: requestContextTraceId } = buildPortkeyRequestContextOptions(
-    requestContext,
+  return createChatCompletion({
+    provider: 'deepseek',
+    model: process.env.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro',
+    messages,
+    systemPrompt,
+    temperature,
+    maxTokens,
     metadata,
-    traceId
-  );
-
-  return portkey.chat.completions.create(
-    {
-      model: 'llama-3.3-70b-versatile',
-      messages: finalMessages,
-      temperature,
-      max_tokens: maxTokens,
-    },
-    {
-      config: configId,
-      ...(requestContextTraceId ? { traceId: requestContextTraceId } : {}),
-      metadata: buildPortkeyMetadata({
-        ...requestContextMetadata,
-        routing_mode: 'fallback',
-      }),
-    }
-  );
+    traceId,
+    requestContext,
+  });
 }
+
 
 module.exports = {
   portkey,

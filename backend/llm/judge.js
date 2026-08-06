@@ -30,8 +30,8 @@ const SECTION_HEADERS = {
 const JUDGE_TIMEOUT_MS = 90000;
 const JUDGE_MAX_TOKENS = 8000;
 
-const JUDGE_PRIMARY_PROVIDER = 'openai';
-const JUDGE_PRIMARY_MODEL = process.env.JUDGE_PRIMARY_MODEL || 'gpt-4.1-mini';
+const JUDGE_PRIMARY_PROVIDER = 'deepseek';
+const JUDGE_PRIMARY_MODEL = process.env.JUDGE_PRIMARY_MODEL || process.env.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro';
 const JUDGE_FALLBACK_PROVIDER = 'deepseek';
 const JUDGE_FALLBACK_MODEL = process.env.JUDGE_FALLBACK_MODEL || process.env.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro';
 
@@ -174,22 +174,13 @@ async function callJudgeProvider(provider, model, metricKey, userPayload, reques
 }
 
 const JUDGE_FALLBACK_TIERS = [
-  { provider: 'openai', model: process.env.JUDGE_PRIMARY_MODEL || 'gpt-4.1-mini' },
-  { provider: 'deepseek', model: process.env.JUDGE_FALLBACK_MODEL || 'deepseek-v4-pro' },
+  { provider: 'deepseek', model: process.env.JUDGE_PRIMARY_MODEL || process.env.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro' },
 ];
 
 async function callJudgeWithCascade(metricKey, userPayload, requestContext) {
-  let lastError = null;
-  for (const tier of JUDGE_FALLBACK_TIERS) {
-    try {
-      return await callJudgeProvider(tier.provider, tier.model, metricKey, userPayload, requestContext);
-    } catch (err) {
-      lastError = err;
-      console.warn(`[Judge] ${metricKey}: ${tier.provider}/${tier.model} failed (${err.message}). Trying next fallback tier...`);
-    }
-  }
-  throw lastError || new Error(`All ${JUDGE_FALLBACK_TIERS.length} judge fallback tiers failed.`);
+  return callJudgeProvider('deepseek', JUDGE_PRIMARY_MODEL, metricKey, userPayload, requestContext);
 }
+
 
 function computeHeuristicFallback(metricKey, inputs) {
   const { question, answer, formattedContexts } = inputs;
