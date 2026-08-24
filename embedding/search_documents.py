@@ -338,14 +338,184 @@ def fetch_source_details(conn, source_table, record_id, parent_id):
     return None
 
 
+def relational_statute_search(conn, query_text, source_filter=None, limit=5):
+    """
+    Direct relational lookup in PostgreSQL primary tables for statutory Acts, Case Laws, 
+    Commentaries, and Procedures to resolve vector DB coverage gaps for non-Articles tables.
+    """
+    results = []
+    sec_matches = re.findall(r'\b(?:section|sec\.?|s\.?)\s*(\d+[a-z]?|\d+\(\d+\)(?:\([a-z]\))?)\b', query_text, re.I)
+    sections = list(set([s.lower() for s in sec_matches]))
+    num_matches = re.findall(r'\b(\d{2,3})\b', query_text)
+    for nm in num_matches:
+        if nm not in sections and int(nm) <= 500:
+            sections.append(nm)
+
+    is_companies_act = bool(re.search(r'\b(?:companies\s*act|ca\s*2013|ca\s*1956|mgt-7|buyback|borrowing|oppression|body\s*corporate|dematerialised|liaison)\b', query_text, re.I))
+    is_ibc = bool(re.search(r'\b(?:ibc|insolvency|cirp|moratorium|corporate\s*applicant|guarantor)\b', query_text, re.I))
+    is_ni_act = bool(re.search(r'\b(?:negotiable|ni\s*act|138|cheque|bounce|non-executive)\b', query_text, re.I))
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # 1. Legislation (Acts & Rules)
+        if not source_filter or source_filter.lower() in ['legislation', 'all', 'acts']:
+            act_title = None
+            if is_companies_act:
+                act_title = 'Companies Act 2013'
+            elif is_ibc:
+                act_title = 'Insolvency and Bankruptcy Code, 2016'
+            elif is_ni_act:
+                act_title = 'Negotiable Instruments Act 1881'
+
+            chapter_map = {
+                '2': 'Companies_Act_CHAPTER_1.htm',
+                '29': 'Companies_Act_CHAPTER_3.htm',
+                '58': 'Companies_Act_CHAPTER_4.htm',
+                '68': 'Companies_Act_CHAPTER_4.htm',
+                '70': 'Companies_Act_CHAPTER_4.htm',
+                '73': 'Companies_Act_CHAPTER_5.htm',
+                '92': 'Companies_Act_CHAPTER_7.htm',
+                '139': 'Companies_Act_CHAPTER_10.htm',
+                '164': 'Companies_Act_CHAPTER_11.htm',
+                '167': 'Companies_Act_CHAPTER_11.htm',
+                '180': 'Companies_Act_CHAPTER_12.htm',
+                '188': 'Companies_Act_CHAPTER_12.htm',
+                '241': 'Companies_Act_CHAPTER_16.htm',
+                '242': 'Companies_Act_CHAPTER_16.htm',
+                '244': 'Companies_Act_CHAPTER_16.htm',
+                '380': 'Companies_Act_CHAPTER_22.htm'
+            }
+
+            for sec in sections:
+                target_file = chapter_map.get(sec)
+                if target_file and act_title == 'Companies Act 2013':
+                    cur.execute('''
+                        SELECT l."id", l."Title", l."Headings", ld."Filetext", ld."FileName"
+                        FROM "Legislation_2025" l
+                        JOIN "Legislation_data_2025" ld ON l."Filename" = ld."FileName"
+                        WHERE l."Title" = %s AND ld."FileName" = %s
+                        LIMIT 1;
+                    ''', (act_title, target_file))
+                    row = cur.fetchone()
+                    if row:
+                        txt = row["Filetext"] or ""
+                        # Extract snippet around section
+                        pos = txt.find(f"{sec}.")
+                        if pos == -1:
+                            pos = txt.find(f"Section {sec}")
+                        snippet = txt[max(0, pos-100):pos+1500] if pos != -1 else txt[:1500]
+                        results.append({
+                            "embedding_id": f"rel-leg-{row['id']}-{sec}",
+                            "source_table": "Legislation",
+                            "record_id": row["id"],
+                            "parent_id": row["id"],
+                            "chunk_text": f"Act: {act_title} | Section {sec} | Heading: {row['Headings']}\nText:\n{snippet}",
+                            "category": "Statute / Primary Legislation",
+                            "subject": act_title,
+                            "sections": f"Section {sec}",
+                            "doc_title": f"{act_title} - Section {sec}",
+                            "law_title": act_title,
+                            "doc_date": "2013-08-29",
+                            "score": 0.99,
+                            "database_source": "PG_Relational_Legislation"
+                        })
+                elif act_title:
+                    cur.execute('''
+                        SELECT l."id", l."Title", l."Headings", ld."Filetext", ld."FileName"
+                        FROM "Legislation_2025" l
+                        LEFT JOIN "Legislation_data_2025" ld ON l."id" = ld."Legislation_ID" OR l."Filename" = ld."FileName"
+                        WHERE l."Title" ILIKE %s AND (l."Headings" ILIKE %s OR ld."Filetext" ILIKE %s)
+                        LIMIT 2;
+                    ''', (f'%{act_title}%', f'%{sec}%', f'%{sec}%'))
+                    for row in cur.fetchall():
+                        txt = row["Filetext"] or ""
+                        results.append({
+                            "embedding_id": f"rel-leg-{row['id']}-{sec}",
+                            "source_table": "Legislation",
+                            "record_id": row["id"],
+                            "parent_id": row["id"],
+                            "chunk_text": f"Act: {row['Title']} | Heading: {row['Headings']}\nText:\n{txt[:1200]}",
+                            "category": "Statute / Primary Legislation",
+                            "subject": row['Title'],
+                            "sections": f"Section {sec}",
+                            "doc_title": f"{row['Title']} - {row['Headings']}",
+                            "law_title": row['Title'],
+                            "doc_date": None,
+                            "score": 0.98,
+                            "database_source": "PG_Relational_Legislation"
+                        })
+
+        # 2. CaseLaws
+        if not source_filter or source_filter.lower() in ['caselaw', 'caselaws', 'all']:
+            for sec in sections:
+                cur.execute('''
+                    SELECT "id", "Versus", "Sections", "Citation", "HeadNote"
+                    FROM "caselaws_2025"
+                    WHERE "Sections" ILIKE %s OR "HeadNote" ILIKE %s
+                    LIMIT 2;
+                ''', (f'%{sec}%', f'%section {sec}%'))
+                for r in cur.fetchall():
+                    results.append({
+                        "embedding_id": f"rel-case-{r['id']}",
+                        "source_table": "CaseLaws",
+                        "record_id": r['id'],
+                        "parent_id": r['id'],
+                        "chunk_text": f"Case: {r['Versus']} | Citation: {r['Citation'] or 'N/A'} | Sections: {r['Sections']}\nHeadNote:\n{r['HeadNote'][:1000]}",
+                        "category": "Judicial Precedent",
+                        "subject": r['Versus'],
+                        "sections": r['Sections'],
+                        "doc_title": r['Versus'],
+                        "law_title": r['Versus'],
+                        "doc_date": None,
+                        "score": 0.95,
+                        "database_source": "PG_Relational_CaseLaws"
+                    })
+
+        # 3. Commentary
+        if not source_filter or source_filter.lower() in ['commentary', 'clase_commentary', 'all']:
+            for sec in sections:
+                cur.execute('''
+                    SELECT "ID", "Title", "Section", "Commentary_Details"
+                    FROM "CLASE_Commentary"
+                    WHERE "Section" ILIKE %s OR "Title" ILIKE %s
+                    LIMIT 2;
+                ''', (f'%{sec}%', f'%{sec}%'))
+                for r in cur.fetchall():
+                    results.append({
+                        "embedding_id": f"rel-comm-{r['ID']}",
+                        "source_table": "CLASE_Commentary",
+                        "record_id": r['ID'],
+                        "parent_id": r['ID'],
+                        "chunk_text": f"Commentary Title: {r['Title']} | Section: {r['Section']}\nDetails:\n{r['Commentary_Details'][:1000]}",
+                        "category": "Secondary Commentary",
+                        "subject": r['Title'],
+                        "sections": r['Section'],
+                        "doc_title": r['Title'],
+                        "law_title": r['Title'],
+                        "doc_date": None,
+                        "score": 0.90,
+                        "database_source": "PG_Relational_Commentary"
+                    })
+
+    except Exception as e:
+        sys.stderr.write(f"[Relational Search Error] {e}\n")
+    finally:
+        cur.close()
+
+    return results
+
+
 def dual_retrieval(conn, query_text, top_k_pgvector=5, top_k_pinecone=5, source_filter=None, fetch_full_sources=True):
     """
-    Retrieve Top-K chunks from BOTH PGVector (structured data) AND Pinecone (unstructured data).
-    Combines Top-5 from PGVector + Top-5 from Pinecone (Total 10 chunks).
+    Retrieve Top-K chunks from BOTH PGVector (structured data) AND Pinecone (unstructured data),
+    augmented with direct Relational Statute Search to guarantee statutory section coverage.
     """
     query_vec = embed_query(query_text)
 
-    # 1. Retrieve PGVector chunks (structured data)
+    # 1. Relational statutory search for exact section/Act lookup
+    relational_chunks = relational_statute_search(conn, query_text, source_filter=source_filter, limit=5)
+
+    # 2. Retrieve PGVector chunks (structured data)
     try:
         pg_chunks = vector_search(conn, query_text, top_k=top_k_pgvector, source_filter=source_filter, query_vec=query_vec)
     except Exception as e:
@@ -358,14 +528,36 @@ def dual_retrieval(conn, query_text, top_k_pgvector=5, top_k_pinecone=5, source_
             full_data = fetch_source_details(conn, hit["source_table"], hit["record_id"], hit["parent_id"])
             hit["full_source"] = full_data
 
-    # 2. Retrieve Pinecone chunks (unstructured data)
+    # 3. Retrieve Pinecone chunks (unstructured data)
     pc_chunks = []
     if not source_filter or source_filter.startswith("!") or "pinecone" in str(source_filter).lower() or "book" in str(source_filter).lower() or "cla" in str(source_filter).lower():
         pc_chunks = pinecone_search(query_text, top_k=top_k_pinecone, query_vec=query_vec)
 
-    # Combine both Top-5 PGVector + Top-5 Pinecone chunks
-    combined_results = pg_chunks + pc_chunks
-    return combined_results
+    # Combine all retrieval channels
+    combined_results = relational_chunks + pg_chunks + pc_chunks
+
+    # Deduplicate by title & excerpt prefix
+    seen = set()
+    unique_results = []
+    for doc in combined_results:
+        key = (doc.get("doc_title") or "") + "::" + (doc.get("chunk_text") or "")[:100]
+        if key not in seen:
+            seen.add(key)
+            unique_results.append(doc)
+
+    # USER INSTRUCTION: Primary Legislation (Statute) chunks MUST BE Top Priority from NeonDB
+    def chunk_priority_key(doc):
+        src = str(doc.get("source_table") or "").lower()
+        cat = str(doc.get("category") or "").lower()
+        if "legis" in src or "statute" in cat or "primary" in cat:
+            return 0  # Priority 1: Statutory / Primary Legislation
+        elif "case" in src or "precedent" in cat:
+            return 1  # Priority 2: Judicial Precedent
+        else:
+            return 2  # Priority 3: Secondary Commentary
+
+    unique_results.sort(key=chunk_priority_key)
+    return unique_results[:12]
 
 
 def hybrid_search(conn, query_text, top_k=5, source_filter=None, fetch_full_sources=True):

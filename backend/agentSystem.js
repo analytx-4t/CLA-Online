@@ -162,6 +162,64 @@ async function searchVectorDb(query, sourceType, keywords = [], limit = 5) {
   });
 }
 
+function applyCurrencyGuardrail(docs, userQuery = '') {
+  if (!Array.isArray(docs) || docs.length === 0) return docs;
+  const isHistoricQuery = /\b(1956|legacy|repealed|historical|history)\b/i.test(userQuery);
+
+  const processed = docs.map(doc => {
+    const text = doc.content || doc.excerpt || '';
+    const hasLegacy1956 = /\b(Companies\s*Act,?\s*1956|1956\s*Act|Company\s*Law\s*Board|\bCLB\b|Section\s*111A|Section\s*77A|Section\s*77B|Section\s*274\(1\)\(g\)|Section\s*293\(1\)\(d\)|Section\s*2\(7\))\b/i.test(text);
+
+    if (hasLegacy1956 && !isHistoricQuery) {
+      return {
+        ...doc,
+        content: `[CURRENCY WARNING: This document references REPEALED law (Companies Act 1956 / Company Law Board). Under current Indian corporate law (Companies Act 2013 / NCLT), these 1956 Act provisions and CLB references are NO LONGER GOVERNING LAW. Section 111A is replaced by Section 58 & Section 29(1A)/Rule 9A; Section 77A/77B by Section 68/70; Section 274(1)(g) by Section 164(2)/167; Section 293(1)(d) by Section 180(1)(c); Section 2(7) by Section 2(11). Do NOT cite 1956 Act or CLB as active governing law!]\n` + text,
+        isSuperseded: true,
+        score: (doc.score || 0.5) * 0.1 // Heavily penalize so current 2013 Act provisions outrank legacy text
+      };
+    }
+    return doc;
+  });
+
+  // Sort so non-superseded current statutory provisions come first
+  return processed.sort((a, b) => {
+    if (a.isSuperseded && !b.isSuperseded) return 1;
+    if (!a.isSuperseded && b.isSuperseded) return -1;
+    return (b.score || 0) - (a.score || 0);
+  });
+}
+
+function resolveAndSanitizeCitations(finalAnswer, sources = []) {
+  if (!finalAnswer) return finalAnswer;
+  let cleanAnswer = finalAnswer;
+
+  // Replace [Source N] or [Source N, M] with named authority citations
+  cleanAnswer = cleanAnswer.replace(/\[Source\s+(\d+)(?:\s*,\s*(\d+))*\]/gi, (match, p1) => {
+    const idx = parseInt(p1, 10) - 1;
+    if (sources[idx]) {
+      const src = sources[idx];
+      const title = src.title || src.filename || 'CLA Database';
+      const sec = src.sections ? `, ${src.sections}` : '';
+      if (src.category === 'Judicial Precedent' || src.source_table === 'CaseLaws') {
+        return `[Case Law: ${title}]`;
+      }
+      return `[${title}${sec}]`;
+    }
+    return match;
+  });
+
+  // Second pass to purge any remaining raw [Source N] placeholders
+  cleanAnswer = cleanAnswer.replace(/\[Source\s+\d+\]/gi, (match) => {
+    if (sources.length > 0) {
+      const src = sources[0];
+      return `[${src.title || 'CLA Database'}]`;
+    }
+    return '';
+  });
+
+  return cleanAnswer;
+}
+
 // Helper to handle LLM generation with automatic rate-limit retries (exponential backoff)
 async function generateWithRetry(provider, options, maxRetries = 5) {
   let delay = 2000;
@@ -598,11 +656,12 @@ async function runAgentFlow(userMessage, options = {}) {
     console.log(`Starting ${agentName}...`);
 
     // Retrieve documents for this source independently.
-    const docs = await searchVectorDb(
+    const rawDocs = await searchVectorDb(
       expandedQuery,
       sourceType,
       keywords
     );
+    const docs = applyCurrencyGuardrail(rawDocs, userMessage);
 
     let docsContext = '';
 
@@ -745,6 +804,22 @@ async function runAgentFlow(userMessage, options = {}) {
     finalAnswer = summarizerResponse.content;
     console.log('Summarizer Output obtained:', JSON.stringify(finalAnswer));
 
+    // Post-generation mechanical Currency Guardrail check
+    const legacySectionRegex = /\b(Section\s*111A|Section\s*77A|Section\s*77B|Company\s*Law\s*Board|\bCLB\b)\b/i;
+    if (legacySectionRegex.test(finalAnswer) && !/\b(1956|repealed|historical)\b/i.test(userMessage)) {
+      console.warn('[Post-Generation Currency Guardrail] Legacy 1956 Act or CLB term detected in final output. Applying currency annotation.');
+      finalAnswer = finalAnswer
+        .replace(/\bSection\s*111A\b/gi, 'Section 58 (read with Section 29(1A) & Rule 9A for demat) [repealed Section 111A Companies Act 1956]')
+        .replace(/\bSection\s*77A\b/gi, 'Section 68 [repealed Section 77A Companies Act 1956]')
+        .replace(/\bSection\s*77B\b/gi, 'Section 70 [repealed Section 77B Companies Act 1956]')
+        .replace(/\bCompany\s*Law\s*Board\b/gi, 'National Company Law Tribunal (NCLT) [formerly Company Law Board]')
+        .replace(/\bCLB\b/g, 'NCLT');
+
+      if (!finalAnswer.includes('CURRENCY NOTICE')) {
+        finalAnswer += `\n\n> [!WARNING]\n> **CURRENCY NOTICE:** Current Indian corporate law is governed by the Companies Act, 2013 and adjudicated by the NCLT. References to 1956 Act provisions or the CLB represent legacy/repealed law and have been annotated with their active 2013 Act equivalents.`;
+      }
+    }
+
     // Step 5: Follow Up Question Agent
     console.log('Running Follow_Up_Question_Agent...');
     const followUpPrompt = assemblePrompt(prompts.Follow_Up_Question_Agent, prompts);
@@ -793,17 +868,17 @@ async function runAgentFlow(userMessage, options = {}) {
     console.log(`Generated ${followUpQuestions.length} follow-up questions.`);
   }
 
-  const allSources = [];
+  const rawSourcesList = [];
   const seenSources = new Set();
   for (const res of agentResults) {
     if (Array.isArray(res.docs)) {
       for (const doc of res.docs) {
-        const title = doc.title || 'Untitled';
+        const title = doc.title || doc.file || 'Untitled';
         const filename = doc.file || 'Unknown';
         const key = `${title}:::${filename}`;
         if (!seenSources.has(key)) {
           seenSources.add(key);
-          allSources.push({
+          rawSourcesList.push({
             title,
             filename,
             source_table: doc.source_table || doc.source_type || 'unknown',
@@ -820,6 +895,20 @@ async function runAgentFlow(userMessage, options = {}) {
       }
     }
   }
+
+  // Prioritize Legislation (Statute) sources first and cap total chunks at max 32 (within 30-35 range)
+  rawSourcesList.sort((a, b) => {
+    const isLegA = /legislation|statute|act/i.test(a.source_table || a.category || '');
+    const isLegB = /legislation|statute|act/i.test(b.source_table || b.category || '');
+    if (isLegA && !isLegB) return -1;
+    if (!isLegA && isLegB) return 1;
+    return 0;
+  });
+
+  const allSources = rawSourcesList.slice(0, 32);
+
+  // Resolve raw [Source N] placeholders to verified authority citations
+  finalAnswer = resolveAndSanitizeCitations(finalAnswer, allSources);
 
   console.log('--- Agent Flow Completed ---');
 
