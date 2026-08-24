@@ -18,6 +18,7 @@ Retrieval Strategy: Top-5 from PGVector + Top-5 from Pinecone (Total 10 chunks c
 import os
 import re
 import json
+import sys
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
