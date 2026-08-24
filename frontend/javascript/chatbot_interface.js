@@ -85,6 +85,11 @@ function getApiBaseUrl() {
     return configuredBaseUrl.replace(/\/$/, '');
   }
 
+  // If served from a static web server on non-3000 port (e.g. 8080, 8081, 5173), redirect API requests to Node backend on port 3000
+  if (window.location.port && window.location.port !== '3000') {
+    return `${window.location.protocol}//${window.location.hostname}:3000`;
+  }
+
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return 'http://localhost:3000';
   }
@@ -399,7 +404,8 @@ window.addEventListener('storage', (event) => {
 });
 
 function escapeHTML(value) {
-  return value.replace(/[&<>"]+/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[match]));
+  if (value === null || value === undefined) return '';
+  return String(value).replace(/[&<>"]+/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[match]));
 }
 
 function formatMarkdown(text) {
@@ -457,10 +463,11 @@ function formatMarkdown(text) {
   html = html.replace(/(<li>.*?<\/li>)/gs, '<ol>$1</ol>');
   html = html.replace(/<\/ol>\s*<ol>/g, '');
 
-  // Parse bold, italic, code
+  // Parse bold, italic, code, highlights
   html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
   html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+  html = html.replace(/==(.*?)==/g, '<mark class="answer-highlight">$1</mark>');
 
   // Parse citation tags: [1] -> superscript link
   html = html.replace(/\[([1-9])\]/g, '<a href="#citation-$1" class="citation-ref-link" data-citation-index="$1">[$1]</a>');
@@ -801,6 +808,22 @@ function renderSessionMenuPortal() {
   const rect = trigger.getBoundingClientRect();
   const menu = document.createElement('div');
   menu.className = 'session-menu';
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.className = 'session-menu-item';
+  exportBtn.innerHTML = `
+    <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"></path>
+    </svg>
+    <span>Export chat</span>
+  `;
+  exportBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    exportSessionChat(session.session_id);
+    closeSessionMenu();
+  });
+  menu.appendChild(exportBtn);
+
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
   deleteBtn.className = 'session-menu-item';
@@ -939,12 +962,88 @@ function ensureCitationVisible(citationsContainer, cardEl) {
   cardEl.classList.add('highlight');
 }
 
+function openChunkDetailModal(s, idx) {
+  const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
+  let modalOverlay = document.getElementById('chunkDetailModalOverlay');
+  if (!modalOverlay) {
+    modalOverlay = document.createElement('div');
+    modalOverlay.id = 'chunkDetailModalOverlay';
+    modalOverlay.className = 'dialog-overlay citation-modal-overlay';
+    document.body.appendChild(modalOverlay);
+  }
+
+  const sourceNum = idx + 1;
+  const isBook = s.database_source === 'Pinecone' || s.source_table === 'CLA Books';
+  const badgeText = isBook ? 'Book / Manual' : 'Legal Record';
+  const badgeClass = isBook ? 'badge-book' : 'badge-record';
+
+  const excerptText = s.excerpt || s.chunk_text || s.content || s.text || '';
+  const docTitle = s.title || s.law_title || s.filename || 'Untitled Reference';
+
+  let openLinkUrl = '#';
+  const recId = s.record_id || s.embedding_id;
+  if (s.source_table && recId) {
+    const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
+    const highlightParam = excerptText ? `&highlight=${encodeURIComponent(excerptText)}` : '';
+    openLinkUrl = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(recId)}${parentParam}&theme=${activeTheme}${highlightParam}`;
+  }
+
+  modalOverlay.innerHTML = `
+    <div class="dialog-card citation-modal-card">
+      <div class="citation-modal-header">
+        <div class="citation-modal-title-wrap">
+          <span class="citation-badge">Source ${sourceNum}</span>
+          <span class="db-source-tag ${badgeClass}">${badgeText}</span>
+        </div>
+        <button type="button" class="citation-modal-close" id="closeChunkModalBtn">&times;</button>
+      </div>
+      <h3 class="citation-modal-doc-title">${escapeHTML(docTitle)}</h3>
+      ${s.sections ? `<div class="citation-modal-section"><strong>Section / Chapter:</strong> ${escapeHTML(s.sections)}</div>` : ''}
+      
+      <div class="citation-modal-excerpt-box">
+        <div class="citation-modal-excerpt-label">Retrieved Section Content:</div>
+        <p class="citation-modal-excerpt-text">${escapeHTML(excerptText || 'No excerpt text available.')}</p>
+      </div>
+
+      <div class="citation-modal-meta-grid">
+        <div class="meta-item"><span class="meta-lbl">Source Reference</span><span class="meta-val">${escapeHTML(s.source_table || 'N/A')}</span></div>
+        <div class="meta-item"><span class="meta-lbl">Category</span><span class="meta-val">${escapeHTML(s.category || 'N/A')}</span></div>
+        <div class="meta-item"><span class="meta-lbl">Subject</span><span class="meta-val">${escapeHTML(s.subject || 'N/A')}</span></div>
+        <div class="meta-item"><span class="meta-lbl">Author / Court</span><span class="meta-val">${escapeHTML(s.author || 'N/A')}</span></div>
+        <div class="meta-item"><span class="meta-lbl">Reference ID</span><span class="meta-val">${escapeHTML(String(recId || s.parent_id || 'N/A'))}</span></div>
+        <div class="meta-item"><span class="meta-lbl">Status</span><span class="meta-val">Verified Source</span></div>
+      </div>
+
+      <div class="citation-modal-actions">
+        <button type="button" class="dialog-btn secondary" id="modalDismissBtn">Close</button>
+        ${s.source_table && recId ? `<a href="${openLinkUrl}" target="_blank" class="dialog-btn primary-action open-full-content-btn"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Full Content</a>` : ''}
+      </div>
+    </div>
+  `;
+
+  modalOverlay.removeAttribute('hidden');
+  modalOverlay.style.display = 'flex';
+
+  const closeBtn = modalOverlay.querySelector('#closeChunkModalBtn');
+  const dismissBtn = modalOverlay.querySelector('#modalDismissBtn');
+  const hideModal = () => {
+    modalOverlay.style.display = 'none';
+    modalOverlay.setAttribute('hidden', 'true');
+  };
+
+  if (closeBtn) closeBtn.onclick = hideModal;
+  if (dismissBtn) dismissBtn.onclick = hideModal;
+  modalOverlay.onclick = (e) => {
+    if (e.target === modalOverlay) hideModal();
+  };
+}
+
 function renderSourceCitations(container, message) {
   if (container.querySelector('.citations-container')) {
     return;
   }
 
-  const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
+  const sources = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
   if (sources.length === 0) {
     return;
   }
@@ -953,85 +1052,155 @@ function renderSourceCitations(container, message) {
   const citationsContainer = document.createElement('div');
   citationsContainer.className = 'citations-container';
   citationsContainer.innerHTML = `<div class="citations-header-title">Source Citations (${sources.length})</div>`;
-  citationsContainer._remainingSources = sources.slice(1);
 
-  citationsContainer._renderCitationCard = (s, idx) => {
-    const sourceNum = idx + 1;
-    const card = document.createElement('div');
-    card.className = 'citation-card';
-    card.id = `citation-card-${message.message_id}-${idx}`;
-    card.dataset.citationIndex = String(idx);
-
-    let detailsHtml = '';
-    const addDetail = (label, value, extraClass = '') => {
-      const safeValue = (value === null || value === undefined) ? 'N/A' : escapeHTML(String(value));
-      detailsHtml += `<span class="citation-detail-item${extraClass ? ' ' + extraClass : ''}"><strong class="citation-detail-label">${label}</strong><span class="citation-detail-value">${safeValue}</span></span>`;
-    };
-
-    const isModelName = (str) => typeof str === 'string' && (str.includes('text-embedding') || str.includes('embedding-3'));
-    if (s.title || !s.category || isModelName(s.category)) addDetail('Title', s.title || 'Untitled Document', 'is-title');
-    if (s.category && !isModelName(s.category)) addDetail('Category', s.category);
-    if (s.subject) addDetail('Subject', s.subject);
-    if (s.author) addDetail('Author', s.author);
-    if (s.sections) addDetail('Section', s.sections);
-    if (s.doc_date) {
-      try {
-        const formattedDate = new Date(s.doc_date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-        addDetail('Date', formattedDate);
-      } catch (e) {
-        addDetail('Date', s.doc_date);
-      }
-    }
-    if (s.vol) addDetail('Volume', s.vol);
-    if (s.issue_month || s.issue_year) {
-      const issueStr = [s.issue_month, s.issue_year].filter(Boolean).join(' ');
-      if (issueStr) addDetail('Issue', issueStr);
+  // Group sources by Book or Table
+  const groupsMap = new Map();
+  sources.forEach((s, idx) => {
+    if (!s || typeof s !== 'object') return;
+    const isBook = s.database_source === 'Pinecone' || s.source_table === 'CLA Books' || (s.source_table && s.source_table.toLowerCase().includes('pinecone'));
+    let groupKey, groupName, groupIcon, typeBadge;
+    if (isBook) {
+      groupName = s.title || s.law_title || s.filename || 'Legal Reference Books & Publications';
+      groupKey = `book:${groupName}`;
+      groupIcon = '📖';
+      typeBadge = 'Book Reference';
+    } else {
+      const tableName = s.source_table || 'Legislation';
+      groupName = `${tableName} Repository`;
+      groupKey = `table:${tableName}`;
+      groupIcon = '📜';
+      typeBadge = 'Legal Record';
     }
 
-    let openLinkHtml = '';
-    if (s.source_table && s.record_id) {
-      const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
-      const highlightParam = s.excerpt ? `&highlight=${encodeURIComponent(s.excerpt)}` : '';
-      openLinkHtml = `<a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(s.record_id)}${parentParam}&theme=${activeTheme}${highlightParam}" target="_blank" class="open-citation-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="vertical-align: middle; margin-right: 3px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Citation</a>`;
-    }
-
-    let excerptHtml = '';
-    if (s.excerpt) {
-      const preview = s.excerpt.length > 180 ? `${s.excerpt.slice(0, 180).trim()}…` : s.excerpt;
-      excerptHtml = `<p class="citation-excerpt">${escapeHTML(preview)}</p>`;
-    }
-
-    card.innerHTML = `
-      <div class="citation-card-top-row">
-        <span class="citation-badge">Source [${sourceNum}]</span>
-        ${openLinkHtml}
-      </div>
-      ${excerptHtml}
-      ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
-    `;
-    return card;
-  };
-
-  citationsContainer.appendChild(citationsContainer._renderCitationCard(sources[0], 0));
-
-  if (sources.length > 1) {
-    const toggleBtn = document.createElement('button');
-    toggleBtn.type = 'button';
-    toggleBtn.className = 'citation-toggle-btn';
-    toggleBtn.setAttribute('aria-expanded', 'false');
-    toggleBtn.textContent = `Show ${sources.length - 1} More Sources`;
-    toggleBtn.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const isExpanded = citationsContainer.dataset.expanded === 'true';
-      setCitationCardsExpanded(citationsContainer, !isExpanded);
-      requestAnimationFrame(() => {
-        scrollToBottom();
+    if (!groupsMap.has(groupKey)) {
+      groupsMap.set(groupKey, {
+        name: groupName,
+        icon: groupIcon,
+        badge: typeBadge,
+        isBook: isBook,
+        items: []
       });
+    }
+    groupsMap.get(groupKey).items.push({ source: s, originalIndex: idx });
+  });
+
+  // Render each grouped box (Collapsed by default)
+  groupsMap.forEach((group) => {
+    const groupCard = document.createElement('div');
+    groupCard.className = `citation-group-box ${group.isBook ? 'book-group' : 'record-group'} collapsed`;
+    
+    const countBadge = `${group.items.length} Citation${group.items.length > 1 ? 's' : ''}`;
+    groupCard.innerHTML = `
+      <div class="citation-group-header" role="button" aria-expanded="false" tabindex="0" title="Click to ${group.items.length > 1 ? 'expand/collapse citations' : 'view citation'}">
+        <div class="citation-group-title">
+          <span class="group-icon">${group.icon}</span>
+          <span class="group-name-text">${escapeHTML(group.name)}</span>
+          <span class="group-count-tag">${countBadge}</span>
+        </div>
+        <div class="group-header-right">
+          <span class="db-source-tag ${group.isBook ? 'badge-book' : 'badge-record'}">${group.badge}</span>
+          <span class="expand-hint-text">Expand</span>
+          <svg class="group-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </div>
+      </div>
+      <div class="citation-group-body"></div>
+    `;
+
+    const groupHeader = groupCard.querySelector('.citation-group-header');
+    if (groupHeader) {
+      const toggleGroup = (e) => {
+        if (e.target.closest('.view-chunk-modal-btn') || e.target.closest('.open-citation-btn')) return;
+        const isNowCollapsed = groupCard.classList.toggle('collapsed');
+        groupHeader.setAttribute('aria-expanded', !isNowCollapsed);
+        const hintEl = groupHeader.querySelector('.expand-hint-text');
+        if (hintEl) {
+          hintEl.textContent = isNowCollapsed ? 'Expand' : 'Collapse';
+        }
+      };
+      groupHeader.addEventListener('click', toggleGroup);
+      groupHeader.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleGroup(e);
+        }
+      });
+    }
+
+    const groupBody = groupCard.querySelector('.citation-group-body');
+
+    group.items.forEach(({ source: s, originalIndex: idx }) => {
+      const sourceNum = idx + 1;
+      const card = document.createElement('div');
+      card.className = 'citation-card';
+      card.id = `citation-card-${message.message_id}-${idx}`;
+      card.dataset.citationIndex = String(idx);
+
+      const docTitle = s.title || s.law_title || s.filename || `Source #${sourceNum}`;
+
+      const rawExcerpt = s.excerpt || s.chunk_text || s.content || s.text || '';
+      const cardRecId = s.record_id || s.embedding_id;
+      const userQueryVal = message.query || (message.metadata && message.metadata.query) || '';
+      let openLinkHtml = '';
+      if (s.source_table && cardRecId) {
+        const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
+        const highlightParam = rawExcerpt ? `&highlight=${encodeURIComponent(rawExcerpt)}` : '';
+        const queryParam = userQueryVal ? `&query=${encodeURIComponent(userQueryVal)}` : '';
+        openLinkHtml = `<a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(cardRecId)}${parentParam}&theme=${activeTheme}${highlightParam}${queryParam}" target="_blank" class="open-citation-btn" title="Open full source content directly with text highlighting"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="vertical-align: middle; margin-right: 3px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Full Content</a>`;
+      }
+
+      const viewChunkBtnHtml = `<button type="button" class="view-chunk-modal-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 3px;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>View</button>`;
+
+      let excerptHtml = '';
+      if (rawExcerpt) {
+        const preview = rawExcerpt.length > 180 ? `${rawExcerpt.slice(0, 180).trim()}…` : rawExcerpt;
+        excerptHtml = `<p class="citation-excerpt">${escapeHTML(preview)}</p>`;
+      }
+
+      let detailsHtml = '';
+      const addDetail = (label, value) => {
+        if (!value) return;
+        detailsHtml += `<span class="citation-detail-item"><strong class="citation-detail-label">${label}</strong><span class="citation-detail-value">${escapeHTML(String(value))}</span></span>`;
+      };
+
+      if (s.sections) addDetail('Section', s.sections);
+      if (s.subject) addDetail('Subject', s.subject);
+      if (s.author) addDetail('Author / Court', s.author);
+      if (s.category) addDetail('Category', s.category);
+      if (s.doc_date) addDetail('Date', s.doc_date);
+      if (s.filename && s.filename !== 'Unknown' && s.filename !== docTitle) addDetail('File', s.filename);
+
+      card.innerHTML = `
+        <div class="citation-card-top-row">
+          <div class="citation-card-badge-row">
+            <span class="citation-badge">Source ${sourceNum}</span>
+            ${s.sections ? `<span class="citation-sec-tag">${escapeHTML(s.sections)}</span>` : ''}
+          </div>
+          <div class="citation-card-actions">
+            ${viewChunkBtnHtml}
+            ${openLinkHtml}
+          </div>
+        </div>
+        <div class="citation-title" title="${escapeHTML(docTitle)}">${escapeHTML(docTitle)}</div>
+        ${excerptHtml}
+        ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
+      `;
+
+      const viewChunkBtn = card.querySelector('.view-chunk-modal-btn');
+      if (viewChunkBtn) {
+        viewChunkBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openChunkDetailModal(s, idx);
+        });
+      }
+
+      groupBody.appendChild(card);
     });
-    citationsContainer.appendChild(toggleBtn);
-    setCitationCardsExpanded(citationsContainer, false);
-  }
+
+    citationsContainer.appendChild(groupCard);
+  });
 
   container.appendChild(citationsContainer);
 }
@@ -1590,46 +1759,44 @@ async function handleUserSend() {
       }
     };
 
-    const saveResult = await sendMessageToSession(sessionId, persistPayload);
+    // Render response immediately to user interface
     clearProcessingIndicator();
     messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== thinkingMessageId);
 
-    if (saveResult.userMessage) {
-      messagesBySession[sessionId] = messagesBySession[sessionId].filter(m => m.message_id !== userMsg.message_id);
-      messagesBySession[sessionId].push(saveResult.userMessage);
-    }
-    if (saveResult.assistantMessage) {
-      messagesBySession[sessionId].push(saveResult.assistantMessage);
-      messagesToAnimate.add(saveResult.assistantMessage.message_id);
-    } else {
-      messagesBySession[sessionId].push({
-        message_id: 'assistant-' + Date.now(),
-        session_id: sessionId,
-        user_id: getCurrentUserId(),
-        role: 'assistant',
-        content: answerContent,
-        created_at: nowISO(),
-        metadata: persistPayload.assistantMessage.metadata
-      });
-    }
+    const assistantMsgObj = {
+      message_id: 'assistant-' + Date.now(),
+      session_id: sessionId,
+      user_id: getCurrentUserId(),
+      role: 'assistant',
+      content: answerContent,
+      created_at: nowISO(),
+      metadata: persistPayload.assistantMessage.metadata
+    };
 
-    const session = getCurrentSession();
-    if (session) {
-      session.message_count = messagesBySession[sessionId].length;
-      session.updated_at = nowISO();
-      if (saveResult && saveResult.session) {
-        session.title = saveResult.session.title || session.title;
-        if (saveResult.session.updated_at) {
-          session.updated_at = saveResult.session.updated_at;
-        }
-        if (saveResult.session.last_message_at) {
-          session.last_message_at = saveResult.session.last_message_at;
-        }
-        if (typeof saveResult.session.message_count === 'number') {
-          session.message_count = saveResult.session.message_count;
-        }
+    messagesBySession[sessionId].push(assistantMsgObj);
+    messagesToAnimate.add(assistantMsgObj.message_id);
+    renderMessages();
+    renderSessionsList();
+
+    // Persist to MongoDB in background without blocking UI rendering
+    sendMessageToSession(sessionId, persistPayload).then(saveResult => {
+      if (saveResult && saveResult.assistantMessage) {
+        // Update local object with persistent backend message_id if available
+        assistantMsgObj.message_id = saveResult.assistantMessage.message_id;
       }
-    }
+      if (saveResult && saveResult.session) {
+        const session = getCurrentSession();
+        if (session) {
+          if (saveResult.session.title) session.title = saveResult.session.title;
+          if (saveResult.session.updated_at) session.updated_at = saveResult.session.updated_at;
+          if (saveResult.session.last_message_at) session.last_message_at = saveResult.session.last_message_at;
+          if (typeof saveResult.session.message_count === 'number') session.message_count = saveResult.session.message_count;
+        }
+        renderSessionsList();
+      }
+    }).catch(err => {
+      console.warn('[Chatbot UI] Background message persistence notice:', err);
+    });
   } catch (error) {
     if (error.name === 'AbortError') {
       console.log('[RAG] Generation request aborted by user.');
@@ -1661,7 +1828,7 @@ function debounceSearch() {
   searchDebounceTimer = setTimeout(handleSessionSearch, 300);
 }
 
-function handleSessionSearch() {
+async function handleSessionSearch() {
   sessionSearchQuery = sessionSearchInput?.value.trim() || '';
   if (!sessionSearchQuery) {
     filteredSessionIds = [];
@@ -1677,6 +1844,13 @@ function handleSessionSearch() {
     return messages.some(message => message.content.toLowerCase().includes(query));
   }).map(session => session.session_id);
   renderSessions();
+
+  const remoteSessionIds = await searchChatSessions(sessionSearchQuery);
+  if (remoteSessionIds && remoteSessionIds.length > 0) {
+    const merged = new Set([...filteredSessionIds, ...remoteSessionIds]);
+    filteredSessionIds = Array.from(merged);
+    renderSessions();
+  }
 }
 
 function resizeTextArea() {
@@ -2077,8 +2251,39 @@ async function fetchSessionMessages(sessionId) {
 }
 
 async function searchChatSessions(query) {
-  // TODO: replace with API call to GET /api/chat/sessions/search?q=
-  return [];
+  if (!query || !query.trim()) return [];
+  try {
+    const response = await fetch(
+      `${getApiBaseUrl()}/api/chat/sessions/search?q=${encodeURIComponent(query.trim())}`,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': getCurrentUserId()
+        }
+      }
+    );
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (Array.isArray(data.sessions)) {
+      data.sessions.forEach(remoteSession => {
+        if (!sessions.some(s => s.session_id === remoteSession.session_id)) {
+          sessions.push(createSessionFromBackend(remoteSession));
+        }
+      });
+      return data.sessions.map(s => s.session_id);
+    }
+    return [];
+  } catch (err) {
+    console.error('searchChatSessions error:', err);
+    return [];
+  }
+}
+
+function exportSessionChat(sessionId) {
+  if (!sessionId) return;
+  const exportUrl = `${getApiBaseUrl()}/api/chat/sessions/${encodeURIComponent(sessionId)}/export?format=markdown`;
+  window.open(exportUrl, '_blank');
 }
 
 async function sendFeedback(sessionId, messageId, feedbackType) {

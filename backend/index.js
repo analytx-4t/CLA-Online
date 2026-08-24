@@ -311,43 +311,43 @@ async function ensureIndexes(db) {
     }
   }
 
-try {
-  await Promise.all([
-    sessionsCollection.createIndex({ session_id: 1, user_id: 1 }, { unique: true, name: 'uniq_session_user' }),
-    sessionsCollection.createIndex({ user_id: 1, last_message_at: -1 }, { name: 'user_last_message' }),
-    messagesCollection.createIndex({ message_id: 1 }, { unique: true, name: 'uniq_message_id' }),
-    messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
-    evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
-    evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
-    retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
-    retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
-    goldenDatasetCollection.createIndex({ version: 1 }, { name: 'golden_dataset_version' }),
-    goldenDatasetCollection.createIndex({ question: 1 }, { name: 'golden_dataset_question' }),
-    goldenDatasetCollection.createIndex({ id: 1 }, { name: 'golden_dataset_id' }),
-    goldenDatasetRunsCollection.createIndex({ questionId: 1 }, { name: 'golden_dataset_run_question_id' }),
-    goldenDatasetRunsCollection.createIndex({ timestamp: 1 }, { name: 'golden_dataset_run_timestamp' }),
-    goldenDatasetRunsCollection.createIndex({ datasetVersion: 1 }, { name: 'golden_dataset_run_dataset_version' }),
-    evaluationResultsCollection.createIndex({ datasetVersion: 1 }, { name: 'eval_dataset_version' }),
-    evaluationResultsCollection.createIndex({ evaluationSessionId: 1 }, { name: 'eval_session_id' }),
-    goldenDatasetStateCollection.createIndex({ _id: 1 }, { name: 'golden_dataset_state_id' }),
-  ]);
-} catch (error) {
-  if (error?.codeName === 'IndexKeySpecsConflict' && error?.message?.includes('eval_session_id')) {
-    console.log('Found conflicting eval_session_id index, attempting to drop it...');
-    try {
-      await evaluationResultsCollection.dropIndex('eval_session_id');
-      console.log('Successfully dropped conflicting index');
-      await evaluationResultsCollection.createIndex(
-        { evaluationSessionId: 1 },
-        { name: 'eval_session_id' }
-      );
-    } catch (dropError) {
-      console.log('Could not drop index:', dropError.message);
+  try {
+    await Promise.all([
+      sessionsCollection.createIndex({ session_id: 1, user_id: 1 }, { unique: true, name: 'uniq_session_user' }),
+      sessionsCollection.createIndex({ user_id: 1, last_message_at: -1 }, { name: 'user_last_message' }),
+      messagesCollection.createIndex({ message_id: 1 }, { unique: true, name: 'uniq_message_id' }),
+      messagesCollection.createIndex({ session_id: 1, sequence_number: 1 }, { name: 'session_sequence' }),
+      evaluationResultsCollection.createIndex({ requestId: 1 }, { name: 'eval_request_id' }),
+      evaluationResultsCollection.createIndex({ timestamp: 1 }, { name: 'eval_timestamp' }),
+      retrievalLogsCollection.createIndex({ requestId: 1 }, { name: 'retrieval_request_id' }),
+      retrievalLogsCollection.createIndex({ timestamp: 1 }, { name: 'retrieval_timestamp' }),
+      goldenDatasetCollection.createIndex({ version: 1 }, { name: 'golden_dataset_version' }),
+      goldenDatasetCollection.createIndex({ question: 1 }, { name: 'golden_dataset_question' }),
+      goldenDatasetCollection.createIndex({ id: 1 }, { name: 'golden_dataset_id' }),
+      goldenDatasetRunsCollection.createIndex({ questionId: 1 }, { name: 'golden_dataset_run_question_id' }),
+      goldenDatasetRunsCollection.createIndex({ timestamp: 1 }, { name: 'golden_dataset_run_timestamp' }),
+      goldenDatasetRunsCollection.createIndex({ datasetVersion: 1 }, { name: 'golden_dataset_run_dataset_version' }),
+      evaluationResultsCollection.createIndex({ datasetVersion: 1 }, { name: 'eval_dataset_version' }),
+      evaluationResultsCollection.createIndex({ evaluationSessionId: 1 }, { name: 'eval_session_id' }),
+      goldenDatasetStateCollection.createIndex({ _id: 1 }, { name: 'golden_dataset_state_id' }),
+    ]);
+  } catch (error) {
+    if (error?.codeName === 'IndexKeySpecsConflict' && error?.message?.includes('eval_session_id')) {
+      console.log('Found conflicting eval_session_id index, attempting to drop it...');
+      try {
+        await evaluationResultsCollection.dropIndex('eval_session_id');
+        console.log('Successfully dropped conflicting index');
+        await evaluationResultsCollection.createIndex(
+          { evaluationSessionId: 1 },
+          { name: 'eval_session_id' }
+        );
+      } catch (dropError) {
+        console.log('Could not drop index:', dropError.message);
+      }
+    } else {
+      throw error;
     }
-  } else {
-    throw error;
   }
-}
 }
 
 async function getCurrentGoldenDatasetVersion(db) {
@@ -416,14 +416,14 @@ function buildEvaluationResultDocument({
 
   const calculatedOverallScore = allScoresPresent
     ? Number(
-        (
-          scoredFaithfulness +
-          scoredAnswerRelevancy +
-          scoredContextPrecision +
-          scoredContextRecall +
-          scoredAnswerCorrectness
-        ) / 5
-      ).toFixed(4)
+      (
+        scoredFaithfulness +
+        scoredAnswerRelevancy +
+        scoredContextPrecision +
+        scoredContextRecall +
+        scoredAnswerCorrectness
+      ) / 5
+    ).toFixed(4)
     : null;
 
   return {
@@ -546,12 +546,12 @@ function buildRetrievalLogDocument({ requestContext, query, retrievalTime, topK,
     topK: Number.isFinite(topK) ? topK : null,
     retrievedChunks: Array.isArray(retrievedChunks)
       ? retrievedChunks.map((chunk) => ({
-          chunkId: chunk?.chunkId || chunk?.chunk_id || null,
-          documentId: chunk?.documentId || chunk?.document_id || chunk?.source || chunk?.sourceId || chunk?.source_id || null,
-          rank: chunk?.rank ?? null,
-          similarityScore: chunk?.similarityScore ?? chunk?.similarity_score ?? null,
-          content: chunk?.content || chunk?.chunk_text || chunk?.text || null,
-        }))
+        chunkId: chunk?.chunkId || chunk?.chunk_id || null,
+        documentId: chunk?.documentId || chunk?.document_id || chunk?.source || chunk?.sourceId || chunk?.source_id || null,
+        rank: chunk?.rank ?? null,
+        similarityScore: chunk?.similarityScore ?? chunk?.similarity_score ?? null,
+        content: chunk?.content || chunk?.chunk_text || chunk?.text || null,
+      }))
       : [],
   };
 }
@@ -576,16 +576,16 @@ async function validateEmbeddingConfiguration() {
    * between the indexed vectors and the current retrieval expectations.
    */
   const embeddingConfig = getEmbeddingConfig();
-  
+
   // Log configuration for debugging
   console.log(
     `[Embedding Validation] Current Config: ${embeddingConfig.model} (${embeddingConfig.dimensions} dims)`
   );
-  
+
   // Expected configuration
-  const expectedModel = 'text-embedding-3-large';
-  const expectedDimensions = 3072;
-  
+  const expectedModel = 'text-embedding-3-small';
+  const expectedDimensions = 1536;
+
   if (embeddingConfig.model !== expectedModel) {
     const warning = (
       `[Embedding Validation] WARNING: Expected embedding model '${expectedModel}' ` +
@@ -594,7 +594,7 @@ async function validateEmbeddingConfiguration() {
     );
     console.warn(warning);
   }
-  
+
   if (embeddingConfig.dimensions !== expectedDimensions) {
     const warning = (
       `[Embedding Validation] WARNING: Expected embedding dimensions ${expectedDimensions} ` +
@@ -613,6 +613,9 @@ function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
     let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
     if (!require('fs').existsSync(pythonPath)) {
       pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
+    }
+    if (!require('fs').existsSync(pythonPath)) {
+      pythonPath = 'python';
     }
 
     const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
@@ -804,42 +807,26 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
 
   // Step 1: Sequential candidate retrieval (avoids ODBC connection contention)
   // Legislation max 35 candidates, Other tables max 60 candidates
-  let legislationCandidates = [];
-  let otherCandidates = [];
+  let candidateChunks = [];
 
   try {
-    const legRes = await runPythonSearch(normKeywordQuery, 35, true, 'Legislation').catch(err => {
-      console.error('[Prioritized Search] Legislation search failed:', err.message);
+    const rawRes = await runPythonSearch(normKeywordQuery, 60, true, null).catch(err => {
+      console.error('[Prioritized Search] Retrieval failed:', err.message);
       return [];
     });
-    const othRes = await runPythonSearch(normKeywordQuery, 60, true, '!Legislation').catch(err => {
-      console.error('[Prioritized Search] Other tables search failed:', err.message);
-      return [];
-    });
-    legislationCandidates = Array.isArray(legRes) ? legRes : [];
-    otherCandidates = Array.isArray(othRes) ? othRes : [];
+    candidateChunks = Array.isArray(rawRes) ? rawRes : [];
   } catch (err) {
     console.error('[Prioritized Search] Candidate retrieval failed:', err.message);
   }
 
-  // Step 2: Rerank Legislation (top candidates) and Other tables (top candidates) using Cohere Reranker
-  const [legislationResults, otherResults] = await Promise.all([
-    legislationCandidates.length > 0
-      ? rerankSearchResults(targetQuestion, legislationCandidates, 20)
-      : Promise.resolve([]),
-    otherCandidates.length > 0
-      ? rerankSearchResults(targetQuestion, otherCandidates, 60)
-      : Promise.resolve([])
-  ]);
+  // Step 2: Rerank candidate chunks using Cohere / Heuristic Reranker
+  const rerankedResults = candidateChunks.length > 0
+    ? await rerankSearchResults(targetQuestion, candidateChunks, 60)
+    : [];
 
-  // Step 3: Apply per-table top-5 cap:
-  // - Top 5 chunks from Legislation table (if any matched)
-  // - Top 5 chunks from EACH other source table independently
-  // This ensures every table contributes fairly, and no single table monopolizes context.
+  // Step 3: Apply per-table top-5 cap to ensure balanced source distribution
   const TOP_CHUNKS_PER_TABLE = 5;
 
-
-  // Helper: group results by source_table and take top N per group
   const capPerTable = (results, maxPerTable = TOP_CHUNKS_PER_TABLE) => {
     const tableBuckets = {};
     for (const r of results) {
@@ -849,26 +836,18 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
         tableBuckets[tableKey].push(r);
       }
     }
-    // Flatten all buckets back into a single array, sorted by relevance score descending
     return Object.values(tableBuckets)
       .flat()
       .sort((a, b) => (b.backend_relevance_score || 0) - (a.backend_relevance_score || 0));
   };
 
-  // Legislation: top 3 chunks from legislation table
-  const legSlice = legislationResults.slice(0, TOP_CHUNKS_PER_TABLE);
+  const combinedResults = capPerTable(rerankedResults, TOP_CHUNKS_PER_TABLE);
 
-  // Other tables: top 3 per source_table, flattened
-  const otherSlice = capPerTable(otherResults, TOP_CHUNKS_PER_TABLE);
-
-  const combinedResults = [...legSlice, ...otherSlice];
-  const candidateCount = legislationCandidates.length + otherCandidates.length;
-
-  combinedResults.legislationResults = legSlice;
-  combinedResults.otherResults = otherSlice;
-  combinedResults.candidateCount = candidateCount;
-  combinedResults.legislationCandidatesCount = legislationCandidates.length;
-  combinedResults.otherCandidatesCount = otherCandidates.length;
+  // Attach object properties to array for backwards compatibility
+  combinedResults.results = combinedResults;
+  combinedResults.legislationResults = combinedResults.filter(r => (r.source_table || '').toLowerCase().includes('legis'));
+  combinedResults.otherResults = combinedResults.filter(r => !(r.source_table || '').toLowerCase().includes('legis'));
+  combinedResults.candidateCount = candidateChunks.length;
 
   return combinedResults;
 }
@@ -878,6 +857,9 @@ function runPythonCitation(sourceTable, recordId, parentId = null) {
     let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
     if (!require('fs').existsSync(pythonPath)) {
       pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
+    }
+    if (!require('fs').existsSync(pythonPath)) {
+      pythonPath = 'python';
     }
 
     const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
@@ -1138,60 +1120,130 @@ function splitIntoSentences(text) {
     .filter((sentence) => sentence.length >= 15);
 }
 
-// Bold + accent a handful of "important" fragments inside an already-matched
-// sentence: quoted defined terms and statutory cross-references, the same
-// terms the chat answer view already bolds in the CLA brand green.
-function markKeyTerms(text) {
-  return text
-    .replace(/(\u201c[^\u201d]{3,80}\u201d|\u2018[^\u2019]{3,80}\u2019|"[^"]{3,80}")/g, '<span class="key-term">$1</span>')
-    .replace(/\b((?:Section|Sub-section|Clause|Rule|Regulation|Article)\s+\d+[A-Za-z]*(?:\(\d+\))?(?:\([a-z]\))?)\b/gi, (m) => `<span class="key-term">${m}</span>`);
-}
+// Stop words filter for keyword extraction
+const HIGHLIGHT_STOP_WORDS = new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'in', 'on', 'at', 'to', 'for', 'with', 'by', 'about', 'against', 'between', 'into', 'through',
+  'during', 'before', 'after', 'above', 'below', 'from', 'up', 'down', 'of', 'off', 'over', 'under',
+  'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
+  'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own',
+  'same', 'so', 'than', 'too', 'very', 'can', 'will', 'just', 'should', 'now', 'this', 'that', 'these',
+  'those', 'am', 'it', 'its', 'has', 'have', 'had', 'do', 'does', 'did', 'would', 'could', 'may', 'might',
+  'must', 'shall', 'also', 'which', 'what', 'their', 'them', 'they', 'under', 'within', 'from'
+]);
 
-// Highlight the passage that was actually retrieved and used to answer the
-// user's question, sentence by sentence, so it's obvious at a glance why
-// this document was cited — falling back to a plain literal match for
-// short, non-sentence highlight queries.
-function highlightRelevantExcerpt(html, excerptText) {
-  if (!html || !excerptText) return html;
-  const trimmedQuery = normalizeWhitespace(excerptText);
-  if (!trimmedQuery) return html;
+function extractSearchPhrasesAndWords(excerptText, userQueryText) {
+  const phrases = [];
+  const words = [];
+  const combined = `${excerptText || ''} ${userQueryText || ''}`.trim();
+  if (!combined) return { phrases, words };
 
-  const sentences = splitIntoSentences(trimmedQuery);
-  const phrases = sentences.length > 0 ? sentences : [trimmedQuery];
+  // 1. Sentences from excerpt
+  if (excerptText) {
+    const rawSentences = excerptText
+      .split(/(?<=[.!?])\s+|\n+/)
+      .map(s => normalizeWhitespace(s))
+      .filter(s => s.length >= 10);
+    phrases.push(...rawSentences);
+  }
 
-  let matches = 0;
-  const highlighted = html.replace(/>([^<]+)</g, (match, content) => {
-    let updated = content;
-    for (const phrase of phrases) {
-      if (!phrase || matches >= 15) continue;
-      const fuzzyPattern = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
-      let pattern;
-      try {
-        pattern = new RegExp(`(${fuzzyPattern})`, 'i');
-      } catch (e) {
-        continue;
-      }
-      if (pattern.test(updated)) {
-        updated = updated.replace(pattern, (m) => `<mark class="cited-mark">${markKeyTerms(m)}</mark>`);
-        matches += 1;
+  // 2. Extract key individual terms (ignoring common stop words)
+  const rawWords = combined
+    .replace(/[^\w\s\d_-]/g, ' ')
+    .split(/\s+/)
+    .map(w => w.trim())
+    .filter(w => w.length >= 3);
+
+  for (let i = 0; i < rawWords.length; i++) {
+    const w = rawWords[i];
+    if (!HIGHLIGHT_STOP_WORDS.has(w.toLowerCase()) && !words.includes(w)) {
+      words.push(w);
+    }
+  }
+
+  // 3. Create 3-5 word phrase chunks if excerpt is long
+  if (excerptText && rawWords.length >= 3) {
+    for (let i = 0; i <= rawWords.length - 3; i += 2) {
+      const chunk = rawWords.slice(i, i + 4).join(' ');
+      if (chunk.length >= 10 && !phrases.includes(chunk)) {
+        phrases.push(chunk);
       }
     }
+  }
+
+  return { phrases, words };
+}
+
+// Highlight the passage that was actually retrieved, sentence by sentence,
+// along with statutory references and key query words.
+function highlightRelevantExcerpt(html, excerptText = '', userQueryText = '') {
+  if (!html) return html;
+  
+  const { phrases, words } = extractSearchPhrasesAndWords(excerptText, userQueryText);
+
+  // Pattern for statutory references & defined legal concepts
+  const legalRefRegex = /\b(?:Section|Sub-section|Clause|Rule|Regulation|Article)\s+\d+[A-Za-z]*(?:\(\d+\))?(?:\([a-z]\))?|\b(?:IT Act|Companies Act|Board meetings?|video conferencing|articles of association|notice period|electronic mode|Circular)\b/gi;
+
+  let totalMatches = 0;
+
+  const highlighted = html.replace(/>([^<]+)</g, (match, content) => {
+    if (!content || !content.trim()) return match;
+
+    let updated = content;
+
+    // A. Sentence / Phrase Highlighting (Cited Passage)
+    for (const phrase of phrases) {
+      if (!phrase || phrase.length < 6 || totalMatches >= 30) continue;
+      const safePhrase = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      try {
+        const pRegex = new RegExp(`(${safePhrase})`, 'gi');
+        if (pRegex.test(updated)) {
+          updated = updated.replace(pRegex, '<mark class="cited-mark">$1</mark>');
+          totalMatches++;
+        }
+      } catch (e) {}
+    }
+
+    // B. Statutory & Defined Legal Terms Highlighting
+    try {
+      updated = updated.replace(legalRefRegex, (m) => {
+        return `<mark class="legal-term-mark">${m}</mark>`;
+      });
+    } catch (e) {}
+
+    // C. Important Query Keywords Highlighting
+    if (words.length > 0 && totalMatches < 60) {
+      const targetWords = words.filter(w => w.length >= 4).slice(0, 15);
+      if (targetWords.length > 0) {
+        const kwPattern = targetWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+        try {
+          const kwRegex = new RegExp(`\\b(${kwPattern})\\b`, 'gi');
+          const parts = updated.split(/(<mark[^>]*>.*?<\/mark>)/gi);
+          updated = parts.map(part => {
+            if (part.startsWith('<mark')) return part;
+            return part.replace(kwRegex, '<mark class="query-keyword-mark">$1</mark>');
+          }).join('');
+        } catch (e) {}
+      }
+    }
+
     return `>${updated}<`;
   });
 
-  return matches > 0 ? highlighted : highlightTextInHtml(html, trimmedQuery.length <= 120 ? trimmedQuery : phrases[0]);
+  return highlighted;
 }
 
-function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
-  const title = escapeHTML(data.title || 'Untitled Document');
-  const sourceTable = escapeHTML(data.source_table || '');
-  const recordId = escapeHTML(data.record_id || '');
+function renderCitationHTML(data, theme = 'dark', highlightQuery = '', userQuery = '') {
+  const root = (data && data.results) ? data.results : (data || {});
+  const child = root.child || root.commentary || root.procedure || {};
+  const parent = root.parent || root.act || {};
 
-  const child = data.child || {};
-  const parent = data.parent || {};
+  const title = escapeHTML(parent.Title || parent.law_title || parent.Subject || child.Title || root.title || data.title || 'Untitled Document');
+  const sourceTable = escapeHTML(root.source_table || data.source_table || '');
+  const recordId = escapeHTML(root.record_id || data.record_id || '');
 
   const fileName = escapeHTML(child.FileName || parent.FileName || 'N/A');
-  const category = escapeHTML(child.Category || parent.Category || 'N/A');
+  const category = escapeHTML(child.Category || parent.Category || (sourceTable === 'CLA Books' ? 'Book / PDF (Pinecone)' : 'N/A'));
   const subject = escapeHTML(child.Subject || parent.Subject || 'N/A');
   const sections = escapeHTML(child.Sections || parent.Sections || 'N/A');
   const author = escapeHTML(parent.Author || 'N/A');
@@ -1210,7 +1262,20 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
     formattedDate = `${issueMonth} ${issueYear}`.trim();
   }
 
-  const docContent = highlightRelevantExcerpt(formatDocumentContent(data.html), highlightQuery);
+  let rawText = root.html || data.html || child.Article_Text || child.Data || child.Filetext || child.Text || child.chunk_text || parent.Article_Text || root.text || '';
+  
+  // If database lookup didn't return text (e.g. Pinecone vector fetch issue), fallback to the highlighted passage excerpt
+  if (!rawText || rawText.trim() === `<p>${escapeHTML(title)}</p>` || rawText.trim() === `<p>${title}</p>`) {
+    if (highlightQuery && highlightQuery.trim()) {
+      rawText = highlightQuery.trim();
+    }
+  }
+
+  if (!rawText) {
+    rawText = `<p>${escapeHTML(parent.Title || child.Title || title)}</p>`;
+  }
+
+  const docContent = highlightRelevantExcerpt(formatDocumentContent(rawText), highlightQuery, userQuery);
   const highlightPreview = normalizeWhitespace(highlightQuery);
   const highlightBanner = highlightPreview
     ? `<div class="highlight-banner" id="highlight-banner">Highlighted passage cited in the answer: <strong>${escapeHTML(highlightPreview.length > 160 ? `${highlightPreview.slice(0, 160)}…` : highlightPreview)}</strong></div>`
@@ -1546,14 +1611,48 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '') {
       text-decoration: underline !important;
     }
 
-    /* Cited passage / keyword highlighting — same CLA green used for bolded
-       key terms in the chat answer view */
-    .content-body mark, .content-body .cited-mark {
-      background: rgba(12, 135, 66, 0.16) !important;
-      color: var(--text) !important;
-      box-shadow: inset 0 0 0 1px rgba(12, 135, 66, 0.3);
-      border-radius: 4px;
-      padding: 0 3px;
+    /* Multi-layered Highlighting System */
+    .content-body mark.cited-mark, .content-body .cited-mark {
+      background-color: rgba(254, 240, 138, 0.55) !important;
+      color: #0f172a !important;
+      padding: 2px 5px !important;
+      border-radius: 4px !important;
+      font-weight: 600 !important;
+      border-bottom: 2px solid #eab308 !important;
+    }
+
+    body.dark-theme .content-body mark.cited-mark, body.dark-theme .content-body .cited-mark {
+      background-color: rgba(234, 179, 8, 0.3) !important;
+      color: #fef08a !important;
+      border-bottom: 2px solid #facc15 !important;
+    }
+
+    .content-body mark.legal-term-mark, .content-body .legal-term-mark {
+      background-color: rgba(12, 135, 66, 0.16) !important;
+      color: var(--primary) !important;
+      padding: 1px 6px !important;
+      border-radius: 4px !important;
+      font-weight: 700 !important;
+      border: 1px solid rgba(12, 135, 66, 0.3) !important;
+    }
+
+    body.dark-theme .content-body mark.legal-term-mark, body.dark-theme .content-body .legal-term-mark {
+      background-color: rgba(16, 185, 129, 0.22) !important;
+      color: #34d399 !important;
+      border: 1px solid rgba(52, 211, 153, 0.35) !important;
+    }
+
+    .content-body mark.query-keyword-mark, .content-body .query-keyword-mark {
+      background-color: rgba(59, 130, 246, 0.15) !important;
+      color: #0369a1 !important;
+      padding: 1px 4px !important;
+      border-radius: 4px !important;
+      font-weight: 600 !important;
+    }
+
+    body.dark-theme .content-body mark.query-keyword-mark, body.dark-theme .content-body .query-keyword-mark {
+      background-color: rgba(96, 165, 250, 0.22) !important;
+      color: #93c5fd !important;
     }
 
     .content-body .key-term {
@@ -2058,6 +2157,7 @@ async function startServer() {
           const recordId = urlParsed.searchParams.get('recordId');
           const parentId = urlParsed.searchParams.get('parentId');
           const highlight = urlParsed.searchParams.get('highlight') || '';
+          const userQuery = urlParsed.searchParams.get('query') || '';
           const theme = urlParsed.searchParams.get('theme') || 'light';
 
           if (!sourceTable || !recordId) {
@@ -2066,15 +2166,25 @@ async function startServer() {
             return;
           }
 
-          const citationData = await runPythonCitation(sourceTable, recordId, parentId);
-
-          if (citationData.error) {
-            res.writeHead(404, { 'Content-Type': 'text/html' });
-            res.end(`<h1>404 Citation Not Found</h1><p>${escapeHTML(citationData.error)}</p>`);
-            return;
+          let citationData = null;
+          try {
+            citationData = await runPythonCitation(sourceTable, recordId, parentId);
+          } catch (pyErr) {
+            console.warn('[Citation Endpoint] Python lookup error, using fallback:', pyErr.message);
           }
 
-          const htmlResponse = renderCitationHTML(citationData, theme, highlight);
+          if (!citationData || citationData.error) {
+            citationData = {
+              results: {
+                source_table: sourceTable,
+                record_id: recordId,
+                parent: { Title: 'CLA Books & Unstructured Documents', Category: sourceTable },
+                child: { Article_Text: highlight, Sections: parentId ? `Page ${parentId}` : '' }
+              }
+            };
+          }
+
+          const htmlResponse = renderCitationHTML(citationData, theme, highlight, userQuery);
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(htmlResponse);
         } catch (error) {
@@ -2516,12 +2626,12 @@ async function startServer() {
               topK: Array.isArray(results) ? results.length : null,
               retrievedChunks: Array.isArray(results)
                 ? results.map((result, index) => ({
-                    chunkId: result?.chunk_id || result?.chunkId || null,
-                    documentId: result?.doc_id || result?.documentId || result?.source || null,
-                    rank: index + 1,
-                    similarityScore: result?.score ?? result?.similarity_score ?? null,
-                    content: result?.chunk_text || result?.content || result?.text || null,
-                  }))
+                  chunkId: result?.chunk_id || result?.chunkId || null,
+                  documentId: result?.doc_id || result?.documentId || result?.source || null,
+                  rank: index + 1,
+                  similarityScore: result?.score ?? result?.similarity_score ?? null,
+                  content: result?.chunk_text || result?.content || result?.text || null,
+                }))
                 : [],
             });
 
@@ -2550,236 +2660,239 @@ async function startServer() {
 
           try {
             if ((!results || results.length === 0) && !attachmentContext) {
-            console.log('[RAG Endpoint] No documents matched the query and no attachment context available.');
-            setJsonHeaders(res, 200);
-            res.end(JSON.stringify({
-              answer: 'I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question.',
-              sources: []
-            }));
-            return;
-          }
+              console.log('[RAG Endpoint] No documents matched the query and no attachment context available.');
+              setJsonHeaders(res, 200);
+              res.end(JSON.stringify({
+                answer: 'I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question.',
+                sources: []
+              }));
+              return;
+            }
 
-          console.log(`[RAG Endpoint] Found ${results.length} matching document chunks. Generating answer...`);
+            console.log(`[RAG Endpoint] Found ${results.length} matching document chunks. Generating answer...`);
 
-          // Format search context
-          const contextBlock = results.map((r, idx) => {
-            const sourceIndex = idx + 1;
-            const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-            const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-              (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-            const category = r.category || 'Unknown';
-            const subject = r.subject || 'Unknown';
-            const sections = r.sections || 'Unknown';
+            // Format search context
+            const contextBlock = results.map((r, idx) => {
+              const sourceIndex = idx + 1;
+              const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+              const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+                (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+              const category = r.category || 'Unknown';
+              const subject = r.subject || 'Unknown';
+              const sections = r.sections || 'Unknown';
 
-            return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
-          }).join('\n\n---\n\n');
+              return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
+            }).join('\n\n---\n\n');
 
-          // Build Grounded LLM Prompt
-          const attachmentPromptRules = attachmentContext
-            ? `\n\nThe user has also attached one or more documents (see ATTACHED DOCUMENT CONTEXT below). You may draw on their content, but only to the extent it concerns corporate/commercial law matters within your scope as CLA. If an attached document is unrelated to corporate law (e.g. personal, unrelated business, or off-topic content), disregard it and rely on the Search Context alone. Do not use numbered citation tags like [1] for attached document content — those are reserved for the Search Context sources; refer to attached material in prose instead (e.g. "the agreement you attached").`
-            : '';
+            // Build Grounded LLM Prompt
+            const attachmentPromptRules = attachmentContext
+              ? `\n\nThe user has also attached one or more documents (see ATTACHED DOCUMENT CONTEXT below). You may draw on their content, but only to the extent it concerns corporate/commercial law matters within your scope as CLA. If an attached document is unrelated to corporate law (e.g. personal, unrelated business, or off-topic content), disregard it and rely on the Search Context alone. Do not use numbered citation tags like [1] for attached document content — those are reserved for the Search Context sources; refer to attached material in prose instead (e.g. "the agreement you attached").`
+              : '';
 
-          const { loadAgentPrompts } = require('./agentSystem');
-          const agentPrompts = loadAgentPrompts();
-          const baseSummarizerPrompt = agentPrompts.Content_Summarizer_Agent || `You are a professional legal research assistant for Indian corporate and commercial law. Answer STRICTLY from the Search Context only — never from your own knowledge. Read ALL chunks and combine relevant information into one answer. Write in a clean, flowing legal-memo style: start directly with a 2-3 sentence legal answer, use bold thematic section headers, cite [Source N] inline (max 1-2 citations per bracket), and end with "This is legal research, not legal advice. Please verify against the primary source." Only output "I could not find authority on this in the CLAOnline database." if every chunk is completely unrelated to the question.`;
+            const { loadAgentPrompts } = require('./agentSystem');
+            const agentPrompts = loadAgentPrompts();
+            const baseSummarizerPrompt = agentPrompts.Content_Summarizer_Agent || `You are a professional legal research assistant for Indian corporate and commercial law. Answer STRICTLY from the Search Context only — never from your own knowledge. Read ALL chunks and combine relevant information into one answer. Write in a clean, flowing legal-memo style: start directly with a 2-3 sentence legal answer, use bold thematic section headers, cite [Source N] inline (max 1-2 citations per bracket), and end with "This is legal research, not legal advice. Please verify against the primary source." Only output "I could not find authority on this in the CLAOnline database." if every chunk is completely unrelated to the question.`;
 
-          const formattingRules = `
+            const formattingRules = `
 
 CRITICAL READABILITY & FORMATTING RULES:
 1. NO META OPENING: NEVER start your answer with "Based solely on...", "Based on the retrieved...", "According to the database...", or any meta-disclaimer. Start IMMEDIATELY with a direct 2-3 sentence legal answer.
 2. MINIMAL CLEAN INLINE CITATIONS: Keep inline citations concise. Cite at most 1 to 2 specific source numbers per statement (e.g. [Source 1] or [Source 1, 2]). NEVER output long strings or ranges of citations like [Source 6, 7, 8, 9, 10, 11, 12...].
 3. NO MANUAL SOURCES SECTION: Do NOT output a manual "**Sources:**" text section or bullet list at the end of your answer. The user interface automatically renders the interactive Source Citations panel below your message.
-4. MANDATORY FOLLOW-UP QUESTIONS: At the very end of your response, ALWAYS append the exact tag '---SUGGESTIONS---' followed by 3 relevant follow-up questions the user might ask next, one per line.
+4. HIGHLIGHT KEY TAKEAWAYS: Wrap 1 to 3 critical statutory rules, key holdings, or primary answers in double equal signs (e.g. ==Section 135 mandates 2% CSR expenditure for qualifying companies==) so they are visually highlighted for the reader.
+5. MANDATORY FOLLOW-UP QUESTIONS: At the very end of your response, ALWAYS append the exact tag '---SUGGESTIONS---' followed by 3 relevant follow-up questions the user might ask next, one per line.
 Example:
 ---SUGGESTIONS---
 What are the requirements for board resolutions under Section 135?
 Are private companies exempt from these regulations?
 What is the penalty for violating this provision?`;
 
-          const systemPrompt = `${baseSummarizerPrompt}${attachmentPromptRules}${formattingRules}`;
+            const systemPrompt = `${baseSummarizerPrompt}${attachmentPromptRules}${formattingRules}`;
 
-          // Answer synthesis: DeepSeek v4 Pro primary
-          const llm = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
+            // Answer synthesis: DeepSeek v4 Pro primary
+            const llm = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
 
 
-          const userContentParts = [`Question: ${question}`];
-          if (contextBlock) {
-            userContentParts.push(`Search Context:\n${contextBlock}`);
-          }
-          if (attachmentContext) {
-            userContentParts.push(`ATTACHED DOCUMENT CONTEXT:\n${attachmentContext}`);
-          }
-
-          // Trace prompt construction
-          await tracePromptConstruction({
-            question: question,
-            systemPrompt: systemPrompt,
-            context: contextBlock || '(no retrieved context)',
-            attachmentContext: attachmentContext || '(no attachments)',
-            requestContext: req.requestContext,
-            metadata: {
-              component: 'prompt_construction',
-              requestId: req.requestContext.requestId,
-              sessionId: req.requestContext.sessionId,
-            },
-          });
-
-          let llmResponse = null;
-          let llmStartedAt = null;
-          let llmTimeMs = null;
-          let answerText = '';
-          let suggestions = [];
-
-          const userContent = userContentParts.join('\n\n');
-
-          const endpointFallbackTiers = [
-            { provider: 'deepseek', model: settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro' },
-          ];
-
-          const uniqueTiers = [];
-          const seenTiers = new Set();
-          for (const tier of endpointFallbackTiers) {
-            const key = `${tier.provider}:${tier.model}`;
-            if (!seenTiers.has(key)) {
-              seenTiers.add(key);
-              uniqueTiers.push(tier);
+            const userContentParts = [`Question: ${question}`];
+            if (contextBlock) {
+              userContentParts.push(`Search Context:\n${contextBlock}`);
             }
-          }
-
-          let lastLLMErr = null;
-
-          for (const tier of uniqueTiers) {
-            try {
-              llmStartedAt = Date.now();
-              const currentLlm = getLLMProvider(tier.provider, tier.model);
-
-              llmResponse = await traceLLMGeneration({
-                provider: currentLlm.constructor.name,
-                model: tier.model,
-                systemPrompt: systemPrompt,
-                userContent: userContent,
-                temperature: 0.1,
-                maxTokens: 2048,
-                generate: async () => {
-                  return await currentLlm.generate({
-                    systemPrompt: systemPrompt,
-                    messages: [{ role: 'user', content: userContent }],
-                    temperature: 0.1,
-                    maxTokens: 2048
-                  });
-                },
-                requestContext: req.requestContext,
-                metadata: {
-                  component: 'llm_generation',
-                  requestId: req.requestContext.requestId,
-                  sessionId: req.requestContext.sessionId,
-                },
-              });
-              llmTimeMs = Date.now() - llmStartedAt;
-
-              const candidateText =
-                llmResponse?.content ||
-                llmResponse?.text ||
-                llmResponse?.response ||
-                llmResponse?.message?.content ||
-                llmResponse?.choices?.[0]?.message?.content ||
-                '';
-
-              if (candidateText && candidateText.trim().length > 0) {
-                answerText = candidateText;
-                console.log(
-                  '[RAG Endpoint] Raw LLM response:',
-                  JSON.stringify(llmResponse, null, 2)
-                );
-                console.log(
-                  '[RAG Endpoint] Extracted answer length:',
-                  answerText.length
-                );
-                console.log(`[RAG Endpoint] Answer generated successfully using ${llmResponse?.provider || tier.provider} (${llmResponse?.model || tier.model}).`);
-                break;
-              }
-
-              console.warn(`[RAG Endpoint] Provider ${tier.provider} (${tier.model}) returned empty answer. Trying fallback tier...`);
-            } catch (err) {
-              lastLLMErr = err;
-              console.warn(`[RAG Endpoint] LLM generation failed for ${tier.provider} (${tier.model}): ${err?.message || err}. Trying fallback tier...`);
+            if (attachmentContext) {
+              userContentParts.push(`ATTACHED DOCUMENT CONTEXT:\n${attachmentContext}`);
             }
-          }
 
-          if (!answerText || !answerText.trim()) {
-            console.error(
-              '[RAG Endpoint] All LLM provider fallbacks failed or returned empty answers. RAGAS evaluation skipped.'
-            );
-            await traceError({
-              errorType: 'LLMGenerationError',
-              errorMessage: lastLLMErr?.message || 'All LLM providers returned empty answers.',
-              component: 'llm_generation',
-              requestId: req.requestContext.requestId,
-              sessionId: req.requestContext.sessionId,
+            // Trace prompt construction
+            await tracePromptConstruction({
+              question: question,
+              systemPrompt: systemPrompt,
+              context: contextBlock || '(no retrieved context)',
+              attachmentContext: attachmentContext || '(no attachments)',
+              requestContext: req.requestContext,
+              metadata: {
+                component: 'prompt_construction',
+                requestId: req.requestContext.requestId,
+                sessionId: req.requestContext.sessionId,
+              },
             });
-            setJsonHeaders(res, 502);
-            res.end(JSON.stringify({
-              error: 'All LLM providers failed or returned an empty answer.',
-              provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
-              model: llmResponse?.model || settings.DEFAULT_LLM_MODEL
-            }));
-            return;
-          }
-          console.log('[RAG Endpoint] Answer generated successfully.');
 
-          updateRequestProgress(progressRequestId, {
-            stageIndex: 4,
-            currentStage: 'preparing',
-            message: 'Preparing your answer',
-            status: 'in_progress',
-          });
+            let llmResponse = null;
+            let llmStartedAt = null;
+            let llmTimeMs = null;
+            let answerText = '';
+            let suggestions = [];
 
-          const parsedResponse =
-            parseAnswerAndSuggestions(answerText);
+            const userContent = userContentParts.join('\n\n');
 
-          answerText = parsedResponse.answer;
-          suggestions = parsedResponse.suggestions;
+            const endpointFallbackTiers = [
+              { provider: 'deepseek', model: settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro' },
+            ];
 
-          console.log(
-            `[RAG Endpoint] Extracted ${suggestions.length} suggestions.`
-          );
+            const uniqueTiers = [];
+            const seenTiers = new Set();
+            for (const tier of endpointFallbackTiers) {
+              const key = `${tier.provider}:${tier.model}`;
+              if (!seenTiers.has(key)) {
+                seenTiers.add(key);
+                uniqueTiers.push(tier);
+              }
+            }
 
-          serverLogs.push({
-            step: 4,
-            agent: 'CLA Legal Advisor Agent',
-            title: 'Step 4: CLA Answer Generation & Citation',
-            status: 'completed',
-            timeMs: llmTimeMs,
-            provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
-            model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
-            agentRole: 'Content Summarizer & Legal Answer Writer (Content_Summarizer_Agent)',
-            agentMandate: 'Synthesizes the final legal answer STRICTLY from the retrieved document chunks — never from its own training knowledge. Reads ALL retrieved chunks and combines relevant information into one coherent answer written in legal-memo style. Respects the authority hierarchy (Primary Legislation > Notification > Circular > Judicial decisions by court rank > Secondary/editorial). Cites inline using [Source N] (max 1–2 citations per bracket). Also generates 3–4 follow-up questions via the Follow_Up_Question_Agent.',
-            agentInput: 'Top-3-per-table reranked document chunks + user question + Content_Summarizer_Agent system prompt',
-            agentOutput: 'Structured legal answer with inline citations + 3 suggested follow-up questions',
-            summary: 'Synthesized a clear, grounded legal answer with inline numerical citations [1], [2] based strictly on the retrieved document context.',
-            details: {
+            let lastLLMErr = null;
+
+            for (const tier of uniqueTiers) {
+              try {
+                llmStartedAt = Date.now();
+                const currentLlm = getLLMProvider(tier.provider, tier.model);
+
+                llmResponse = await traceLLMGeneration({
+                  provider: currentLlm.constructor.name,
+                  model: tier.model,
+                  systemPrompt: systemPrompt,
+                  userContent: userContent,
+                  temperature: 0.1,
+                  maxTokens: 2048,
+                  generate: async () => {
+                    return await currentLlm.generate({
+                      systemPrompt: systemPrompt,
+                      messages: [{ role: 'user', content: userContent }],
+                      temperature: 0.1,
+                      maxTokens: 2048
+                    });
+                  },
+                  requestContext: req.requestContext,
+                  metadata: {
+                    component: 'llm_generation',
+                    requestId: req.requestContext.requestId,
+                    sessionId: req.requestContext.sessionId,
+                  },
+                });
+                llmTimeMs = Date.now() - llmStartedAt;
+
+                const candidateText =
+                  llmResponse?.content ||
+                  llmResponse?.text ||
+                  llmResponse?.response ||
+                  llmResponse?.message?.content ||
+                  llmResponse?.choices?.[0]?.message?.content ||
+                  '';
+
+                if (candidateText && candidateText.trim().length > 0) {
+                  answerText = candidateText;
+                  console.log(
+                    '[RAG Endpoint] Raw LLM response:',
+                    JSON.stringify(llmResponse, null, 2)
+                  );
+                  console.log(
+                    '[RAG Endpoint] Extracted answer length:',
+                    answerText.length
+                  );
+                  console.log(`[RAG Endpoint] Answer generated successfully using ${llmResponse?.provider || tier.provider} (${llmResponse?.model || tier.model}).`);
+                  break;
+                }
+
+                console.warn(`[RAG Endpoint] Provider ${tier.provider} (${tier.model}) returned empty answer. Trying fallback tier...`);
+              } catch (err) {
+                lastLLMErr = err;
+                console.warn(`[RAG Endpoint] LLM generation failed for ${tier.provider} (${tier.model}): ${err?.message || err}. Trying fallback tier...`);
+              }
+            }
+
+            if (!answerText || !answerText.trim()) {
+              console.error(
+                '[RAG Endpoint] All LLM provider fallbacks failed or returned empty answers. RAGAS evaluation skipped.'
+              );
+              await traceError({
+                errorType: 'LLMGenerationError',
+                errorMessage: lastLLMErr?.message || 'All LLM providers returned empty answers.',
+                component: 'llm_generation',
+                requestId: req.requestContext.requestId,
+                sessionId: req.requestContext.sessionId,
+              });
+              setJsonHeaders(res, 502);
+              res.end(JSON.stringify({
+                error: 'All LLM providers failed or returned an empty answer.',
+                provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+                model: llmResponse?.model || settings.DEFAULT_LLM_MODEL
+              }));
+              return;
+            }
+            console.log('[RAG Endpoint] Answer generated successfully.');
+
+            updateRequestProgress(progressRequestId, {
+              stageIndex: 4,
+              currentStage: 'preparing',
+              message: 'Preparing your answer',
+              status: 'in_progress',
+            });
+
+            const parsedResponse =
+              parseAnswerAndSuggestions(answerText);
+
+            answerText = parsedResponse.answer;
+            suggestions = parsedResponse.suggestions;
+
+            console.log(
+              `[RAG Endpoint] Extracted ${suggestions.length} suggestions.`
+            );
+
+            serverLogs.push({
+              step: 4,
+              agent: 'CLA Legal Advisor Agent',
+              title: 'Step 4: CLA Answer Generation & Citation',
+              status: 'completed',
+              timeMs: llmTimeMs,
               provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
               model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
-              sourcesUsed: results.length,
-              suggestionsGenerated: suggestions.length,
-              answerLength: answerText.length,
-              systemPrompt: systemPrompt,
-              userPrompt: userContent,
-            },
-          });
+              agentRole: 'Content Summarizer & Legal Answer Writer (Content_Summarizer_Agent)',
+              agentMandate: 'Synthesizes the final legal answer STRICTLY from the retrieved document chunks — never from its own training knowledge. Reads ALL retrieved chunks and combines relevant information into one coherent answer written in legal-memo style. Respects the authority hierarchy (Primary Legislation > Notification > Circular > Judicial decisions by court rank > Secondary/editorial). Cites inline using [Source N] (max 1–2 citations per bracket). Also generates 3–4 follow-up questions via the Follow_Up_Question_Agent.',
+              agentInput: 'Top-3-per-table reranked document chunks + user question + Content_Summarizer_Agent system prompt',
+              agentOutput: 'Structured legal answer with inline citations + 3 suggested follow-up questions',
+              summary: 'Synthesized a clear, grounded legal answer with inline numerical citations [1], [2] based strictly on the retrieved document context.',
+              details: {
+                provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+                model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
+                sourcesUsed: results.length,
+                suggestionsGenerated: suggestions.length,
+                answerLength: answerText.length,
+                systemPrompt: systemPrompt,
+                userPrompt: userContent,
+              },
+            });
 
-          const ragasContexts = results
-            .map(r => r.chunk_text || r.content || r.text || '')
-            .filter(context => context && context.trim());
+            const ragasContexts = results
+              .map(r => r.chunk_text || r.content || r.text || '')
+              .filter(context => context && context.trim());
 
-          const goldenDataset = db.collection('golden_dataset');
-          const goldenRecord = await goldenDataset.findOne({ question });
-          const currentDatasetVersion = await getCurrentGoldenDatasetVersion(db);
+            const goldenDataset = db.collection('golden_dataset');
+            const goldenRecord = await goldenDataset.findOne({ question });
+            const currentDatasetVersion = await getCurrentGoldenDatasetVersion(db);
 
-          let evaluation = { status: 'pending' };
+            let evaluation = { status: 'pending' };
 
-          const runEvaluationAndPersist = async () => {
+            const runEvaluationAndPersist = async () => {
               const evaluationStartedAt = Date.now();
+              let evaluationTimeMs = 0;
+              let evaluationStatus = 'completed';
               const isEvaluationEnabled = await getEvaluationToggle(db);
 
               if (!isEvaluationEnabled) {
@@ -2845,8 +2958,8 @@ What is the penalty for violating this provision?`;
                   };
                 }
 
-                const evaluationTimeMs = Number.isFinite(evaluation?.evaluationTimeMs) ? evaluation.evaluationTimeMs : (Date.now() - evaluationStartedAt);
-                const evaluationStatus = evaluation?.status === 'failed' ? 'failed' : 'completed';
+                evaluationTimeMs = Number.isFinite(evaluation?.evaluationTimeMs) ? evaluation.evaluationTimeMs : (Date.now() - evaluationStartedAt);
+                evaluationStatus = evaluation?.status === 'failed' ? 'failed' : 'completed';
 
                 serverLogs.push({
                   step: 5,
@@ -2937,105 +3050,109 @@ What is the penalty for violating this provision?`;
               } catch (persistError) {
                 console.error('[Eval] Persist evaluation document failed:', persistError);
               }
-          };
+            };
 
-          // Real end-user chat traffic gets a fast response — evaluation runs
-          // in the background so it never delays the answer. The Golden
-          // Dataset benchmark runner, on the other hand, explicitly needs the
-          // finished evaluation back in this response (that's the whole point
-          // of an offline benchmark run) and already waits out the full
-          // batch — so for that source only, run and persist evaluation
-          // inline before responding, instead of via fire-and-forget
-          // setImmediate.
-          if (requestSource === 'golden_dataset') {
-            console.log('[Eval] Running evaluation synchronously (golden_dataset source)...');
-            await runEvaluationAndPersist();
-          } else {
-            setImmediate(() => {
-              console.log('[Eval] Background evaluation started...');
-              runEvaluationAndPersist().catch((backgroundError) => {
-                console.error('[Eval] Background evaluation crashed:', backgroundError);
+            // Real end-user chat traffic gets a fast response — evaluation runs
+            // in the background so it never delays the answer. The Golden
+            // Dataset benchmark runner, on the other hand, explicitly needs the
+            // finished evaluation back in this response (that's the whole point
+            // of an offline benchmark run) and already waits out the full
+            // batch — so for that source only, run and persist evaluation
+            // inline before responding, instead of via fire-and-forget
+            // setImmediate.
+            if (requestSource === 'golden_dataset') {
+              console.log('[Eval] Running evaluation synchronously (golden_dataset source)...');
+              await runEvaluationAndPersist();
+            } else {
+              setImmediate(() => {
+                console.log('[Eval] Background evaluation started...');
+                runEvaluationAndPersist().catch((backgroundError) => {
+                  console.error('[Eval] Background evaluation crashed:', backgroundError);
+                });
               });
+            }
+            // Build sources array for all retrieved chunks (preserves 1-to-1 mapping with text sources list)
+            const allSources = [];
+
+            if (Array.isArray(results)) {
+              results.forEach((r, idx) => {
+                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+                const fileName =
+                  (r.original && r.original.child && r.original.child.FileName) ||
+                  (r.original && r.original.parent && r.original.parent.FileName) ||
+                  'Unknown';
+
+                const getCategory = (res) => {
+                  const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
+                  if (cat && (String(cat).includes('text-embedding') || String(cat).includes('embedding-3'))) return null;
+                  return cat;
+                };
+
+                allSources.push({
+                  title,
+                  filename: fileName,
+                  source_table: r.source_table || (r.database_source === 'Pinecone' ? 'CLA Books' : 'Unknown'),
+                  record_id: r.record_id,
+                  parent_id: r.parent_id,
+                  database_source: r.database_source || (r.source_table === 'CLA Books' ? 'Pinecone' : 'PGVector'),
+                  law_title: r.law_title || null,
+                  page_no: r.parent_id || null,
+                  excerpt: truncateExcerpt(r.chunk_text),
+                  author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                  sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+                  category: getCategory(r) || (r.database_source === 'Pinecone' || r.source_table === 'CLA Books' ? 'Book / PDF (Pinecone)' : null),
+                  subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+                  doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+                  vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+                  issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+                  issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null,
+                  score: r.backend_relevance_score || r.score || null
+                });
+              });
+            }
+
+            updateRequestProgress(progressRequestId, {
+              stageIndex: 5,
+              currentStage: 'completed',
+              message: 'Finalizing your response',
+              status: 'completed',
             });
-          }
-          // Build sources array for all retrieved chunks (preserves 1-to-1 mapping with text sources list)
-          const allSources = [];
 
-          if (Array.isArray(results)) {
-            results.forEach((r, idx) => {
-              const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-              const fileName =
-                (r.original && r.original.child && r.original.child.FileName) ||
-                (r.original && r.original.parent && r.original.parent.FileName) ||
-                'Unknown';
-
-              const getCategory = (res) => {
-                const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
-                if (cat && (String(cat).includes('text-embedding') || String(cat).includes('embedding-3'))) return null;
-                return cat;
-              };
-
-              allSources.push({
-                title,
-                filename: fileName,
+            setJsonHeaders(res, 200);
+            res.end(JSON.stringify({
+              requestId: req.requestContext?.requestId || null,
+              answer: answerText,
+              suggestions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
+              follow_up_questions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
+              sources: allSources,
+              searchResults: results.map(r => ({
+                embedding_id: r.embedding_id,
                 source_table: r.source_table,
                 record_id: r.record_id,
                 parent_id: r.parent_id,
-                excerpt: truncateExcerpt(r.chunk_text),
-                author: (r.original && r.original.parent && r.original.parent.Author) || null,
-                sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-                category: getCategory(r),
-                subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
-                doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
-                vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
-                issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
-                issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
-              });
+                chunk_text: r.chunk_text,
+                category: r.category,
+                subject: r.subject,
+                sections: r.sections,
+                doc_title: r.doc_title,
+                law_title: r.law_title,
+                doc_date: r.doc_date,
+                score: r.score || r.rrf_score,
+              })),
+              evaluation: evaluation
+            }));
+          } catch (err) {
+            console.error('[RAG Endpoint] Request handler failed:', err);
+            await traceError({
+              errorType: err?.name || 'UnknownError',
+              errorMessage: err?.message || String(err),
+              component: 'rag-endpoint',
+              requestId: req.requestContext?.requestId,
+              sessionId: req.requestContext?.sessionId,
             });
+            setJsonHeaders(res, 500);
+            res.end(JSON.stringify({ error: 'Internal server error.' }));
           }
-
-          updateRequestProgress(progressRequestId, {
-            stageIndex: 5,
-            currentStage: 'completed',
-            message: 'Finalizing your response',
-            status: 'completed',
-          });
-
-          setJsonHeaders(res, 200);
-          res.end(JSON.stringify({
-            requestId: req.requestContext?.requestId || null,
-            answer: answerText,
-            suggestions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
-            follow_up_questions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
-            sources: allSources,
-            searchResults: results.map(r => ({
-              embedding_id: r.embedding_id,
-              source_table: r.source_table,
-              record_id: r.record_id,
-              parent_id: r.parent_id,
-              chunk_text: r.chunk_text,
-              category: r.category,
-              subject: r.subject,
-              sections: r.sections,
-              doc_title: r.doc_title,
-              law_title: r.law_title,
-              doc_date: r.doc_date,
-              score: r.score || r.rrf_score,
-            })),
-            evaluation: evaluation
-          }));
-        } catch (err) {
-          console.error('[RAG Endpoint] Request handler failed:', err);
-          await traceError({
-            errorType: err?.name || 'UnknownError',
-            errorMessage: err?.message || String(err),
-            component: 'rag-endpoint',
-            requestId: req.requestContext?.requestId,
-            sessionId: req.requestContext?.sessionId,
-          });
-          setJsonHeaders(res, 500);
-          res.end(JSON.stringify({ error: 'Internal server error.' }));
-        }
         }; // Close executeRAGRequest function
 
         // Execute with root tracing
@@ -3096,7 +3213,7 @@ What is the penalty for violating this provision?`;
       if (path === '/api/chat/sessions' && req.method === 'GET') {
         try {
           const userId = getAuthenticatedUserId(req);
-          const urlParsed = new URL(req.url, 'http://localhost');
+          const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
           const mode = urlParsed.searchParams.get('mode');
           const sessionsCollection = db.collection('chat_sessions');
           console.log(`[MongoDB] Loading sessions for user: ${userId}, mode: ${mode || 'all'}`);
@@ -3124,6 +3241,116 @@ What is the penalty for violating this provision?`;
           }));
         }
 
+        return;
+      }
+
+      if (path === '/api/chat/sessions/search' && req.method === 'GET') {
+        try {
+          const userId = getAuthenticatedUserId(req);
+          const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+          const searchQuery = (urlParsed.searchParams.get('q') || urlParsed.searchParams.get('query') || '').trim();
+          if (!searchQuery) {
+            setJsonHeaders(res, 200);
+            res.end(JSON.stringify({ sessions: [] }));
+            return;
+          }
+
+          const sessionsCollection = db.collection('chat_sessions');
+          const messagesCollection = db.collection('chat_messages');
+          const regex = new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
+          const titleMatchedSessions = await sessionsCollection
+            .find({ user_id: userId, title: { $regex: regex } })
+            .toArray();
+
+          const matchedMessages = await messagesCollection
+            .find({ user_id: userId, content: { $regex: regex } })
+            .sort({ created_at: -1 })
+            .limit(50)
+            .toArray();
+
+          const matchedSessionIds = new Set(titleMatchedSessions.map(s => s.session_id));
+          matchedMessages.forEach(m => matchedSessionIds.add(m.session_id));
+
+          const allMatchedSessions = await sessionsCollection
+            .find({ user_id: userId, session_id: { $in: Array.from(matchedSessionIds) } })
+            .sort({ last_message_at: -1, updated_at: -1 })
+            .toArray();
+
+          setJsonHeaders(res, 200);
+          res.end(JSON.stringify({
+            query: searchQuery,
+            sessions: allMatchedSessions
+          }));
+        } catch (error) {
+          console.error('Search sessions failed', error);
+          setJsonHeaders(res, 500);
+          res.end(JSON.stringify({ error: 'Unable to search chat sessions.' }));
+        }
+        return;
+      }
+
+      const sessionExportMatch = path.match(/^\/api\/chat\/sessions\/([^/]+)\/export$/);
+      if (sessionExportMatch && req.method === 'GET') {
+        try {
+          const sessionId = decodeURIComponent(sessionExportMatch[1]);
+          const userId = getAuthenticatedUserId(req);
+          const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+          const format = (urlParsed.searchParams.get('format') || 'markdown').toLowerCase();
+
+          const sessionsCollection = db.collection('chat_sessions');
+          const messagesCollection = db.collection('chat_messages');
+
+          const session = await findOwnedSession(sessionsCollection, sessionId, userId);
+          if (!session) {
+            setJsonHeaders(res, 404);
+            res.end(JSON.stringify({ error: 'Chat session not found.' }));
+            return;
+          }
+
+          const messages = await messagesCollection
+            .find({ session_id: session.session_id, user_id: userId })
+            .sort({ sequence_number: 1, created_at: 1 })
+            .toArray();
+
+          if (format === 'json') {
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'Content-Disposition': `attachment; filename="chat-${sessionId}.json"`
+            });
+            res.end(JSON.stringify({ session, messages }, null, 2));
+            return;
+          }
+
+          let mdContent = `# Chat Log: ${session.title || 'Untitled Chat'}\n`;
+          mdContent += `**Session ID:** ${session.session_id}\n`;
+          mdContent += `**Date:** ${session.created_at || new Date().toISOString()}\n`;
+          mdContent += `**Total Messages:** ${messages.length}\n\n---\n\n`;
+
+          messages.forEach((msg) => {
+            const sender = msg.role === 'user' ? '👤 User' : '🤖 CLA Legal Assistant';
+            const timestamp = msg.created_at ? new Date(msg.created_at).toLocaleString() : '';
+            mdContent += `### ${sender} (${timestamp})\n\n${msg.content}\n\n`;
+            if (msg.metadata && Array.isArray(msg.metadata.sources) && msg.metadata.sources.length > 0) {
+              mdContent += `**Sources:**\n`;
+              msg.metadata.sources.forEach((src, sIdx) => {
+                mdContent += `- [${sIdx + 1}] ${src.title || src.filename || 'Source'} (${src.source_table || ''})\n`;
+              });
+              mdContent += `\n`;
+            }
+            mdContent += `---\n\n`;
+          });
+
+          res.writeHead(200, {
+            'Content-Type': 'text/markdown; charset=utf-8',
+            'Content-Disposition': `attachment; filename="chat-${sessionId}.md"`
+          });
+          res.end(mdContent);
+        } catch (error) {
+          console.error('Export session failed', error);
+          setJsonHeaders(res, 500);
+          res.end(JSON.stringify({ error: 'Unable to export chat session.' }));
+        }
         return;
       }
 
@@ -3220,39 +3447,44 @@ What is the penalty for violating this provision?`;
               created_at: new Date().toISOString(),
               sequence_number: session.message_count + 2,
               metadata: assistantMetadata,
-              ...requestContextMetadata,
             };
-          } else if (session.mode === 'rag') {
-            console.log(`[RAG Session Flow] Executing search for question: "${payload.content}"`);
-            let results = [];
-            try {
-              const prioritizedOutcome = await performPrioritizedLegalSearch(payload.content, payload.content);
-              results = prioritizedOutcome.results || [];
-            } catch (searchErr) {
-              console.error('[RAG Session Flow] Search execution failed:', searchErr);
-              setJsonHeaders(res, 500);
-              res.end(JSON.stringify({ error: 'Failed to search legal documents database.' }));
-              return;
-            }
+          }
 
-            let answerText = 'I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question.';
-            let uniqueSources = [];
-            let suggestions = [];
+          let searchResults = [];
+          if (!assistantMsgDoc) {
+            if (session.mode === 'rag') {
+              console.log(`[RAG Session Flow] Executing search for question: "${payload.content}"`);
+              let results = [];
+              try {
+                const prioritizedOutcome = await performPrioritizedLegalSearch(payload.content, payload.content);
+                results = Array.isArray(prioritizedOutcome) ? prioritizedOutcome : (prioritizedOutcome.results || []);
+                searchResults = results;
+                console.log(`[RAG Session Flow] Search results count: ${results.length}`);
+              } catch (searchErr) {
+                console.error('[RAG Session Flow] Search execution failed:', searchErr);
+                setJsonHeaders(res, 500);
+                res.end(JSON.stringify({ error: 'Failed to search legal documents database.' }));
+                return;
+              }
 
-            if (results && results.length > 0) {
-              const contextBlock = results.map((r, idx) => {
-                const sourceIndex = idx + 1;
-                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-                  (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-                const category = r.category || 'Unknown';
-                const subject = r.subject || 'Unknown';
-                const sections = r.sections || 'Unknown';
+              let answerText = 'I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question.';
+              let uniqueSources = [];
+              let suggestions = [];
 
-                return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
-              }).join('\n\n---\n\n');
+              if (results && results.length > 0) {
+                const contextBlock = results.map((r, idx) => {
+                  const sourceIndex = idx + 1;
+                  const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+                  const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+                    (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                  const category = r.category || 'Unknown';
+                  const subject = r.subject || 'Unknown';
+                  const sections = r.sections || 'Unknown';
 
-              const systemPrompt = `You are a professional legal research assistant for Indian corporate and commercial law.
+                  return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
+                }).join('\n\n---\n\n');
+
+                const systemPrompt = `You are a professional legal research assistant for Indian corporate and commercial law.
 You must answer the user's question grounding your answer strictly and ONLY in the provided search context.
 Do NOT use any external or general knowledge. If the provided context does not contain enough information to answer the question, state: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."
 
@@ -3262,6 +3494,7 @@ Style and Tone Requirements:
 - Use Markdown formatting for structure: headings (e.g., "### Heading"), bullet points, numbered lists, tables (where data can be formatted in columns), and bold text for key legal terms or sections.
 - Avoid printing raw file names or titles inline in the text.
 - Use numerical citation tags like [1], [2], [3] to cite which source(s) the information came from. The citation number must correspond to the Source number provided in the context (e.g. use [1] for [Source 1], [2] for [Source 2]).
+- Highlight 1 to 3 key statutory rules, holdings, or core answers using double equal signs (e.g., ==Section 135 mandates 2% CSR allocation==) for visual clarity.
 - Ensure the output is clean and complete.
 
 At the end of your response, add the tag '---SUGGESTIONS---' followed by 3 relevant follow-up questions the user might ask next, one per line.
@@ -3271,67 +3504,91 @@ What are the requirements for board resolutions under Section 135?
 Are private companies exempt from these regulations?
 What is the penalty for violating this provision?`;
 
-              const provider = settings.DEFAULT_LLM_PROVIDER;
-              const model = settings.DEFAULT_LLM_MODEL;
-              const llm = getLLMProvider(provider, model);
+                const provider = settings.DEFAULT_LLM_PROVIDER;
+                const model = settings.DEFAULT_LLM_MODEL;
+                const llm = getLLMProvider(provider, model);
 
-              let llmResponse;
-              try {
-                llmResponse = await llm.generate({
-                  systemPrompt: systemPrompt,
-                  messages: [{ role: 'user', content: `Question: ${payload.content}\n\nSearch Context:\n${contextBlock}` }],
-                  temperature: 0.1,
-                  maxTokens: 2048,
-                  requestContext: req.requestContext,
-                });
-                answerText = llmResponse.content || '';
-              } catch (llmErr) {
-                console.error('[RAG Session Flow] LLM generation failed:', llmErr);
-                setJsonHeaders(res, 500);
-                res.end(JSON.stringify({ error: 'LLM generation failed.' }));
-                return;
-              }
-
-              // Extract suggestions
-              const parsedResponse =
-                parseAnswerAndSuggestions(answerText);
-
-              answerText = parsedResponse.answer;
-              suggestions = parsedResponse.suggestions;
-              // Find all bracketed citation numbers, e.g., [1], [2]
-              const citationRegex = /\[([1-9])\]/g;
-              let match;
-              const citedIndices = new Set();
-              while ((match = citationRegex.exec(answerText)) !== null) {
-                const idx = parseInt(match[1], 10) - 1;
-                if (idx >= 0 && idx < results.length) {
-                  citedIndices.add(idx);
+                let llmResponse;
+                try {
+                  llmResponse = await llm.generate({
+                    systemPrompt: systemPrompt,
+                    messages: [{ role: 'user', content: `Question: ${payload.content}\n\nSearch Context:\n${contextBlock}` }],
+                    temperature: 0.1,
+                    maxTokens: 2048,
+                    requestContext: req.requestContext,
+                  });
+                  answerText = llmResponse.content || '';
+                } catch (llmErr) {
+                  console.error('[RAG Session Flow] LLM generation failed:', llmErr);
+                  setJsonHeaders(res, 500);
+                  res.end(JSON.stringify({ error: 'LLM generation failed.' }));
+                  return;
                 }
-              }
 
-              // Fallback to title/filename matching if no numerical citations found
-              if (citedIndices.size === 0) {
-                for (let i = 0; i < results.length; i++) {
-                  const r = results[i];
+                // Extract suggestions
+                const parsedResponse =
+                  parseAnswerAndSuggestions(answerText);
+
+                answerText = parsedResponse.answer;
+                suggestions = parsedResponse.suggestions;
+                // Find all bracketed citation numbers, e.g., [1], [2]
+                const citationRegex = /\[([1-9])\]/g;
+                let match;
+                const citedIndices = new Set();
+                while ((match = citationRegex.exec(answerText)) !== null) {
+                  const idx = parseInt(match[1], 10) - 1;
+                  if (idx >= 0 && idx < results.length) {
+                    citedIndices.add(idx);
+                  }
+                }
+
+                // Fallback to title/filename matching if no numerical citations found
+                if (citedIndices.size === 0) {
+                  for (let i = 0; i < results.length; i++) {
+                    const r = results[i];
+                    const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+                    const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+                      (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+                    if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) ||
+                      answerText.toLowerCase().includes(fileName.toLowerCase())) {
+                      citedIndices.add(i);
+                    }
+                  }
+                }
+
+                const seenSources = new Set();
+                citedIndices.forEach(idx => {
+                  const r = results[idx];
                   const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
                   const fileName = (r.original && r.original.child && r.original.child.FileName) ||
                     (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-                  if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) ||
-                    answerText.toLowerCase().includes(fileName.toLowerCase())) {
-                    citedIndices.add(i);
+                  const sourceKey = `${title}:::${fileName}`;
+                  if (!seenSources.has(sourceKey)) {
+                    seenSources.add(sourceKey);
+                    uniqueSources.push({
+                      title,
+                      filename: fileName,
+                      source_table: r.source_table,
+                      record_id: r.record_id,
+                      parent_id: r.parent_id,
+                      excerpt: truncateExcerpt(r.chunk_text),
+                      author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                      sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+                      category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+                      subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+                      doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
+                      vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
+                      issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
+                      issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+                    });
                   }
-                }
-              }
+                });
 
-              const seenSources = new Set();
-              citedIndices.forEach(idx => {
-                const r = results[idx];
-                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-                  (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-                const sourceKey = `${title}:::${fileName}`;
-                if (!seenSources.has(sourceKey)) {
-                  seenSources.add(sourceKey);
+                if (uniqueSources.length === 0 && results.length > 0) {
+                  const r = results[0];
+                  const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
+                  const fileName = (r.original && r.original.child && r.original.child.FileName) ||
+                    (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
                   uniqueSources.push({
                     title,
                     filename: fileName,
@@ -3349,69 +3606,74 @@ What is the penalty for violating this provision?`;
                     issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
                   });
                 }
-              });
-
-              if (uniqueSources.length === 0 && results.length > 0) {
-                const r = results[0];
-                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-                  (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-                uniqueSources.push({
-                  title,
-                  filename: fileName,
-                  source_table: r.source_table,
-                  record_id: r.record_id,
-                  parent_id: r.parent_id,
-                  excerpt: truncateExcerpt(r.chunk_text),
-                  author: (r.original && r.original.parent && r.original.parent.Author) || null,
-                  sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-                  category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
-                  subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
-                  doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
-                  vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
-                  issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
-                  issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
-                });
               }
+
+              assistantMsgDoc = {
+                message_id: randomUUID(),
+                session_id: session.session_id,
+                user_id: userId,
+                role: 'assistant',
+                content: answerText,
+                created_at: new Date().toISOString(),
+                sequence_number: session.message_count + 2,
+                metadata: {
+                  follow_up_questions: suggestions,
+                  sources: uniqueSources,
+                  model: settings.DEFAULT_LLM_MODEL
+                }
+              };
+            } else {
+              const { runAgentFlow } = require('./agentSystem');
+              const agentResult = await runAgentFlow(payload.content || '', { history: previousMessages });
+
+              assistantMsgDoc = {
+                message_id: randomUUID(),
+                session_id: session.session_id,
+                user_id: userId,
+                role: 'assistant',
+                content: agentResult.content,
+                created_at: new Date().toISOString(),
+                sequence_number: session.message_count + 2,
+                metadata: {
+                  route: agentResult.route,
+                  follow_up_questions: agentResult.follow_up_questions,
+                  sources: agentResult.sources || [],
+                  citations: agentResult.citations || [],
+                  model: agentResult.model || null
+                }
+              };
             }
-
-            assistantMsgDoc = {
-              message_id: randomUUID(),
-              session_id: session.session_id,
-              user_id: userId,
-              role: 'assistant',
-              content: answerText,
-              created_at: new Date().toISOString(),
-              sequence_number: session.message_count + 2,
-              metadata: {
-                follow_up_questions: suggestions,
-                sources: uniqueSources,
-                model: settings.DEFAULT_LLM_MODEL
-              }
-            };
-          } else {
-            const { runAgentFlow } = require('./agentSystem');
-            const agentResult = await runAgentFlow(payload.content || '', { history: previousMessages });
-
-            assistantMsgDoc = {
-              message_id: randomUUID(),
-              session_id: session.session_id,
-              user_id: userId,
-              role: 'assistant',
-              content: agentResult.content,
-              created_at: new Date().toISOString(),
-              sequence_number: session.message_count + 2,
-              metadata: {
-                route: agentResult.route,
-                follow_up_questions: agentResult.follow_up_questions,
-                sources: agentResult.sources || [],
-                citations: agentResult.citations || [],
-                model: agentResult.model || null
-              }
-            };
           }
 
           await messagesCollection.insertOne(assistantMsgDoc);
+
+          // Persist evaluation result so queries sent via chat session endpoint appear in Online Eval
+          try {
+            const evalContexts = Array.isArray(searchResults) ? searchResults.map(r => r.chunk_text || '') : [];
+            const evalDoc = buildEvaluationResultDocument({
+              requestContext: req.requestContext || { requestId: `req-${randomUUID()}`, sessionId: session.session_id },
+              question: payload.content || '',
+              answer: assistantMsgDoc.content || '',
+              evaluation: { status: 'completed', metricsCalculated: false },
+              provider: settings.DEFAULT_LLM_PROVIDER || 'openai',
+              model: assistantMsgDoc.metadata?.model || settings.DEFAULT_LLM_MODEL || 'gpt-4o-mini',
+              contexts: evalContexts,
+              retrievedChunks: evalContexts,
+              retrievedChunkIds: Array.isArray(searchResults) ? searchResults.map(r => r.embedding_id || r.record_id || r.parent_id || null).filter(Boolean) : [],
+              similarityScores: Array.isArray(searchResults) ? searchResults.map(r => (Number.isFinite(r.score) ? r.score : null)).filter(v => v !== null) : [],
+              userId: userId,
+              evaluationStatus: 'completed',
+              suggestions: assistantMsgDoc.metadata?.follow_up_questions || [],
+              source: 'cla_chat',
+              metadata: {
+                sources: assistantMsgDoc.metadata?.sources || []
+              }
+            });
+
+            await persistEvaluationResult(db, evalDoc, io);
+          } catch (evalErr) {
+            console.error('[Chat Session] Failed to persist evaluation record:', evalErr);
+          }
 
           const sessionUpdate = {
             updated_at: new Date().toISOString(),
@@ -3421,15 +3683,30 @@ What is the penalty for violating this provision?`;
 
           const shouldGenerateTitle = !session.title || session.title === 'New chat' || session.title === 'New RAG Search' || session.title === '';
           if (shouldGenerateTitle && payload.content) {
-            const generatedTitle = await generateConversationTitle({
-              userContent: payload.content,
-              assistantContent: assistantMsgDoc.content,
-              requestContext: req.requestContext,
-            });
-
-            if (generatedTitle) {
-              sessionUpdate.title = generatedTitle;
+            const quickTitle = normalizeGeneratedTitle(payload.content);
+            if (quickTitle) {
+              sessionUpdate.title = quickTitle;
             }
+
+            // Async background LLM title refinement
+            const targetSessionId = session._id;
+            setImmediate(async () => {
+              try {
+                const generatedTitle = await generateConversationTitle({
+                  userContent: payload.content,
+                  assistantContent: assistantMsgDoc.content,
+                  requestContext: req.requestContext,
+                });
+                if (generatedTitle) {
+                  await sessionsCollection.updateOne(
+                    { _id: targetSessionId, user_id: userId },
+                    { $set: { title: generatedTitle } }
+                  );
+                }
+              } catch (bgTitleErr) {
+                console.warn('[Session Title] Background refinement failed:', bgTitleErr?.message);
+              }
+            });
           }
 
           await sessionsCollection.updateOne(
@@ -3458,6 +3735,35 @@ What is the penalty for violating this provision?`;
           console.error('Send message failed', error);
           setJsonHeaders(res, 500);
           res.end(JSON.stringify({ error: 'Unable to process message.' }));
+        }
+        return;
+      }
+
+      const sessionDeleteMatch = path.match(/^\/api\/chat\/sessions\/([^/]+)$/);
+      if (sessionDeleteMatch && req.method === 'DELETE') {
+        try {
+          const sessionId = decodeURIComponent(sessionDeleteMatch[1]);
+          const userId = getAuthenticatedUserId(req);
+          const sessionsCollection = db.collection('chat_sessions');
+          const messagesCollection = db.collection('chat_messages');
+
+          const session = await findOwnedSession(sessionsCollection, sessionId, userId);
+          if (!session) {
+            setJsonHeaders(res, 404);
+            res.end(JSON.stringify({ error: 'Chat session not found.' }));
+            return;
+          }
+
+          await sessionsCollection.deleteOne({ _id: session._id });
+          await messagesCollection.deleteMany({ session_id: session.session_id, user_id: userId });
+
+          console.log(`[MongoDB] Session ${sessionId} and its messages successfully deleted for user ${userId}`);
+          setJsonHeaders(res, 200);
+          res.end(JSON.stringify({ success: true, message: 'Session deleted successfully.' }));
+        } catch (error) {
+          console.error('Delete session failed', error);
+          setJsonHeaders(res, 500);
+          res.end(JSON.stringify({ error: 'Unable to delete chat session.' }));
         }
         return;
       }
@@ -3513,42 +3819,6 @@ What is the penalty for violating this provision?`;
         } catch (error) {
           console.error('Submit feedback failed', error);
           setJsonHeaders(res, 500);
-          res.end(JSON.stringify({ error: 'Unable to save feedback.' }));
-        }
-        return;
-      }
-
-      const sessionDeleteMatch = path.match(/^\/api\/chat\/sessions\/([^/]+)$/);
-      if (sessionDeleteMatch && req.method === 'DELETE') {
-        const sessionId = sessionDeleteMatch[1];
-        const userId = getAuthenticatedUserId(req);
-
-        if (!userId) {
-          setJsonHeaders(res, 401);
-          res.end(JSON.stringify({ error: 'Authentication required.' }));
-          return;
-        }
-
-        try {
-          const sessionsCollection = db.collection('chat_sessions');
-          const messagesCollection = db.collection('chat_messages');
-
-          const ownedSession = await findOwnedSession(sessionsCollection, sessionId, userId);
-          if (!ownedSession) {
-            setJsonHeaders(res, 404);
-            res.end(JSON.stringify({ error: 'Chat session not found.' }));
-            return;
-          }
-
-          await messagesCollection.deleteMany({ session_id: ownedSession.session_id, user_id: userId });
-          await sessionsCollection.deleteOne({ _id: ownedSession._id, user_id: userId });
-
-          setJsonHeaders(res, 200);
-          res.end(JSON.stringify({ success: true, session_id: sessionId }));
-        } catch (error) {
-          console.error('Delete session failed', error);
-          setJsonHeaders(res, 500);
-          res.end(JSON.stringify({ error: 'Unable to delete chat session.' }));
         }
         return;
       }

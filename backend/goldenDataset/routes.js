@@ -11,7 +11,7 @@ function setJsonHeaders(res, statusCode) {
 }
 
 async function handleGoldenDatasetRoutes(req, res, db) {
-  const requestUrl = new URL(req.url, 'http://localhost');
+  const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const path = requestUrl.pathname || '/';
 
   if (path === '/api/admin/golden-dataset' && req.method === 'GET') {

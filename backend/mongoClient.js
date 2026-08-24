@@ -26,6 +26,23 @@ const client = new MongoClient(uri, {
 
 let dbInstance = null;
 
+async function setupIndexes(db) {
+  try {
+    const sessionsCol = db.collection('chat_sessions');
+    const messagesCol = db.collection('chat_messages');
+    await Promise.all([
+      sessionsCol.createIndex({ user_id: 1, updated_at: -1 }, { background: true }),
+      sessionsCol.createIndex({ session_id: 1, user_id: 1 }, { background: true }),
+      messagesCol.createIndex({ session_id: 1, sequence_number: 1 }, { background: true }),
+      messagesCol.createIndex({ user_id: 1, created_at: -1 }, { background: true }),
+      messagesCol.createIndex({ content: 'text' }, { background: true }).catch(() => {})
+    ]);
+    console.log('MongoDB indexes initialized successfully');
+  } catch (err) {
+    console.warn('MongoDB index setup warning:', err.message);
+  }
+}
+
 async function connectDB() {
   if (dbInstance) {
     return dbInstance;
@@ -36,6 +53,7 @@ async function connectDB() {
   console.log('MongoDB connected successfully');
   console.log(`MongoDB database: ${dbInstance.databaseName}`);
   console.log('MongoDB deployment verified: CLA-Legal');
+  await setupIndexes(dbInstance);
   return dbInstance;
 }
 

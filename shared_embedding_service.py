@@ -7,8 +7,8 @@ import urllib.request
 from typing import Iterable, List, Sequence
 
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "openai")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
-EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "3072"))
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
 
 
 def normalize_embedding_text(value):

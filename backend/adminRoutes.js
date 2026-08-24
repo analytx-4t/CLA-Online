@@ -64,8 +64,8 @@ function normalizeRagasRecord(item) {
   };
 }
 
-function buildRagasListQuery(url) {
-  const params = new URL(url, 'http://localhost');
+function buildRagasListQuery(url, host = 'localhost') {
+  const params = new URL(url, `http://${host}`);
   const search = (params.searchParams.get('search') || '').trim().toLowerCase();
   const status = (params.searchParams.get('status') || '').trim();
   const provider = (params.searchParams.get('provider') || '').trim();

@@ -1,230 +1,181 @@
 """
-Bulk-embed legal documents from SQL Server into DocumentEmbeddings.
+embeded_documents.py
 
-This script now uses the same shared OpenAI text-embedding-3-large embedding
-service as the production chatbot and the evaluation pipeline so all retrieval
-paths stay consistent.
+Structure-Aware Chunking & Embedding Pipeline for Neon PostgreSQL + pgvector.
 
-Pipeline per row:
-    1. Strip HTML tags (keeping the enclosed text) and decode HTML entities
-    2. Split on legal structure (Section/Clause/Article/Chapter) if no clean
-       label already exists in the source table; otherwise use that label directly
-    3. Recursively fall back (paragraph -> sentence -> character) for oversized sections
-    4. Prepend a contextual prefix (source, parent metadata, filename, section label)
-       before embedding, so each chunk is self-contained when retrieved alone
-    5. Attach structured filter metadata (Category/Subject/Sections/DocTitle/
-       LawTitle/DocDate) as real columns on DocumentEmbeddings, so a RAG app can
-       filter (SUGGESTED_FILTERS) BEFORE or alongside the vector scan instead of
-       re-joining 8 parent tables at query time.
+Reads from Neon PostgreSQL database (NEON_DB_URI / DATABASE_URL) across 8 legal source clusters:
+1. Articles (Articles_data_2025 JOIN Articles_2025)
+2. CaseLaws (caselaws_data_2025 JOIN caselaws_2025)
+3. Circular (Circular_data_2025 JOIN Circular_2025)
+4. Legislation (Legislation_data_2025 JOIN Legislation_2025)
+5. Notifications (notifications_data_2025 JOIN notifications_2025)
+6. Query (query_data JOIN Query)
+7. CLASE_Commentary (CLASE_Commentary LEFT JOIN CLASE_Commentary_Act)
+8. CLASE_Procedure_Details (CLASE_Procedure_Details_2025)
 
-Changes vs. the original version:
-    - SOURCE_QUERIES now return 13 columns per source (was 6) — the extra 7 are
-      the structured filter metadata described above.
-    - Uses OpenAI's text-embedding-3-large instead of Gemini. Vector spaces
-      between different embedding models are NOT comparable — DocumentEmbeddings
-      was empty when this switch was made, so no truncate/re-embed was needed.
-      If it ever has rows from another model, TRUNCATE before re-running.
-    - text-embedding-3-large returns one embedding per input string, in the
-      same order as the input list — no aggregation quirk to work around
-      (unlike gemini-embedding-2), and up to 2048 inputs per call.
-    - All 8 sources are active (see ACTIVE_SOURCES) — not just Articles.
-    - Existing (SourceRecordID, ChunkIndex) pairs are loaded once per source
-      into a Python set instead of one SELECT per chunk.
-
-Setup:
-    pip install --upgrade pyodbc openai python-dateutil python-dotenv
-
-    Create a .env file in this same folder with:
-        OPENAI_API_KEY=...
-        SQL_CONN_STR=...
-
-Run:
-    python embed_documents.py
+Generates 1536-dimensional embeddings using OpenAI's 'text-embedding-3-small' model,
+and inserts them directly into the 'document_embeddings' table with native pgvector indexing.
 """
 
 import os
 import re
 import sys
 import html
-import struct
 import time
-import pyodbc
+import psycopg2
+from psycopg2.extras import execute_values, RealDictCursor
 from dateutil import parser as dateparser
 from dotenv import load_dotenv
 from openai import OpenAI, RateLimitError, APIError, APIConnectionError
 
-load_dotenv()  # reads .env in the current working directory into os.environ
+load_dotenv()
 
-# ---------- CONFIG ----------
+# ---------- CONFIGURATION ----------
 
-SQL_CONN_STR = os.environ.get("SQL_CONN_STR") or (
-    "DRIVER={ODBC Driver 18 for SQL Server};"
-    "SERVER=your-rds-endpoint.rds.amazonaws.com,1433;"
-    "DATABASE=your_db_name;"
-    "UID=your_username;"
-    "PWD=your_password;"
-    "Encrypt=yes;TrustServerCertificate=yes;"
+NEON_DB_URI = os.getenv("NEON_DB_URI") or os.getenv("DATABASE_URL") or (
+    "postgresql://neondb_owner:npg_V2epn6DfNqmJ@ep-wandering-fog-ayy57526-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 )
 
-EMBEDDING_MODEL = "text-embedding-3-large"
-
-# text-embedding-3-large defaults to 3072 dims (best quality). Set to a smaller
-# int (e.g. 1024, 1536) to have OpenAI truncate+renormalize server-side and
-# save storage, if you don't need max quality.
-OUTPUT_DIMENSIONALITY = None  # None = default 3072
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
 
 MAX_CHUNK_CHARS = 1400
 CHUNK_OVERLAP_CHARS = 200
-BATCH_SIZE = 100  # chunks per OpenAI call / per DB insert batch (API allows up to 2048 inputs/call)
+BATCH_SIZE = 100  # Chunks per OpenAI embedding request & DB batch insert
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-# All 8 sources run by default now that the OpenAI switch is in place. Remove
-# a name from this list to skip that source on a given run.
 ACTIVE_SOURCES = [
     "Articles", "CaseLaws", "Circular", "Legislation",
     "Notifications", "Query", "CLASE_Commentary", "CLASE_Procedure_Details",
 ]
 
-# ---------- SOURCE QUERIES ----------
-# Every query returns the same 13 columns, in this order:
-#   RecordID, ParentID, FileName, Label, ContextPrefix, RawText,
-#   Category, Subject, Sections, DocTitle, LawTitle, DateStructured, DateRaw
-# This lets one processing loop below handle all 8 sources uniformly.
-# DateStructured is a real datetime column where the source table has one;
-# DateRaw is free text (e.g. "15th June 2026" or just an issue year) used as
-# a fallback when no structured date exists. resolve_doc_date() below picks
-# whichever is usable.
+# ---------- SOURCE QUERIES (PostgreSQL SQL) ----------
 
 SOURCE_QUERIES = {
     "Articles": """
-        SELECT d.ID, d.Article_ID, d.FileName, CAST(NULL AS NVARCHAR(200)) AS Label,
-               CONCAT('Title: ', ISNULL(a.Title,''), ' | Category: ', ISNULL(a.Category,''),
-                      ' | Subject: ', ISNULL(a.Subject,''), ' | Sections: ', ISNULL(a.Sections,'')) AS ContextPrefix,
-               d.Filetext AS RawText,
-               a.Category, a.Subject, a.Sections, a.Title AS DocTitle,
-               CAST(NULL AS NVARCHAR(200)) AS LawTitle,
-               CAST(NULL AS DATETIME2) AS DateStructured,
-               CONCAT(ISNULL(a.IssueMonth,''), ' ', ISNULL(a.IssueYear,'')) AS DateRaw
-        FROM dbo.Articles_data_2025 d
-        JOIN dbo.Articles_2025 a ON a.ID = d.Article_ID
-        WHERE d.Filetext IS NOT NULL
+        SELECT d."ID" AS record_id, d."Article_ID" AS parent_id, d."FileName" AS file_name,
+               CAST(NULL AS VARCHAR(200)) AS label,
+               CONCAT('Title: ', COALESCE(a."Title",''), ' | Category: ', COALESCE(a."Category",''),
+                      ' | Subject: ', COALESCE(a."Subject",''), ' | Sections: ', COALESCE(a."Sections",'')) AS context_prefix,
+               d."Filetext" AS raw_text,
+               a."Category" AS category, a."Subject" AS subject, a."Sections" AS sections,
+               a."Title" AS doc_title, CAST(NULL AS VARCHAR(200)) AS law_title,
+               a."InsertedDate" AS date_structured,
+               CONCAT(COALESCE(a."IssueMonth",''), ' ', COALESCE(a."IssueYear",'')) AS date_raw
+        FROM "Articles_data_2025" d
+        JOIN "Articles_2025" a ON a."ID" = d."Article_ID"
+        WHERE d."Filetext" IS NOT NULL
     """,
     "CaseLaws": """
-        SELECT d.ID, d.CaseLawID, d.FileName, CAST(NULL AS NVARCHAR(200)) AS Label,
-               CONCAT('Versus: ', ISNULL(c.Versus,''), ' | Category: ', ISNULL(c.Category,''),
-                      ' | Subject: ', ISNULL(c.Subject,''), ' | Citation: ', ISNULL(c.Citation,''),
-                      ' | Judge: ', ISNULL(c.Judge,''), ' | Sections: ', ISNULL(c.Sections,''),
-                      -- HeadNote can run to tens of thousands of chars on some rows; this
-                      -- header is repeated on EVERY chunk of the row, so it must stay short
-                      -- (a full-length HeadNote here blew a CaseLaws batch past OpenAI's
-                      -- 300k-tokens-per-request cap). LEFT() to a short teaser only.
-                      ' | HeadNote: ', LEFT(ISNULL(c.HeadNote,''), 300)) AS ContextPrefix,
-               d.Filetext AS RawText,
-               c.Category, c.Subject, c.Sections, c.Versus AS DocTitle,
-               CAST(NULL AS NVARCHAR(200)) AS LawTitle,
-               c.Judgement_date_new AS DateStructured,
-               c.Date_of_Judgement AS DateRaw
-        FROM dbo.caselaws_data_2025 d
-        JOIN dbo.caselaws_2025 c ON c.id = d.CaseLawID
-        WHERE d.Filetext IS NOT NULL
+        SELECT d."ID" AS record_id, d."CaseLawID" AS parent_id, d."FileName" AS file_name,
+               CAST(NULL AS VARCHAR(200)) AS label,
+               CONCAT('Versus: ', COALESCE(c."Versus",''), ' | Category: ', COALESCE(c."Category",''),
+                      ' | Subject: ', COALESCE(c."Subject",''), ' | Citation: ', COALESCE(c."Citation",''),
+                      ' | Judge: ', COALESCE(c."Judge",''), ' | Sections: ', COALESCE(c."Sections",''),
+                      ' | HeadNote: ', LEFT(COALESCE(c."HeadNote",''), 300)) AS context_prefix,
+               d."Filetext" AS raw_text,
+               c."Category" AS category, c."Subject" AS subject, c."Sections" AS sections,
+               c."Versus" AS doc_title, CAST(NULL AS VARCHAR(200)) AS law_title,
+               c."Judgement_date_new" AS date_structured,
+               c."Date_of_Judgement" AS date_raw
+        FROM "caselaws_data_2025" d
+        JOIN "caselaws_2025" c ON c."id" = d."CaseLawID"
+        WHERE d."Filetext" IS NOT NULL
     """,
     "Circular": """
-        SELECT d.ID, d.Notification_ID, d.FileName, CAST(NULL AS NVARCHAR(200)) AS Label,
-               CONCAT('Title: ', ISNULL(c.Title,''), ' | Category: ', ISNULL(c.Category,''),
-                      ' | Subject: ', ISNULL(c.Subject,''), ' | Sections: ', ISNULL(c.Sections,'')) AS ContextPrefix,
-               d.Filetext AS RawText,
-               c.Category, c.Subject, c.Sections, c.Title AS DocTitle,
-               CAST(NULL AS NVARCHAR(200)) AS LawTitle,
-               CAST(NULL AS DATETIME2) AS DateStructured,
-               c.CircDate AS DateRaw
-        FROM dbo.Circular_data_2025 d
-        JOIN dbo.Circular_2025 c ON c.id = d.Notification_ID
-        WHERE d.Filetext IS NOT NULL
+        SELECT d."ID" AS record_id, d."Notification_ID" AS parent_id, d."FileName" AS file_name,
+               CAST(NULL AS VARCHAR(200)) AS label,
+               CONCAT('Title: ', COALESCE(c."Title",''), ' | Category: ', COALESCE(c."Category",''),
+                      ' | Subject: ', COALESCE(c."Subject",''), ' | Sections: ', COALESCE(c."Sections",'')) AS context_prefix,
+               d."Filetext" AS raw_text,
+               c."Category" AS category, c."Subject" AS subject, c."Sections" AS sections,
+               c."Title" AS doc_title, CAST(NULL AS VARCHAR(200)) AS law_title,
+               c."CircDate_new" AS date_structured,
+               c."CircDate" AS date_raw
+        FROM "Circular_data_2025" d
+        JOIN "Circular_2025" c ON c."id" = d."Notification_ID"
+        WHERE d."Filetext" IS NOT NULL
     """,
     "Legislation": """
-        SELECT d.ID, d.Legislation_ID, d.FileName, CAST(NULL AS NVARCHAR(200)) AS Label,
-               CONCAT('Title: ', ISNULL(l.Title,''), ' | Category: ', ISNULL(l.Category,''),
-                      ' | Subject: ', ISNULL(l.Subject,''), ' | Chapter: ', ISNULL(l.ChapterHeading,''),
-                      ' | Sections: ', ISNULL(l.Sections,'')) AS ContextPrefix,
-               d.Filetext AS RawText,
-               l.Category, l.Subject, l.Sections, l.Title AS DocTitle,
-               l.Legislation AS LawTitle,
-               CAST(NULL AS DATETIME2) AS DateStructured,
-               CAST(l.IssueYear AS NVARCHAR(10)) AS DateRaw
-        FROM dbo.legislation_data_2025 d
-        JOIN dbo.Legislation_2025 l ON l.id = d.Legislation_ID
-        WHERE d.Filetext IS NOT NULL
+        SELECT d."ID" AS record_id, d."Legislation_ID" AS parent_id, d."FileName" AS file_name,
+               CAST(NULL AS VARCHAR(200)) AS label,
+               CONCAT('Title: ', COALESCE(l."Title",''), ' | Category: ', COALESCE(l."Category",''),
+                      ' | Subject: ', COALESCE(l."Subject",''), ' | Chapter: ', COALESCE(l."ChapterHeading",''),
+                      ' | Sections: ', COALESCE(l."Sections",'')) AS context_prefix,
+               d."Filetext" AS raw_text,
+               l."Category" AS category, l."Subject" AS subject, l."Sections" AS sections,
+               l."Title" AS doc_title, l."Legislation" AS law_title,
+               l."InsertedDate" AS date_structured,
+               CAST(l."IssueYear" AS VARCHAR(20)) AS date_raw
+        FROM "Legislation_data_2025" d
+        JOIN "Legislation_2025" l ON l."id" = d."Legislation_ID"
+        WHERE d."Filetext" IS NOT NULL
     """,
     "Notifications": """
-        SELECT d.ID, d.Notification_ID, d.FileName, CAST(NULL AS NVARCHAR(200)) AS Label,
-               CONCAT('Title: ', ISNULL(n.Title,''), ' | Category: ', ISNULL(n.Category,''),
-                      ' | Subject: ', ISNULL(n.Subject,''), ' | Sections: ', ISNULL(n.Sections,'')) AS ContextPrefix,
-               d.Filetext AS RawText,
-               n.Category, n.Subject, n.Sections, n.Title AS DocTitle,
-               CAST(NULL AS NVARCHAR(200)) AS LawTitle,
-               CAST(NULL AS DATETIME2) AS DateStructured,
-               n.NotificationDate AS DateRaw
-        FROM dbo.notifications_data_2025 d
-        JOIN dbo.notifications_2025 n ON n.Id = d.Notification_ID
-        WHERE d.Filetext IS NOT NULL
+        SELECT d."ID" AS record_id, d."Notification_ID" AS parent_id, d."FileName" AS file_name,
+               CAST(NULL AS VARCHAR(200)) AS label,
+               CONCAT('Title: ', COALESCE(n."Title",''), ' | Category: ', COALESCE(n."Category",''),
+                      ' | Subject: ', COALESCE(n."Subject",''), ' | Sections: ', COALESCE(n."Sections",'')) AS context_prefix,
+               d."Filetext" AS raw_text,
+               n."Category" AS category, n."Subject" AS subject, n."Sections" AS sections,
+               n."Title" AS doc_title, CAST(NULL AS VARCHAR(200)) AS law_title,
+               n."NotificationDate_new" AS date_structured,
+               n."NotificationDate" AS date_raw
+        FROM "notifications_data_2025" d
+        JOIN "notifications_2025" n ON n."Id" = d."Notification_ID"
+        WHERE d."Filetext" IS NOT NULL
     """,
     "Query": """
-        SELECT d.ID, d.Query_ID, d.FileName, CAST(NULL AS NVARCHAR(200)) AS Label,
-               CONCAT('Title: ', ISNULL(q.Title,''), ' | Subject: ', ISNULL(q.Subject,''),
-                      ' | Topics: ', ISNULL(q.Topics,''), ' | Sections: ', ISNULL(q.Sections,'')) AS ContextPrefix,
-               d.Filetext AS RawText,
-               CAST(NULL AS NVARCHAR(510)) AS Category, q.Subject, q.Sections, q.Title AS DocTitle,
-               CAST(NULL AS NVARCHAR(200)) AS LawTitle,
-               CAST(NULL AS DATETIME2) AS DateStructured,
-               q.IssueYear AS DateRaw
-        FROM dbo.query_data d
-        JOIN dbo.Query q ON q.ID = d.Query_ID
-        WHERE d.Filetext IS NOT NULL
+        SELECT d."ID" AS record_id, d."Query_ID" AS parent_id, d."FileName" AS file_name,
+               CAST(NULL AS VARCHAR(200)) AS label,
+               CONCAT('Title: ', COALESCE(q."Title",''), ' | Subject: ', COALESCE(q."Subject",''),
+                      ' | Topics: ', COALESCE(q."Topics",''), ' | Sections: ', COALESCE(q."Sections",'')) AS context_prefix,
+               d."Filetext" AS raw_text,
+               CAST(NULL AS VARCHAR(510)) AS category, q."Subject" AS subject, q."Sections" AS sections,
+               q."Title" AS doc_title, CAST(NULL AS VARCHAR(200)) AS law_title,
+               q."InsertedDate" AS date_structured,
+               q."IssueYear" AS date_raw
+        FROM "query_data" d
+        JOIN "Query" q ON q."ID" = d."Query_ID"
+        WHERE d."Filetext" IS NOT NULL
     """,
     "CLASE_Commentary": """
-        SELECT cm.ID, cm.commentary_ActID, CAST(NULL AS NVARCHAR(200)) AS FileName, cm.Section AS Label,
-               CONCAT('Title: ', ISNULL(cm.Title,''), ' | Act: ', ISNULL(act.Title,'')) AS ContextPrefix,
-               cm.Commentary_Details AS RawText,
-               CAST(NULL AS NVARCHAR(510)) AS Category, CAST(NULL AS NVARCHAR(510)) AS Subject,
-               cm.Section AS Sections, cm.Title AS DocTitle,
-               act.Title AS LawTitle,
-               cm.Inserted_Date AS DateStructured,
-               CAST(NULL AS NVARCHAR(200)) AS DateRaw
-        FROM dbo.CLASE_Commentary cm
-        LEFT JOIN dbo.CLASE_Commentary_Act act ON act.ID = cm.commentary_ActID
-        WHERE cm.Commentary_Details IS NOT NULL AND cm.IsActive = 1
-        -- IsActive filter kept here (column still exists on this table) to
-        -- avoid embedding withdrawn/inactive commentary.
+        SELECT cm."ID" AS record_id, cm."commentary_ActID" AS parent_id,
+               CAST(NULL AS VARCHAR(200)) AS file_name, cm."Section" AS label,
+               CONCAT('Title: ', COALESCE(cm."Title",''), ' | Act: ', COALESCE(act."Title",'')) AS context_prefix,
+               cm."Commentary_Details" AS raw_text,
+               CAST(NULL AS VARCHAR(510)) AS category, CAST(NULL AS VARCHAR(510)) AS subject,
+               cm."Section" AS sections, cm."Title" AS doc_title, act."Title" AS law_title,
+               cm."Inserted_Date" AS date_structured,
+               CAST(NULL AS VARCHAR(200)) AS date_raw
+        FROM "CLASE_Commentary" cm
+        LEFT JOIN "CLASE_Commentary_Act" act ON act."ID" = cm."commentary_ActID"
+        WHERE cm."Commentary_Details" IS NOT NULL AND cm."IsActive" = TRUE
     """,
     "CLASE_Procedure_Details": """
-        SELECT p.ID, CAST(NULL AS INT) AS ParentID, CAST(NULL AS NVARCHAR(200)) AS FileName, p.Heading AS Label,
-               CONCAT('Title: ', ISNULL(p.Title,''), ' | Law: ', ISNULL(p.LawTitle,'')) AS ContextPrefix,
-               CONCAT(ISNULL(p.[Procedure],''),
-                      CASE WHEN p.Resolution IS NOT NULL AND LEN(p.Resolution) > 0
-                           THEN CONCAT(CHAR(13), CHAR(13), 'Resolution: ', p.Resolution)
-                           ELSE '' END) AS RawText,
-               CAST(NULL AS NVARCHAR(510)) AS Category, CAST(NULL AS NVARCHAR(510)) AS Subject,
-               CAST(NULL AS NVARCHAR(200)) AS Sections, p.Title AS DocTitle,
-               p.LawTitle AS LawTitle,
-               CAST(NULL AS DATETIME2) AS DateStructured,
-               CAST(NULL AS NVARCHAR(200)) AS DateRaw
-        FROM dbo.CLASE_Procedure_Details_2025 p
-        WHERE p.[Procedure] IS NOT NULL OR p.Resolution IS NOT NULL
-        -- NOTE: no IsActive filter here — the column was dropped from this
-        -- table (see DATA_DICTIONARY.md open item #2). Add it back if the
-        -- column is restored.
-        -- NOTE: no Inserted_Date column either on this table, unlike
-        -- CLASE_Commentary — DateStructured is always NULL for this source.
+        SELECT p."ID" AS record_id, CAST(NULL AS INT) AS parent_id,
+               CAST(NULL AS VARCHAR(200)) AS file_name, p."Heading" AS label,
+               CONCAT('Title: ', COALESCE(p."Title",''), ' | Law: ', COALESCE(p."LawTitle",'')) AS context_prefix,
+               CONCAT(COALESCE(p."Procedure",''),
+                      CASE WHEN p."Resolution" IS NOT NULL AND LENGTH(p."Resolution") > 0
+                           THEN CONCAT(E'\n\n', 'Resolution: ', p."Resolution")
+                           ELSE '' END) AS raw_text,
+               CAST(NULL AS VARCHAR(510)) AS category, CAST(NULL AS VARCHAR(510)) AS subject,
+               CAST(NULL AS VARCHAR(200)) AS sections, p."Title" AS doc_title,
+               p."LawTitle" AS law_title,
+               CAST(NULL AS TIMESTAMP) AS date_structured,
+               CAST(NULL AS VARCHAR(200)) AS date_raw
+        FROM "CLASE_Procedure_Details_2025" p
+        WHERE p."Procedure" IS NOT NULL OR p."Resolution" IS NOT NULL
     """,
 }
 
-# ---------- HTML / TEXT CLEANING ----------
+# ---------- TEXT CLEANING & DATE PARSING ----------
 
 def strip_html(text):
-    """Remove HTML tags (keeping enclosed text) and decode entities like &nbsp;/&lsquo;."""
     if not text:
-        return text
+        return ""
     text = re.sub(r"<[^>]+>", " ", text)
     text = html.unescape(text)
     text = re.sub(r"[ \t]+", " ", text)
@@ -233,9 +184,6 @@ def strip_html(text):
 
 
 def resolve_doc_date(date_structured, date_raw):
-    """Prefer a real datetime column; fall back to parsing free text (handles
-    ordinals like '15th June 2026' and bare years like '2018'). Returns None
-    if neither is usable — better an honest NULL than a wrong date."""
     if date_structured:
         return date_structured
     if date_raw and str(date_raw).strip():
@@ -246,10 +194,10 @@ def resolve_doc_date(date_structured, date_raw):
             return None
     return None
 
-# ---------- CHUNKING ----------
+# ---------- STRUCTURE-AWARE CHUNKING ----------
 
 SECTION_MARKER_RE = re.compile(
-    r"(?=(?:\A|\n)[ \t]*(?:Section|Sec\.?|Clause|Article|Chapter)\s+[0-9IVXLCM]+[A-Za-z]?\b)",
+    r"(?=(?:\A|\n)[ \t]*(?:Section|Sec\.?|Clause|Article|Chapter|Regulation|Rule)\s+[0-9IVXLCM]+[A-Za-z]?\b)",
     re.IGNORECASE,
 )
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -262,7 +210,7 @@ def split_by_structure(text):
     if len(pieces) < 2:
         stripped = text.strip()
         label = stripped.split("\n", 1)[0][:80].strip() if re.match(
-            r"^\s*(?:Section|Sec\.?|Clause|Article|Chapter)\s+[0-9IVXLCM]+[A-Za-z]?\b",
+            r"^\s*(?:Section|Sec\.?|Clause|Article|Chapter|Regulation|Rule)\s+[0-9IVXLCM]+[A-Za-z]?\b",
             stripped, re.IGNORECASE,
         ) else None
         return [(label, stripped)]
@@ -323,8 +271,6 @@ def _pack_pieces(pieces, max_chars, overlap, deeper):
 
 
 def build_chunks(text, override_label=None):
-    """override_label: use this label as-is (skip structure detection) when the
-    source table already provides a clean one (e.g. CLASE_Commentary.Section)."""
     if not text or not text.strip():
         return []
 
@@ -336,9 +282,7 @@ def build_chunks(text, override_label=None):
     return final_chunks
 
 
-MAX_CONTEXT_PREFIX_CHARS = 500  # safety cap: this header is repeated on EVERY chunk of a
-# row, so one oversized metadata field (e.g. a 27k-char HeadNote seen on one CaseLaws row)
-# must never reach it uncapped, even if a future source query forgets to LEFT() it in SQL.
+MAX_CONTEXT_PREFIX_CHARS = 500
 
 
 def with_context_prefix(source_name, context_prefix, filename, label, chunk_body):
@@ -354,94 +298,81 @@ def with_context_prefix(source_name, context_prefix, filename, label, chunk_body
     header = "[" + " | ".join(parts) + "]\n"
     return header + chunk_body
 
-# ---------- EMBEDDING ----------
-
-def prepare_document_text(content, title=None):
-    """OpenAI's embedding models have no task_type / asymmetric-retrieval format
-    (unlike gemini-embedding-2) — the raw text is embedded as-is. Kept as a
-    passthrough function (instead of inlining) so search_documents.py's
-    embed_query() has an obvious symmetric counterpart to point at."""
-    return content
-
-
-def _extract_retry_delay(error, default=20):
-    """Pull the server-suggested wait time out of a 429 response if present
-    (OpenAI sends a Retry-After header), else fall back to a flat default."""
-    try:
-        retry_after = error.response.headers.get("retry-after")
-        if retry_after:
-            return float(retry_after)
-    except AttributeError:
-        pass
-    return default
-
+# ---------- EMBEDDING API ----------
 
 def embed_chunks_batch(texts, retries=5):
-    """Embed a list of texts as ONE call. OpenAI's embeddings API returns one
-    embedding per input string, in the same input order — no aggregation
-    quirk to work around here (up to 2048 inputs per call)."""
-    kwargs = {"model": EMBEDDING_MODEL, "input": texts}
-    if OUTPUT_DIMENSIONALITY:
-        kwargs["dimensions"] = OUTPUT_DIMENSIONALITY
+    """Call OpenAI text-embedding-3-small for a batch of strings."""
+    kwargs = {
+        "model": EMBEDDING_MODEL,
+        "input": texts,
+        "dimensions": EMBEDDING_DIMENSIONS,
+    }
 
     for attempt in range(retries):
         try:
             result = client.embeddings.create(**kwargs)
             vectors = [d.embedding for d in result.data]
             if len(vectors) != len(texts):
-                raise RuntimeError(
-                    f"Expected {len(texts)} embeddings back, got {len(vectors)}."
-                )
+                raise RuntimeError(f"Expected {len(texts)} embeddings, got {len(vectors)}.")
             return vectors
         except RateLimitError as e:
-            wait = _extract_retry_delay(e, default=2 ** attempt * 5)
-            print(f"    rate limited (attempt {attempt + 1}/{retries}): retrying in {wait:.0f}s")
+            wait = 2 ** attempt * 5
+            print(f"    Rate limited (attempt {attempt + 1}/{retries}): retrying in {wait}s...")
             time.sleep(wait)
         except (APIError, APIConnectionError) as e:
             wait = 2 ** attempt
-            print(f"    embed error (attempt {attempt + 1}/{retries}): {e} -- retrying in {wait:.0f}s")
+            print(f"    API error (attempt {attempt + 1}/{retries}): {e} -- retrying in {wait}s...")
             time.sleep(wait)
-    raise RuntimeError("Embedding failed after retries")
+    raise RuntimeError("Embedding failed after max retries.")
 
-
-def vector_to_bytes(vector):
-    return struct.pack(f"{len(vector)}f", *vector)
-
-# ---------- DB ----------
+# ---------- POSTGRESQL DB INGESTION ----------
 
 def load_existing_keys(cur, source_name):
-    """One query per source instead of one per chunk."""
     cur.execute(
-        "SELECT SourceRecordID, ChunkIndex FROM dbo.DocumentEmbeddings WHERE SourceTable = ?",
-        source_name,
+        'SELECT "record_id", "chunk_index" FROM "document_embeddings" WHERE "source_table" = %s;',
+        (source_name,),
     )
     return {(row[0], row[1]) for row in cur.fetchall()}
 
 
 INSERT_SQL = """
-    INSERT INTO dbo.DocumentEmbeddings
-        (SourceTable, SourceRecordID, ParentID, FileName, ChunkIndex,
-         ChunkText, Embedding, EmbeddingModel, EmbeddingDim,
-         Category, Subject, Sections, DocTitle, LawTitle, DocDate)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO "document_embeddings"
+        ("source_table", "record_id", "parent_id", "file_name", "chunk_index",
+         "chunk_text", "embedding", "embedding_model", "embedding_dim",
+         "category", "subject", "sections", "doc_title", "law_title", "doc_date")
+    VALUES %s
+    ON CONFLICT ("source_table", "record_id", "chunk_index") DO UPDATE SET
+        "chunk_text" = EXCLUDED."chunk_text",
+        "embedding" = EXCLUDED."embedding",
+        "doc_title" = EXCLUDED."doc_title",
+        "doc_date" = EXCLUDED."doc_date";
 """
 
 
-def process_source(cnx, source_name, query):
-    read_cur = cnx.cursor()
+def process_source(conn, source_name, query):
+    read_cur = conn.cursor(cursor_factory=RealDictCursor)
     read_cur.execute(query)
     rows = read_cur.fetchall()
-    print(f"\n{source_name}: {len(rows)} rows to process")
+    print(f"\n[{source_name}] Loaded {len(rows)} source records from PostgreSQL.")
 
-    write_cur = cnx.cursor()
+    write_cur = conn.cursor()
     existing_keys = load_existing_keys(write_cur, source_name)
 
-    # Build the full list of pending (not-yet-embedded) chunks for this source first,
-    # so embedding + inserting can happen in batches rather than per chunk.
     pending = []
     for row in rows:
-        (record_id, parent_id, filename, sql_label, context_prefix, raw_text,
-         category, subject, sections, doc_title, law_title, date_structured, date_raw) = row
+        record_id = row["record_id"]
+        parent_id = row["parent_id"]
+        filename = row["file_name"]
+        sql_label = row["label"]
+        context_prefix = row["context_prefix"]
+        raw_text = row["raw_text"]
+        category = row["category"]
+        subject = row["subject"]
+        sections = row["sections"]
+        doc_title = row["doc_title"]
+        law_title = row["law_title"]
+        date_structured = row["date_structured"]
+        date_raw = row["date_raw"]
 
         clean_text = strip_html(raw_text)
         chunks = build_chunks(clean_text, override_label=sql_label)
@@ -451,81 +382,69 @@ def process_source(cnx, source_name, query):
             if (record_id, idx) in existing_keys:
                 continue
             enriched_text = with_context_prefix(source_name, context_prefix, filename, label, chunk_body)
-            embed_text = prepare_document_text(enriched_text, title=doc_title or source_name)
             pending.append({
-                "record_id": record_id, "parent_id": parent_id, "filename": filename,
-                "idx": idx, "stored_text": enriched_text, "embed_text": embed_text,
-                "category": category, "subject": subject, "sections": sections,
-                "doc_title": doc_title, "law_title": law_title, "doc_date": doc_date,
+                "record_id": record_id,
+                "parent_id": parent_id,
+                "filename": filename,
+                "idx": idx,
+                "stored_text": enriched_text,
+                "category": category,
+                "subject": subject,
+                "sections": sections,
+                "doc_title": doc_title,
+                "law_title": law_title,
+                "doc_date": doc_date,
             })
 
-    print(f"  {len(pending)} new chunk(s) to embed")
+    print(f"  -> {len(pending)} new chunks to embed and index into pgvector.")
 
     for batch_start in range(0, len(pending), BATCH_SIZE):
         batch = pending[batch_start:batch_start + BATCH_SIZE]
-        vectors = embed_chunks_batch([item["embed_text"] for item in batch])
+        texts = [item["stored_text"] for item in batch]
+        vectors = embed_chunks_batch(texts)
 
         insert_rows = []
         for item, vector in zip(batch, vectors):
+            # Format vector as postgres vector string literal: '[0.1, 0.2, ...]'
+            vec_str = "[" + ",".join(str(v) for v in vector) + "]"
             insert_rows.append((
-                # ChunkText stores the clean contextual-prefix version; the
-                # embed_text sent to the API (see prepare_document_text) is
-                # currently identical, but kept separate in case that changes.
-                source_name, item["record_id"], item["parent_id"], item["filename"], item["idx"],
-                item["stored_text"], vector_to_bytes(vector), EMBEDDING_MODEL, len(vector),
-                item["category"], item["subject"], item["sections"],
-                item["doc_title"], item["law_title"], item["doc_date"],
+                source_name,
+                item["record_id"],
+                item["parent_id"],
+                item["filename"],
+                item["idx"],
+                item["stored_text"],
+                vec_str,
+                EMBEDDING_MODEL,
+                len(vector),
+                item["category"],
+                item["subject"],
+                item["sections"],
+                item["doc_title"],
+                item["law_title"],
+                item["doc_date"],
             ))
-        write_cur.executemany(INSERT_SQL, insert_rows)
-        cnx.commit()
-        print(f"  inserted {len(insert_rows)} chunk(s) "
-              f"({batch_start + len(insert_rows)}/{len(pending)})")
 
+        execute_values(write_cur, INSERT_SQL, insert_rows, page_size=BATCH_SIZE)
+        conn.commit()
+        print(f"  Inserted {batch_start + len(insert_rows)} / {len(pending)} chunks...")
 
-def count_chunks_only():
-    """Dry run: read + chunk everything, print exact counts per source, skip
-    embedding entirely. No API calls are made, so this finishes in well under
-    a minute and tells you exactly how many chunks the real run will embed."""
-    cnx = pyodbc.connect(SQL_CONN_STR)
-    try:
-        grand_total = 0
-        for source_name, query in SOURCE_QUERIES.items():
-            if source_name not in ACTIVE_SOURCES:
-                continue
-            cur = cnx.cursor()
-            cur.execute(query)
-            rows = cur.fetchall()
-            total = 0
-            for row in rows:
-                raw_text = row[5]  # RawText is always column index 5
-                clean_text = strip_html(raw_text)
-                sql_label = row[3]  # Label is always column index 3
-                total += len(build_chunks(clean_text, override_label=sql_label))
-            print(f"{source_name}: {len(rows)} rows -> {total} chunks")
-            grand_total += total
-        print(f"\nTOTAL: {grand_total} chunks")
-        est_calls = grand_total / BATCH_SIZE
-        print(f"At {BATCH_SIZE} chunks/call: ~{est_calls:.0f} API calls "
-              f"(actual time depends on your OpenAI rate-limit tier)")
-    finally:
-        cnx.close()
+    read_cur.close()
+    write_cur.close()
 
 
 def main():
-    cnx = pyodbc.connect(SQL_CONN_STR)
+    conn = psycopg2.connect(NEON_DB_URI)
     try:
-        for source_name, query in SOURCE_QUERIES.items():
-            if source_name not in ACTIVE_SOURCES:
-                print(f"Skipping {source_name} (not in ACTIVE_SOURCES)")
+        for source_name in ACTIVE_SOURCES:
+            query = SOURCE_QUERIES.get(source_name)
+            if not query:
                 continue
-            process_source(cnx, source_name, query)
+            process_source(conn, source_name, query)
     finally:
-        cnx.close()
-    print("\nDone.")
+        conn.close()
+    print("\n--- Neon PostgreSQL pgvector Ingestion Completed Successfully! ---")
 
 
 if __name__ == "__main__":
-    if "--count-only" in sys.argv:
-        count_chunks_only()
-    else:
-        main()
+    main()

@@ -26,8 +26,8 @@ const settings = {
 
   // Embedding Configuration
   EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || 'openai',
-  EMBEDDING_MODEL: process.env.EMBEDDING_MODEL || 'text-embedding-3-large',
-  EMBEDDING_DIMENSIONS: parseInt(process.env.EMBEDDING_DIMENSIONS || '3072', 10),
+  EMBEDDING_MODEL: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
+  EMBEDDING_DIMENSIONS: parseInt(process.env.EMBEDDING_DIMENSIONS || '1536', 10),
 };
 
 function getProviderConfig(provider) {

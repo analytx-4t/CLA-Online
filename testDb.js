@@ -1,44 +1,45 @@
 import os
-import pyodbc
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
 load_dotenv()
 
-SQL_CONN_STR = os.environ["SQL_CONN_STR"]
+NEON_DB_URI = os.environ.get("NEON_DB_URI") or os.environ.get("DATABASE_URL")
 
 _SOURCE_TABLES = [
-    "Articles_data_2025",
+    "articles_data_2025",
     "caselaws_data_2025",
-    "Circular_data_2025",
+    "circular_data_2025",
     "legislation_data_2025",
     "notifications_data_2025"
 ]
 
 def main():
-    cnx = pyodbc.connect(SQL_CONN_STR)
-    cur = cnx.cursor()
+    conn = psycopg2.connect(NEON_DB_URI)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     
     for table in _SOURCE_TABLES:
         print("="*60)
         print(f"TABLE: {table}")
         try:
-            cur.execute(f"SELECT TOP 1 * FROM dbo.{table}")
-            row = cur.fetchone()
-            if not row:
+            cur.execute(f'SELECT * FROM "{table}" LIMIT 1;')
+            row_dict = cur.fetchone()
+            if not row_dict:
                 print("No records found.")
                 continue
-            
-            cols = [c[0] for c in cur.description]
-            row_dict = dict(zip(cols, row))
             
             # Print columns
             print("Columns:", list(row_dict.keys()))
             
             # Find content column
             content_col = None
-            for col in ["Filetext", "Commentary_Details", "Procedure", "filehtml", "FileHtml", "RawText"]:
-                if col in row_dict:
-                    content_col = col
+            for col in ["filetext", "commentary_details", "procedure", "filehtml", "rawtext"]:
+                for key in row_dict.keys():
+                    if key.lower() == col:
+                        content_col = key
+                        break
+                if content_col:
                     break
             
             if content_col:
@@ -52,9 +53,10 @@ def main():
                 print("No known content column found.")
         except Exception as e:
             print(f"Error querying {table}: {e}")
+            conn.rollback()
             
     cur.close()
-    cnx.close()
+    conn.close()
 
 if __name__ == "__main__":
     main()

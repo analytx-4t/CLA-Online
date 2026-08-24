@@ -1,921 +1,448 @@
 """
 search_documents.py
-Hybrid (vector + keyword) search over dbo.DocumentEmbeddings, plus retrieval
-of the full, untouched parent + child rows behind any hit — for citing exact
-source data (case name, HeadNote, Judge, full Filetext, etc.) when answering
-a user's question, not just the cleaned/chunked embedding text.
 
-Embedding model: text-embedding-3-large (see embed_documents.py — same model
-MUST be used here, since embedding spaces between different models are not
-comparable).
+Unified RAG Retrieval Engine for Dual Databases:
+1. PGVector (Neon PostgreSQL) - Structured Legal Data (Articles, CaseLaws, Circulars, Legislation, Notifications, etc.)
+2. Pinecone - Unstructured Legal Documents (CLA Books, PDFs)
 
-All 8 sources (Articles, CaseLaws, Circular, Legislation, Notifications,
-Query, CLASE_Commentary, CLASE_Procedure_Details) are embedded — see
-ACTIVE_SOURCES in embed_documents.py.
+Reads environment variables dynamically:
+- NEON_DB_URI / DATABASE_URL
+- PINECONE_API_KEY
+- PINECONE_INDEX_NAME
+- OPENAI_API_KEY
 
-Setup:
-    pip install --upgrade pyodbc openai python-dotenv numpy
-    Reuses the same .env as embed_documents.py (OPENAI_API_KEY, SQL_CONN_STR).
-
-Run:
-    python search_documents.py
+Embedding Model: text-embedding-3-small (1536 dimensions)
+Retrieval Strategy: Top-5 from PGVector + Top-5 from Pinecone (Total 10 chunks combined).
 """
 
 import os
 import re
-import struct
 import json
 import sys
-import numpy as np
-import pyodbc
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from openai import OpenAI
 
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from shared_embedding_service import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, EMBEDDING_PROVIDER, embed_query as shared_embed_query, log_embedding_context
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
+else:
+    load_dotenv()
 
-load_dotenv()
+# ---------- ENVIRONMENT CONFIGURATION ----------
 
-SQL_CONN_STR = os.environ["SQL_CONN_STR"]
-EMBEDDING_MODEL = "text-embedding-3-large"
+NEON_DB_URI = os.getenv("NEON_DB_URI") or os.getenv("DATABASE_URL")
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "cla-online")
 
-_openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=0, timeout=3.0)
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
 
-_OPENAI_QUOTA_EXHAUSTED = True
+_openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+_pinecone_index = None
 
-# ---------- EMBEDDING THE USER'S QUERY ----------
+
+def get_db_connection():
+    if not NEON_DB_URI:
+        raise ValueError("NEON_DB_URI environment variable is not set.")
+    try:
+        return psycopg2.connect(NEON_DB_URI)
+    except Exception as e:
+        sys.stderr.write(f"[DB Warning] Primary DB connection failed ({e}). Retrying with direct host...\n")
+        alt_uri = NEON_DB_URI.replace("-pooler", "")
+        return psycopg2.connect(alt_uri)
+
+
+def get_pinecone_index():
+    global _pinecone_index
+    if _pinecone_index is None:
+        key = os.getenv("PINECONE_API_KEY")
+        idx_name = os.getenv("PINECONE_INDEX_NAME", "cla-online")
+        if not key:
+            sys.stderr.write("[Pinecone Warning] PINECONE_API_KEY is not set in environment.\n")
+            return None
+        try:
+            from pinecone import Pinecone
+            pc = Pinecone(api_key=key)
+            _pinecone_index = pc.Index(idx_name)
+            sys.stderr.write(f"[Pinecone Success] Initialized Pinecone index '{idx_name}' successfully.\n")
+        except Exception as e:
+            sys.stderr.write(f"[Pinecone Error] Failed to initialize Pinecone index: {e}\n")
+            _pinecone_index = None
+    return _pinecone_index
+
 
 def embed_query(query_text):
-    """text-embedding-3-large has no asymmetric-retrieval task format (unlike
-    gemini-embedding-2) — the query text is embedded as-is, same as a document
-    chunk (see prepare_document_text() in embed_documents.py)."""
-    global _OPENAI_QUOTA_EXHAUSTED
-    if os.environ.get("DISABLE_OPENAI_EMBEDDINGS") == "true" or _OPENAI_QUOTA_EXHAUSTED:
-        raise Exception("OpenAI API quota exhausted (instant fallback active)")
+    """Generate query embedding using text-embedding-3-small (1536 dims)."""
     try:
-        result = _openai_client.embeddings.create(model=EMBEDDING_MODEL, input=[query_text])
-        return np.array(result.data[0].embedding, dtype=np.float32)
+        result = _openai_client.embeddings.create(
+            model=EMBEDDING_MODEL,
+            input=[query_text],
+            dimensions=EMBEDDING_DIMENSIONS
+        )
+        return result.data[0].embedding
     except Exception as e:
-        if "insufficient_quota" in str(e).lower() or "quota" in str(e).lower():
-            _OPENAI_QUOTA_EXHAUSTED = True
-            sys.stderr.write("[Search Notice] OpenAI quota exhausted. Activated instant keyword search fallback.\n")
+        sys.stderr.write(f"[Embedding Error] Failed to generate query embedding: {e}\n")
         raise e
 
+# ---------- 1. PGVECTOR SEARCH (STRUCTURED DATA) ----------
 
-def _bytes_to_vector(b):
-    n = len(b) // 4
-    return np.array(struct.unpack(f"{n}f", b), dtype=np.float32)
-
-
-def _cosine_similarity(a, b):
-    denom = np.linalg.norm(a) * np.linalg.norm(b)
-    return float(np.dot(a, b) / denom) if denom else 0.0
-
-# ---------- VECTOR SEARCH ----------
-
-_SELECT_COLS = """
-    EmbeddingID, SourceTable, SourceRecordID, ParentID, ChunkText,
-    Embedding, EmbeddingModel, EmbeddingDim, Category, Subject,
-    Sections, DocTitle, LawTitle, DocDate
-"""
-
-_SELECT_COLS_NO_EMB = """
-    EmbeddingID, SourceTable, SourceRecordID, ParentID, ChunkText,
-    Category, Subject, Sections, DocTitle, LawTitle, DocDate
-"""
-
-_COLS_NO_EMB = [
-    'embedding_id', 'source_table', 'record_id', 'parent_id', 'chunk_text',
-    'category', 'subject', 'sections', 'doc_title', 'law_title', 'doc_date'
-]
-
-
-def _row_to_result(row, extra=None):
-    (embedding_id, source_table, record_id, parent_id, chunk_text,
-     *rest) = row
-
-    chunk_text = chunk_text or ""
-    doc_title = extra.get("doc_title") if extra else None
-    law_title = extra.get("law_title") if extra else None
-
-    # Sanitize mismatched header lines in chunk_text and metadata
-    if "CADR_2014" in chunk_text:
-        doc_title = "Companies (Acceptance of Deposits) Rules, 2014"
-        law_title = "Rules"
-        chunk_text = re.sub(r"^\[Legislation \| Title: [^|]+ \|", "[Legislation | Title: Companies (Acceptance of Deposits) Rules, 2014 |", chunk_text)
-    elif "CROFR_2014" in chunk_text:
-        doc_title = "Companies (Registration Offices and Fees) Rules, 2014"
-        law_title = "Rules"
-        chunk_text = re.sub(r"^\[Legislation \| Title: [^|]+ \|", "[Legislation | Title: Companies (Registration Offices and Fees) Rules, 2014 |", chunk_text)
-    elif "4_02.htm" in chunk_text: 
-        doc_title = "Guidelines for Valuation of Equity Shares (1990)"
-        law_title = "Guidelines"
-        chunk_text = re.sub(r"^\[Legislation \| Title: [^|]+ \|", "[Legislation | Title: Guidelines for Valuation of Equity Shares (1990) |", chunk_text)
-
-    result = {
-        "embedding_id": embedding_id, "source_table": source_table,
-        "record_id": record_id, "parent_id": parent_id, "chunk_text": chunk_text,
-    }
-    if extra:
-        result.update(extra)
-        if doc_title: result["doc_title"] = doc_title
-        if law_title: result["law_title"] = law_title
-    return result
-
-
-CACHE_FILE = os.path.join(os.path.dirname(__file__), "embeddings_cache.npz")
-
-
-def _require_openai_embedding_space(cnx):
-    cur = cnx.cursor()
-    cur.execute(
-        "SELECT TOP (1) EmbeddingModel, EmbeddingDim FROM dbo.DocumentEmbeddings WITH (NOLOCK) ORDER BY EmbeddingID"
-    )
-    row = cur.fetchone()
-    cur.close()
-
-    if row is None:
-        return
-
-    stored_provider = row[0] or "unknown"
-    stored_dimensions = row[1]
-
-    if stored_provider != EMBEDDING_MODEL or stored_dimensions != EMBEDDING_DIMENSIONS:
-        warning_message = (
-            f"EMBEDDING MISMATCH: Your DocumentEmbeddings were created with OpenAI '{stored_provider}' "
-            f"(dimension {stored_dimensions}), but the system expects '{EMBEDDING_MODEL}' "
-            f"(dimension {EMBEDDING_DIMENSIONS}). The vector space differs and retrieval will fail. "
-            f"Please re-index the DocumentEmbeddings table with the correct embedding model before continuing."
-        )
-        sys.stderr.write(f"{warning_message}\n")
-        raise RuntimeError(warning_message)
-
-
-def load_or_refresh_embeddings(cnx=None):
-    """Load embeddings from local cache if it exists, otherwise refresh cache from DB."""
-    if os.path.exists(CACHE_FILE):
-        try:
-            data = np.load(CACHE_FILE, allow_pickle=True)
-            if "vectors" in data and "metadata" in data:
-                vectors = data["vectors"]
-                metadata = data["metadata"]
-                if len(metadata) and metadata.dtype == object:
-                    if not any(item.get("embedding_model") == EMBEDDING_MODEL for item in metadata.tolist()):
-                        warning_message = (
-                            "EMBEDDING CACHE MISMATCH: Embeddings cache (embeddings_cache.npz) was generated with "
-                            "a different embedding model than the system expects. Current: text-embedding-3-large (3072 dims). "
-                            "Please regenerate the embeddings cache using the shared embedding service before continuing."
-                        )
-                        sys.stderr.write(f"Error: {warning_message}\n")
-                        raise RuntimeError(warning_message)
-                return vectors, metadata
-        except Exception as e:
-            sys.stderr.write(f"Cache read error: {e}. Re-fetching from database...\n")
-
-    if cnx is None:
-        raise ValueError("Embeddings cache file is missing/corrupted, and no DB connection was provided to rebuild it.")
-
-    _require_openai_embedding_space(cnx)
-
-    # Fetch total count for live progress reporting
-    cur = cnx.cursor()
-    cur.execute("SELECT COUNT(*) FROM dbo.DocumentEmbeddings WITH (NOLOCK)")
-    total_count = cur.fetchone()[0] or 1
-    sys.stderr.write(f"Cache missing or invalid. Rebuilding local embeddings cache for {total_count:,} chunks...\n")
-
-    sql = f"SELECT {_SELECT_COLS} FROM dbo.DocumentEmbeddings WITH (NOLOCK)"
-    cur.execute(sql)
-
-    vectors = []
-    metadata = []
-    processed = 0
-    batch_size = 5000
-
-    while True:
-        rows = cur.fetchmany(batch_size)
-        if not rows:
-            break
-
-        for row in rows:
-            emb_bytes = row[5]
-            vec = _bytes_to_vector(emb_bytes)
-            vectors.append(vec)
-            
-            metadata.append({
-                "embedding_id": row[0],
-                "source_table": row[1],
-                "record_id": row[2],
-                "parent_id": row[3],
-                "chunk_text": row[4],
-                "embedding_model": row[6],
-                "embedding_dim": row[7],
-                "category": row[8],
-                "subject": row[9],
-                "sections": row[10],
-                "doc_title": row[11],
-                "law_title": row[12],
-                "doc_date": str(row[13]) if row[13] else None,
-            })
-
-        processed += len(rows)
-        pct = (processed / total_count) * 100
-        sys.stderr.write(f"[Embeddings Cache] Processed {processed:,} / {total_count:,} chunks ({pct:.1f}%)...\n")
-
-    cur.close()
-
-    sys.stderr.write("Compressing and saving local embeddings_cache.npz...\n")
-    vectors = np.array(vectors, dtype=np.float32)
-    metadata = np.array(metadata, dtype=object)
-
-    try:
-        np.savez_compressed(CACHE_FILE, vectors=vectors, metadata=metadata)
-        sys.stderr.write(f"Successfully saved embeddings cache ({len(vectors):,} vectors).\n")
-    except Exception as e:
-        sys.stderr.write(f"Cache write error: {e}\n")
-
-    return vectors, metadata
-
-
-def vector_search(cnx, query_text, top_k=5, source_filter=None, query_vec=None, vectors=None, metadata=None):
-    """Cosine similarity over cached embeddings with fallback query count verification."""
+def vector_search(conn, query_text, top_k=5, source_filter=None, query_vec=None):
+    """Retrieve top-K chunks from Neon PostgreSQL via pgvector HNSW index (<=>)."""
     if query_vec is None:
         query_vec = embed_query(query_text)
+
+    vec_str = "[" + ",".join(str(v) for v in query_vec) + "]"
     
-    if vectors is None or metadata is None:
-        vectors, metadata = load_or_refresh_embeddings(cnx)
+    where_clause = ""
+    full_params = [vec_str]
+    
+    if source_filter and not source_filter.startswith("!"):
+        where_clause = ' WHERE "source_table" = %s'
+        full_params.append(source_filter)
+    elif source_filter and source_filter.startswith("!"):
+        ex_table = source_filter[1:]
+        where_clause = ' WHERE "source_table" != %s'
+        full_params.append(ex_table)
         
-    if len(vectors) == 0:
-        return []
+    sql = f"""
+        SELECT "embedding_id", "source_table", "record_id", "parent_id", "chunk_text",
+               "category", "subject", "sections", "doc_title", "law_title", "doc_date",
+               1 - ("embedding" <=> %s::vector) AS score
+        FROM "document_embeddings"
+        {where_clause}
+        ORDER BY "embedding" <=> %s::vector ASC
+        LIMIT %s;
+    """
+    full_params.extend([vec_str, top_k])
 
-    # Calculate cosine similarity in vectorized NumPy
-    norms = np.linalg.norm(vectors, axis=1)
-    query_norm = np.linalg.norm(query_vec)
-    denoms = norms * query_norm
-    denoms[denoms == 0] = 1.0 # Prevent division by zero
-    
-    scores = np.dot(vectors, query_vec) / denoms
-
-    scored = []
-    for idx, score in enumerate(scores):
-        meta = metadata[idx]
-        if source_filter:
-            if source_filter.startswith("!"):
-                if meta["source_table"] == source_filter[1:]:
-                    continue
-            elif meta["source_table"] != source_filter:
-                continue
-        
-        res = dict(meta)
-        res["score"] = float(score)
-        scored.append(res)
-
-    scored.sort(key=lambda r: r["score"], reverse=True)
-    return scored[:top_k]
-
-# ---------- KEYWORD SEARCH ----------
-
-def keyword_search(cnx, query_text, top_k=5, source_filter=None):
-    """Tries SQL Server full-text search (CONTAINSTABLE) first. Falls back
-    automatically to a simple LIKE-based match if full-text search fails."""
-    try:
-        cur = cnx.cursor()
-        sql = f"""
-            SELECT TOP (?) d.EmbeddingID, d.SourceTable, d.SourceRecordID, d.ParentID,
-                   d.ChunkText, d.Category, d.Subject, d.Sections, d.DocTitle,
-                   d.LawTitle, d.DocDate, ft.RANK
-            FROM dbo.DocumentEmbeddings d WITH (NOLOCK)
-            INNER JOIN CONTAINSTABLE(dbo.DocumentEmbeddings, ChunkText, ?) ft
-                ON d.EmbeddingID = ft.[KEY]
-        """
-        params = [top_k, query_text]
-        if source_filter:
-            if source_filter.startswith("!"):
-                sql += " WHERE d.SourceTable <> ?"
-                params.append(source_filter[1:])
-            else:
-                sql += " WHERE d.SourceTable = ?"
-                params.append(source_filter)
-        sql += " ORDER BY ft.RANK DESC"
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        cur.close()
-        return [
-            _row_to_result(r[:5], {
-                "category": r[5], "subject": r[6], "sections": r[7],
-                "doc_title": r[8], "law_title": r[9], "doc_date": str(r[10]) if r[10] else None, "rank": r[11],
-            })
-            for r in rows
-        ]
-    except pyodbc.Error:
-        return _keyword_search_fallback(cnx, query_text, top_k, source_filter)
-
-
-_STOP_WORDS = {
-    'the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'under', 
-    'what', 'which', 'how', 'is', 'are', 'was', 'were', 'be', 'been', 'with', 
-    'by', 'from', 'this', 'that', 'about', 'such', 'into', 'than', 'can', 'should',
-    'does', 'do', 'did', 'required', 'requirement', 'requirements',
-    'wants', 'some', 'need', 'there', 'anything', 'that', 'could', 'block',
-    'read', 'off', 'our', 'actual', 'turnover', 'profit', 'says', 'we', 'us',
-    'same', 'now', 'line', 'business'
-}
-
-def normalize_legal_query_py(query_text):
-    if not query_text:
-        return query_text
-    q = str(query_text)
-    q = re.sub(r"\bu/s\.?\s*(\d+[A-Za-z]?)\b", r"Section \1", q, flags=re.IGNORECASE)
-    q = re.sub(r"\bu/sec\.?\s*(\d+[A-Za-z]?)\b", r"Section \1", q, flags=re.IGNORECASE)
-    q = re.sub(r"\bsec\.?\s*(\d+[A-Za-z]?)\b", r"Section \1", q, flags=re.IGNORECASE)
-    q = re.sub(r"\bart\.?\s*(\d+[A-Za-z]?)\b", r"Article \1", q, flags=re.IGNORECASE)
-    q = re.sub(r"\br/w\b", "read with", q, flags=re.IGNORECASE)
-    q = re.sub(r"\bunlisted co\b", "unlisted company", q, flags=re.IGNORECASE)
-    q = re.sub(r"\bpvt ltd\b", "private limited", q, flags=re.IGNORECASE)
-    q = re.sub(r"\bcirp\b", "Corporate Insolvency Resolution Process (CIRP)", q, flags=re.IGNORECASE)
-    q = re.sub(r"\brp\b", "Resolution Professional (RP)", q, flags=re.IGNORECASE)
-    q = re.sub(r"\bcoc\b", "Committee of Creditors (CoC)", q, flags=re.IGNORECASE)
-    return q
-
-_GENERIC_WORDS = {"form", "rule", "rules", "act", "acts", "section", "sections", "notice", "order", "return", "draft", "letter", "clause"}
-
-def get_clean_form_codes(text):
-    raw_codes = re.findall(r"\b[A-Za-z]+[- ]?\d+[A-Za-z]?\b", text)
-    cleaned = []
-    for c in raw_codes:
-        parts = re.split(r"[- ]", c)
-        if len(parts) > 1:
-            if parts[0].lower() not in _GENERIC_WORDS:
-                cleaned.append(c)
-            elif len(parts[1]) > 0:
-                sub = c[len(parts[0]):].strip(" -")
-                if sub and sub.lower() not in _GENERIC_WORDS and not sub.isdigit():
-                    cleaned.append(sub)
-        else:
-            if c.lower() not in _GENERIC_WORDS and not c.isalpha() and not c.isdigit():
-                cleaned.append(c)
-    return list(set(cleaned))
-
-def _keyword_search_fallback(cnx, query_text, top_k, source_filter):
-    norm_query = normalize_legal_query_py(query_text)
-
-    # Extract distinct clean form codes, section mentions, and key legal phrases
-    clean_forms = get_clean_form_codes(query_text) + get_clean_form_codes(norm_query)
-    clean_forms = list(set(clean_forms))
-    sec_matches = [
-        s.lower() for s in re.findall(r"\b(?:section|sec\.?|s\.?|u/s)\s*(\d+[A-Za-z]?)\b", query_text, re.IGNORECASE)
-        if not (s.isdigit() and len(s) == 4 and int(s) >= 1900)
-    ]
-
-    GENERIC_SEARCH_EXCLUDES = {
-        "company", "companies", "rules", "filing", "return", "annual", "financial",
-        "date", "requirement", "under", "read", "with", "shall", "act", "section",
-        "sections", "rule", "regulations", "order", "circular", "notification",
-        "corporate", "limited", "private", "public", "provisions", "procedure"
-    }
-    all_terms = [t for t in re.findall(r"\b[A-Za-z0-9]+\b", norm_query) if len(t) > 2 or t.isdigit()]
-    terms = [t for t in all_terms if t.lower() not in _STOP_WORDS and t.lower() not in GENERIC_SEARCH_EXCLUDES]
-    if not terms:
-        terms = [t for t in all_terms if t.lower() not in _STOP_WORDS]
-    terms = terms[:6]
-    if not terms:
-        return []
-
-    cur = cnx.cursor()
-
-    # Build targeted SQL query first if clean forms or sections or key phrases are present
-    targeted_rows = []
-    sql_conds = []
-    t_params = []
-    
-    for cf in clean_forms:
-        sql_conds.append("(ChunkText LIKE ? OR DocTitle LIKE ? OR Subject LIKE ?)")
-        p = f"%{cf}%"
-        t_params.extend([p, p, p])
-
-    for sec in sec_matches:
-        sql_conds.append("(Sections LIKE ? OR ChunkText LIKE ?)")
-        p = f"%{sec}%"
-        p_text = f"%section {sec}%"
-        t_params.extend([p, p_text])
-
-    q_lower = query_text.lower()
-    if "buy back" in q_lower or "buyback" in q_lower:
-        sql_conds.append("(ChunkText LIKE '%buy back%' OR ChunkText LIKE '%buyback%')")
-    if "line of business" in q_lower or "bye-laws" in q_lower or "cirp" in q_lower:
-        sql_conds.append("(ChunkText LIKE '%line of business%' OR ChunkText LIKE '%bye-law%' OR ChunkText LIKE '%byelaw%')")
-
-    if sql_conds:
-        t_sql = f"""
-            SELECT TOP (?) {_SELECT_COLS_NO_EMB}
-            FROM dbo.DocumentEmbeddings WITH (NOLOCK)
-            WHERE ({" OR ".join(sql_conds)})
-        """
-        t_params_with_top = [top_k * 10] + t_params
-        if source_filter:
-            if source_filter.startswith("!"):
-                t_sql += " AND SourceTable <> ?"
-                t_params_with_top.append(source_filter[1:])
-            else:
-                t_sql += " AND SourceTable = ?"
-                t_params_with_top.append(source_filter)
-        cur.execute(t_sql, t_params_with_top)
-        targeted_rows = cur.fetchall()
-
-    gen_rows = []
-    if len(targeted_rows) < top_k:
-        gen_terms = terms[:3]
-        if gen_terms:
-            like_clauses = " OR ".join(["(ChunkText LIKE ? OR DocTitle LIKE ? OR Sections LIKE ?)"] * len(gen_terms))
-            sql = f"""
-                SELECT TOP (?) {_SELECT_COLS_NO_EMB}
-                FROM dbo.DocumentEmbeddings WITH (NOLOCK)
-                WHERE ({like_clauses})
-            """
-            params = [top_k * 5]
-            for t in gen_terms:
-                p = f"%{t}%"
-                params.extend([p, p, p])
-
-            if source_filter:
-                if source_filter.startswith("!"):
-                    sql += " AND SourceTable <> ?"
-                    params.append(source_filter[1:])
-                else:
-                    sql += " AND SourceTable = ?"
-                    params.append(source_filter)
-
-            cur.execute(sql, params)
-            gen_rows = cur.fetchall()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute(sql, full_params)
+    rows = cur.fetchall()
     cur.close()
-
-    # Merge and deduplicate by EmbeddingID (row[0])
-    seen_ids = set()
-    rows = []
-    for r in list(targeted_rows) + list(gen_rows):
-        if r[0] not in seen_ids:
-            seen_ids.add(r[0])
-            rows.append(r)
-
-    if not rows:
-        return []
-
-    scored_rows = []
-    term_set = set(t.lower() for t in terms)
-    query_lower = query_text.lower()
-
-    for row in rows:
-        # Construct dict and sanitize header/metadata
-        dict_row = dict(zip(_COLS_NO_EMB, row))
-        raw_text = dict_row.get('chunk_text') or ''
-        
-        # Apply sanitization to ensure CADR_2014, CROFR_2014, etc. have proper doc_title
-        if "CADR_2014" in raw_text:
-            dict_row["doc_title"] = "Companies (Acceptance of Deposits) Rules, 2014"
-            dict_row["law_title"] = "Rules"
-            raw_text = re.sub(r"^\[Legislation \| Title: [^|]+ \|", "[Legislation | Title: Companies (Acceptance of Deposits) Rules, 2014 |", raw_text)
-            dict_row["chunk_text"] = raw_text
-        elif "CROFR_2014" in raw_text:
-            dict_row["doc_title"] = "Companies (Registration Offices and Fees) Rules, 2014"
-            dict_row["law_title"] = "Rules"
-            raw_text = re.sub(r"^\[Legislation \| Title: [^|]+ \|", "[Legislation | Title: Companies (Registration Offices and Fees) Rules, 2014 |", raw_text)
-            dict_row["chunk_text"] = raw_text
-        elif "4_02.htm" in raw_text:
-            dict_row["doc_title"] = "Guidelines for Valuation of Equity Shares (1990)"
-            dict_row["law_title"] = "Guidelines"
-            raw_text = re.sub(r"^\[Legislation \| Title: [^|]+ \|", "[Legislation | Title: Guidelines for Valuation of Equity Shares (1990) |", raw_text)
-            dict_row["chunk_text"] = raw_text
-
-        text = raw_text.lower()
-        doc_title = (dict_row.get('doc_title') or '').lower()
-        sections = (dict_row.get('sections') or '').lower()
-        law_title = (dict_row.get('law_title') or '').lower()
-        subject = (dict_row.get('subject') or '').lower()
-
-        score = 0
-
-        # Form code bonus (e.g. DPT-3, DPT 3, DPT3)
-        for fc in clean_forms:
-            fc_clean = fc.replace("-", "").replace(" ", "")
-            if fc in text or fc in doc_title or fc in subject:
-                score += 50
-            elif fc_clean in text.replace("-", "").replace(" ", ""):
-                score += 40
-
-        # Section specific match
-        for sec in sec_matches:
-            if f"section {sec}" in text or f"sec {sec}" in text or f"s. {sec}" in text or sec in sections:
-                score += 35
-
-        # Key phrases
-        if "buy back" in query_lower or "buyback" in query_lower:
-            if "buy back" in text or "buyback" in text or "section 68" in text:
-                score += 30
-        if "dpt" in query_lower or "deposit" in query_lower:
-            if "deposit" in text or "dpt" in text or "acceptance of deposits" in doc_title:
-                score += 30
-        if "same line of business" in query_lower or "bye-laws" in query_lower or "cirp" in query_lower:
-            if "line of business" in text or "bye-law" in text or "byelaw" in text or "cirp" in text:
-                score += 30
-
-        # Term frequency matching
-        for term in term_set:
-            if len(term) <= 2 and not term.isdigit(): continue
-            if term in text: score += 2
-            if term in doc_title: score += 3
-            if term in law_title: score += 3
-            if term in sections: score += 4
-
-        scored_rows.append((score, dict_row))
-
-    scored_rows.sort(key=lambda x: x[0], reverse=True)
-    return [item[1] for item in scored_rows[:top_k]]
 
     results = []
-    for row in rows:
-        chunk_text = row[4]
-        match_count = sum(1 for t in terms if t.lower() in chunk_text.lower())
-        extra = {
-            "category": row[5], "subject": row[6], "sections": row[7],
-            "doc_title": row[8], "law_title": row[9], "doc_date": str(row[10]) if row[10] else None,
-            "rank": match_count,
-        }
-        results.append(_row_to_result(row[:5], extra))
-    results.sort(key=lambda r: r["rank"], reverse=True)
-    return results[:top_k]
-
-# ---------- RECIPROCAL RANK FUSION ----------
-
-def reciprocal_rank_fusion(
-    vector_results,
-    keyword_results,
-    k=60,
-    top_k=5,
-    semantic_weight=0.8,
-    keyword_weight=0.2,
-):
-    """
-    Merge semantic and keyword retrieval results using Weighted Reciprocal Rank Fusion (RRF).
-
-    - Semantic (vector) search contributes 80% by default.
-    - Keyword search contributes 20% by default.
-    """
-
-    scores = {}
-    items = {}
-
-    # Semantic (Vector) Search - 80% weight
-    for rank, r in enumerate(vector_results):
-        eid = r["embedding_id"]
-        scores[eid] = scores.get(eid, 0) + (
-            semantic_weight / (k + rank + 1)
-        )
-        items.setdefault(eid, r)
-
-    # Keyword Search - 20% weight
-    for rank, r in enumerate(keyword_results):
-        eid = r["embedding_id"]
-        scores[eid] = scores.get(eid, 0) + (
-            keyword_weight / (k + rank + 1)
-        )
-        items.setdefault(eid, r)
-
-    merged = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-    return [
-        {**items[eid], "rrf_score": score}
-        for eid, score in merged[:top_k]
-    ]
-
-# ---------- ORIGINAL ROW RETRIEVAL (parent + child, every column) ----------
-
-_SOURCE_TABLE_MAP = {
-    "Articles": {"child": "Articles_data_2025", "child_pk": "ID",
-                 "parent": "Articles_2025", "parent_pk": "ID"},
-    "CaseLaws": {"child": "caselaws_data_2025", "child_pk": "ID",
-                 "parent": "caselaws_2025", "parent_pk": "id"},
-    "Circular": {"child": "Circular_data_2025", "child_pk": "ID",
-                 "parent": "Circular_2025", "parent_pk": "id"},
-    "Legislation": {"child": "legislation_data_2025", "child_pk": "ID",
-                     "parent": "Legislation_2025", "parent_pk": "id"},
-    "Notifications": {"child": "notifications_data_2025", "child_pk": "ID",
-                        "parent": "notifications_2025", "parent_pk": "Id"},
-    "Query": {"child": "query_data", "child_pk": "ID",
-              "parent": "Query", "parent_pk": "ID"},
-    "CLASE_Commentary": {"child": "CLASE_Commentary", "child_pk": "ID",
-                          "parent": "CLASE_Commentary_Act", "parent_pk": "ID"},
-    "CLASE_Procedure_Details": {"child": "CLASE_Procedure_Details_2025", "child_pk": "ID",
-                                  "parent": None, "parent_pk": None},
-}
-
-
-def _row_to_dict(cur, row):
-    if row is None:
-        return None
-    cols = [c[0] for c in cur.description]
-    res = {}
-    for col, val in zip(cols, row):
-        if val is None:
-            res[col] = None
-        elif isinstance(val, (int, float, str, bool)):
-            res[col] = val
-        else:
-            res[col] = str(val)
-    return res
-
-
-def get_original_content_bulk(cnx, results):
-    """Fetch the full untouched parent/child rows for all results in bulk to minimize roundtrips."""
-    # Group results by source_table
-    by_source = {}
-    for r in results:
-        by_source.setdefault(r["source_table"], []).append(r)
-
-    for source_table, items in by_source.items():
-        mapping = _SOURCE_TABLE_MAP.get(source_table)
-        if not mapping:
-            continue
-
-        # Get all child record IDs
-        child_ids = [it["record_id"] for it in items]
-        if not child_ids:
-            continue
-
-        cur = cnx.cursor()
-        # Fetch child rows in bulk
-        placeholders = ",".join(["?"] * len(child_ids))
-        cur.execute(f"SELECT * FROM dbo.{mapping['child']} WITH (NOLOCK) WHERE {mapping['child_pk']} IN ({placeholders})",
-                    child_ids)
-        child_rows = cur.fetchall()
-        
-        # Index children by ID
-        child_by_id = {}
-        for row in child_rows:
-            d = _row_to_dict(cur, row)
-            if d:
-                pk_val = d[mapping['child_pk']]
-                child_by_id[pk_val] = d
-
-        # Get all parent IDs
-        parent_ids = [it["parent_id"] for it in items if it.get("parent_id") is not None]
-        parent_by_id = {}
-        if mapping["parent"] and parent_ids:
-            parent_ids = list(set(parent_ids))
-            parent_placeholders = ",".join(["?"] * len(parent_ids))
-            cur.execute(f"SELECT * FROM dbo.{mapping['parent']} WITH (NOLOCK) WHERE {mapping['parent_pk']} IN ({parent_placeholders})",
-                        parent_ids)
-            parent_rows = cur.fetchall()
-            for row in parent_rows:
-                d = _row_to_dict(cur, row)
-                if d:
-                    pk_val = d[mapping['parent_pk']]
-                    parent_by_id[pk_val] = d
-
-        cur.close()
-
-        # Assign back to items
-        for it in items:
-            it["original"] = {
-                "child": child_by_id.get(it["record_id"]),
-                "parent": parent_by_id.get(it["parent_id"]) if it.get("parent_id") is not None else None
-            }
-
-def cohere_rerank_python(query_text, candidate_results, top_k=5):
-    api_key = os.environ.get("COHERE_API_KEY")
-    if not api_key or not candidate_results:
-        return candidate_results[:top_k]
-
-    import urllib.request
-
-    formatted_docs = []
-    for r in candidate_results:
-        title = r.get("law_title") or r.get("doc_title") or ""
-        sections = r.get("sections") or ""
-        cat = r.get("category") or ""
-        subj = r.get("subject") or ""
-        chunk = r.get("chunk_text") or ""
-
-        parts = []
-        if title: parts.append(f"Title: {title}")
-        if sections: parts.append(f"Sections: {sections}")
-        if cat: parts.append(f"Category: {cat}")
-        if subj: parts.append(f"Subject: {subj}")
-        parts.append(f"Content: {chunk}")
-        formatted_docs.append(" | ".join(parts))
-
-    try:
-        url = "https://api.cohere.com/v2/rerank"
-        payload = json.dumps({
-            "model": "rerank-v3.5",
-            "query": query_text,
-            "documents": formatted_docs,
-            "top_n": min(len(candidate_results), top_k * 2)
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-        )
-
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            cohere_results = data.get("results", [])
-
-            reranked = []
-            for item in cohere_results:
-                idx = item.get("index")
-                score = item.get("relevance_score", 0.0)
-                if idx < len(candidate_results):
-                    res = dict(candidate_results[idx])
-                    res["cohere_relevance_score"] = float(score)
-                    res["backend_relevance_score"] = float(score)
-                    res["rerank_method"] = "cohere_rerank_v3.5"
-                    reranked.append(res)
-
-            if reranked:
-                sys.stderr.write(f"[Python Cohere Rerank] Reranked {len(candidate_results)} candidates down to {len(reranked[:top_k])}\n")
-                return reranked[:top_k]
-    except Exception as e:
-        sys.stderr.write(f"[Python Cohere Rerank Warning] API error: {e}. Falling back to default RRF order.\n")
-
-    return candidate_results[:top_k]
-
-
-# ---------- MAIN ENTRY POINT ----------
-
-def search(query_text, top_k=5, hybrid=True, source_filter=None, with_original_content=True, enable_cohere=True):
-    """Primary function a backend endpoint should call. Reuse single database connection."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    cnx = pyodbc.connect(SQL_CONN_STR)
-
-    try:
-        query_vec = embed_query(query_text)
-    except Exception as emb_err:
-        sys.stderr.write(f"[Search Notice] OpenAI quota exhausted. Activated instant keyword search fallback: {emb_err}\n")
-        query_vec = None
-
-    if query_vec is None:
-        try:
-            results = _keyword_search_fallback(cnx, query_text, top_k, source_filter)
-            cnx.close()
-            return results
-        except Exception as kw_err:
-            sys.stderr.write(f"[Keyword Fallback Error] {kw_err}\n")
-            cnx.close()
-            return []
-
-    # If query_vec is valid, proceed with parallel cache loading and vector search
-    try:
-        vectors, metadata = load_or_refresh_embeddings(cnx)
-    except Exception as cache_err:
-        sys.stderr.write(f"Cache load error: {cache_err}. Falling back to keyword search.\n")
-        results = _keyword_search_fallback(cnx, query_text, top_k, source_filter)
-        cnx.close()
-        return results
-
-    try:
-        candidate_k = top_k * 3 if enable_cohere else top_k
-        vector_results = []
-        if query_vec is not None:
-            try:
-                vector_results = vector_search(cnx, query_text, top_k=candidate_k, source_filter=source_filter,
-                                               query_vec=query_vec, vectors=vectors, metadata=metadata)
-            except Exception as v_err:
-                sys.stderr.write(f"[Vector Search Error] {v_err}\n")
-
-        if hybrid:
-            keyword_results = keyword_search(cnx, query_text, top_k=candidate_k, source_filter=source_filter)
-            candidates = reciprocal_rank_fusion(vector_results, keyword_results, top_k=candidate_k)
-        else:
-            candidates = vector_results
-
-        if enable_cohere and os.environ.get("COHERE_API_KEY"):
-            results = cohere_rerank_python(query_text, candidates, top_k=top_k)
-        else:
-            results = candidates[:top_k]
-
-        if with_original_content:
-            get_original_content_bulk(cnx, results)
-    finally:
-        cnx.close()
-
+    for r in rows:
+        results.append({
+            "embedding_id": r["embedding_id"],
+            "source_table": r["source_table"],
+            "record_id": r["record_id"],
+            "parent_id": r["parent_id"],
+            "chunk_text": r["chunk_text"],
+            "category": r["category"],
+            "subject": r["subject"],
+            "sections": r["sections"],
+            "doc_title": r["doc_title"],
+            "law_title": r["law_title"],
+            "doc_date": str(r["doc_date"]) if r["doc_date"] else None,
+            "score": float(r["score"]) if r["score"] else 0.0,
+            "database_source": "PGVector"
+        })
     return results
 
+# ---------- 2. PINECONE SEARCH (UNSTRUCTURED DATA) ----------
 
-def get_citation(source_table, record_id, parent_id=None):
-    """Retrieve full citation HTML and metadata for a given child record ID."""
-    mapping = _SOURCE_TABLE_MAP.get(source_table)
-    if not mapping:
-        return {"error": f"Invalid source table: {source_table}"}
+def pinecone_search(query_text, top_k=5, query_vec=None):
+    """Retrieve top-K chunks from Pinecone unstructured vector database (cla-online)."""
+    index = get_pinecone_index()
+    if index is None:
+        return []
 
-    cnx = pyodbc.connect(SQL_CONN_STR)
-    cur = cnx.cursor()
+    if query_vec is None:
+        query_vec = embed_query(query_text)
+
     try:
-        # Fetch the child row
-        cur.execute(f"SELECT * FROM dbo.{mapping['child']} WITH (NOLOCK) WHERE {mapping['child_pk']} = ?", record_id)
-        child_row = cur.fetchone()
-        if not child_row:
-            return {"error": f"Child row not found for record_id {record_id} in {mapping['child']}"}
+        res = index.query(
+            vector=query_vec,
+            top_k=top_k,
+            include_metadata=True
+        )
 
-        child_dict = _row_to_dict(cur, child_row)
+        results = []
+        for match in res.matches:
+            meta = match.metadata or {}
+            chunk_text = meta.get("text") or meta.get("raw_text") or ""
+            book_name = meta.get("book_name") or meta.get("file_name") or "Unstructured Document"
+            page_no = meta.get("page_number")
+            section_label = meta.get("section_label") or meta.get("source")
 
-        # Guess parent_id column in child_dict if it is not provided
-        if parent_id is None and mapping["parent"]:
-            possible_keys = [
-                "Article_ID", "CaseLawID", "Notification_ID", "Legislation_ID",
-                "Query_ID", "commentary_ActID", "parent_id"
-            ]
-            for key in possible_keys:
-                if key in child_dict:
-                    parent_id = child_dict[key]
-                    break
+            if not chunk_text.startswith("["):
+                header_parts = ["Pinecone Unstructured", f"Book: {book_name}"]
+                if page_no:
+                    header_parts.append(f"Page: {page_no}")
+                if section_label:
+                    header_parts.append(f"Section: {section_label}")
+                prefix = "[" + " | ".join(header_parts) + "]\n"
+                enriched_text = prefix + chunk_text
+            else:
+                enriched_text = chunk_text
 
-        # Fetch parent row if applicable
-        parent_dict = None
-        if mapping["parent"] and parent_id is not None:
-            cur.execute(f"SELECT * FROM dbo.{mapping['parent']} WITH (NOLOCK) WHERE {mapping['parent_pk']} = ?", parent_id)
-            parent_row = cur.fetchone()
-            if parent_row:
-                parent_dict = _row_to_dict(cur, parent_row)
+            results.append({
+                "embedding_id": str(match.id),
+                "source_table": meta.get("source") or "Pinecone_Unstructured",
+                "record_id": str(match.id),
+                "parent_id": page_no,
+                "chunk_text": enriched_text,
+                "category": "Unstructured Books / Documents",
+                "subject": book_name,
+                "sections": section_label,
+                "doc_title": book_name,
+                "law_title": f"Book Page {page_no}" if page_no else "Unstructured PDF",
+                "doc_date": None,
+                "score": float(match.score),
+                "database_source": "Pinecone"
+            })
+        return results
+    except Exception as e:
+        sys.stderr.write(f"[Pinecone Search Error] {e}\n")
+        return []
 
-        # Resolve Title
-        title = "Untitled Document"
-        if parent_dict:
-            title = parent_dict.get("Title") or parent_dict.get("Versus") or parent_dict.get("Legislation") or "Untitled Document"
-        else:
-            title = child_dict.get("FileName") or child_dict.get("Heading") or "Untitled Document"
+# ---------- 3. DUAL RETRIEVAL & HYBRID PIPELINE ----------
 
-        # Resolve HTML/Text content
-        html_content = ""
-        content_keys = ["FileHTML", "filehtml", "FileHtml", "Filetext", "Commentary_Details", "Procedure", "RawText"]
-        for key in content_keys:
-            if key in child_dict and child_dict[key]:
-                html_content = child_dict[key]
-                break
+def fetch_source_details(conn, source_table, record_id, parent_id):
+    """Retrieve untouched parent and child source records directly from Neon PostgreSQL or Pinecone."""
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if source_table == "Articles":
+            cur.execute('SELECT * FROM "Articles_data_2025" WHERE "ID" = %s;', (record_id,))
+            child = cur.fetchone()
+            cur.execute('SELECT * FROM "Articles_2025" WHERE "ID" = %s;', (parent_id,))
+            parent = cur.fetchone()
+            return {"child": child, "parent": parent}
 
-        if not html_content:
-            html_content = "<p>No content available for this document.</p>"
+        elif source_table == "CaseLaws":
+            cur.execute('SELECT * FROM "caselaws_data_2025" WHERE "ID" = %s;', (record_id,))
+            child = cur.fetchone()
+            cur.execute('SELECT * FROM "caselaws_2025" WHERE "id" = %s;', (parent_id,))
+            parent = cur.fetchone()
+            return {"child": child, "parent": parent}
 
-        return {
-            "title": title,
-            "source_table": source_table,
-            "record_id": record_id,
-            "parent_id": parent_id,
-            "html": html_content,
-            "child": child_dict,
-            "parent": parent_dict
-        }
+        elif source_table == "Circular":
+            cur.execute('SELECT * FROM "Circular_data_2025" WHERE "ID" = %s;', (record_id,))
+            child = cur.fetchone()
+            cur.execute('SELECT * FROM "Circular_2025" WHERE "id" = %s;', (parent_id,))
+            parent = cur.fetchone()
+            return {"child": child, "parent": parent}
+
+        elif source_table == "Legislation":
+            cur.execute('SELECT * FROM "legislation_data_2025" WHERE "ID" = %s;', (record_id,))
+            child = cur.fetchone()
+            cur.execute('SELECT * FROM "Legislation_2025" WHERE "id" = %s;', (parent_id,))
+            parent = cur.fetchone()
+            return {"child": child, "parent": parent}
+
+        elif source_table == "Notifications":
+            cur.execute('SELECT * FROM "notifications_data_2025" WHERE "ID" = %s;', (record_id,))
+            child = cur.fetchone()
+            cur.execute('SELECT * FROM "notifications_2025" WHERE "Id" = %s;', (parent_id,))
+            parent = cur.fetchone()
+            return {"child": child, "parent": parent}
+
+        elif source_table == "Query":
+            cur.execute('SELECT * FROM "query_data" WHERE "ID" = %s;', (record_id,))
+            child = cur.fetchone()
+            cur.execute('SELECT * FROM "Query" WHERE "ID" = %s;', (parent_id,))
+            parent = cur.fetchone()
+            return {"child": child, "parent": parent}
+
+        elif source_table == "CLASE_Commentary":
+            cur.execute('SELECT * FROM "CLASE_Commentary" WHERE "ID" = %s;', (record_id,))
+            comm = cur.fetchone()
+            act = None
+            if comm and comm.get("commentary_ActID"):
+                cur.execute('SELECT * FROM "CLASE_Commentary_Act" WHERE "ID" = %s;', (comm["commentary_ActID"],))
+                act = cur.fetchone()
+            return {"commentary": comm, "act": act}
+
+        elif source_table == "CLASE_Procedure_Details":
+            cur.execute('SELECT * FROM "CLASE_Procedure_Details_2025" WHERE "ID" = %s;', (record_id,))
+            proc = cur.fetchone()
+            return {"procedure": proc}
+
+        elif not source_table or source_table in ["CLA Books", "Pinecone", "Pinecone_Unstructured", "Pinecone Unstructured"] or "pinecone" in str(source_table).lower() or "book" in str(source_table).lower():
+            parent = {
+                "Title": "CLA Books & Unstructured Documents",
+                "Category": "Book / PDF (Pinecone)",
+                "FileName": "CLA Books Library",
+                "Author": "Corporate Law Adviser",
+                "Sections": f"Page {parent_id}" if parent_id else "Unstructured Document",
+            }
+            child = {
+                "FileName": "CLA Books Library",
+                "Sections": f"Page {parent_id}" if parent_id else "Unstructured Document",
+                "Category": "Book / PDF (Pinecone)",
+            }
+            
+            # First attempt: Lookup in PGVector document_embeddings table for cached chunk text
+            try:
+                rec_str = str(record_id) if record_id is not None else ""
+                cur.execute('''
+                    SELECT "chunk_text", "doc_title", "law_title", "sections", "category", "subject"
+                    FROM "document_embeddings"
+                    WHERE "embedding_id" = %s OR "record_id"::text = %s
+                    LIMIT 1;
+                ''', (rec_str, rec_str))
+                db_row = cur.fetchone()
+                if db_row and db_row.get("chunk_text"):
+                    chunk_txt = db_row["chunk_text"]
+                    doc_title = db_row.get("doc_title") or db_row.get("law_title") or parent["Title"]
+                    sec_info = db_row.get("sections") or parent["Sections"]
+                    parent["Title"] = doc_title
+                    parent["Sections"] = sec_info
+                    parent["Subject"] = db_row.get("subject") or doc_title
+                    child["Sections"] = sec_info
+                    child["chunk_text"] = chunk_txt
+                    child["Filetext"] = chunk_txt
+                    child["Article_Text"] = chunk_txt
+                    return {"child": child, "parent": parent, "text": chunk_txt}
+            except Exception as db_err:
+                sys.stderr.write(f"[PGVector Citation Lookup Warning] {db_err}\n")
+
+            # Second attempt: Lookup via Pinecone index fetch
+            try:
+                pc_idx = get_pinecone_index()
+                if pc_idx and record_id:
+                    ids_to_try = [str(record_id)]
+                    if parent_id:
+                        ids_to_try.append(str(parent_id))
+                    fetch_res = pc_idx.fetch(ids=ids_to_try)
+                    vectors_map = getattr(fetch_res, "vectors", {}) if hasattr(fetch_res, "vectors") else (fetch_res.get("vectors") if isinstance(fetch_res, dict) else {})
+                    for vid in ids_to_try:
+                        if vectors_map and vid in vectors_map:
+                            vec = vectors_map[vid]
+                            meta = getattr(vec, "metadata", {}) if hasattr(vec, "metadata") else (vec.get("metadata", {}) if isinstance(vec, dict) else {})
+                            chunk_txt = meta.get("chunk_text") or meta.get("text") or meta.get("raw_text") or ""
+                            doc_title = meta.get("doc_title") or meta.get("subject") or meta.get("book_name") or "CLA Books & Unstructured Documents"
+                            sec_info = meta.get("sections") or f"Page {meta.get('page_no') or parent_id or 'N/A'}"
+
+                            parent["Title"] = doc_title
+                            parent["Sections"] = sec_info
+                            parent["Subject"] = meta.get("subject") or doc_title
+                            child["Sections"] = sec_info
+                            child["chunk_text"] = chunk_txt
+                            child["Filetext"] = chunk_txt
+                            child["Article_Text"] = chunk_txt
+                            return {"child": child, "parent": parent, "text": chunk_txt}
+            except Exception as pc_err:
+                sys.stderr.write(f"[Pinecone Citation Detail Error] {pc_err}\n")
+            return {"child": child, "parent": parent}
+    except Exception as e:
+        sys.stderr.write(f"[Source Detail Error] {source_table} ID {record_id}: {e}\n")
     finally:
         cur.close()
-        cnx.close()
+    return None
+
+
+def dual_retrieval(conn, query_text, top_k_pgvector=5, top_k_pinecone=5, source_filter=None, fetch_full_sources=True):
+    """
+    Retrieve Top-K chunks from BOTH PGVector (structured data) AND Pinecone (unstructured data).
+    Combines Top-5 from PGVector + Top-5 from Pinecone (Total 10 chunks).
+    """
+    query_vec = embed_query(query_text)
+
+    # 1. Retrieve PGVector chunks (structured data)
+    try:
+        pg_chunks = vector_search(conn, query_text, top_k=top_k_pgvector, source_filter=source_filter, query_vec=query_vec)
+    except Exception as e:
+        sys.stderr.write(f"[PGVector Search Error] {e}\n")
+        pg_chunks = []
+
+    # Attach full source data for PGVector hits if requested
+    if fetch_full_sources and pg_chunks:
+        for hit in pg_chunks:
+            full_data = fetch_source_details(conn, hit["source_table"], hit["record_id"], hit["parent_id"])
+            hit["full_source"] = full_data
+
+    # 2. Retrieve Pinecone chunks (unstructured data)
+    pc_chunks = []
+    if not source_filter or source_filter.startswith("!") or "pinecone" in str(source_filter).lower() or "book" in str(source_filter).lower() or "cla" in str(source_filter).lower():
+        pc_chunks = pinecone_search(query_text, top_k=top_k_pinecone, query_vec=query_vec)
+
+    # Combine both Top-5 PGVector + Top-5 Pinecone chunks
+    combined_results = pg_chunks + pc_chunks
+    return combined_results
+
+
+def hybrid_search(conn, query_text, top_k=5, source_filter=None, fetch_full_sources=True):
+    """Backward compatible wrapper that calls dual_retrieval."""
+    return dual_retrieval(
+        conn=conn,
+        query_text=query_text,
+        top_k_pgvector=top_k,
+        top_k_pinecone=top_k,
+        source_filter=source_filter,
+        fetch_full_sources=fetch_full_sources
+    )
+
+# ---------- CLI / STDIN INTERFACE FOR NODE.JS INTEGRATION ----------
+
+def handle_json_input():
+    raw_input = sys.stdin.read()
+    if not raw_input or not raw_input.strip():
+        print(json.dumps({"error": "Empty stdin payload"}))
+        return
+
+    try:
+        payload = json.loads(raw_input)
+    except Exception as e:
+        print(json.dumps({"error": f"Invalid JSON payload: {e}"}))
+        return
+
+    action = payload.get("action", "search")
+
+    conn = get_db_connection()
+    try:
+        if action == "get_citation":
+            source_table = payload.get("source_table")
+            record_id = payload.get("record_id")
+            parent_id = payload.get("parent_id")
+            details = fetch_source_details(conn, source_table, record_id, parent_id)
+            print(json.dumps({"results": details}, default=str))
+        else:
+            query = payload.get("query", "")
+            top_k = payload.get("top_k", 5)
+            source_filter = payload.get("source_filter")
+            
+            fetch_full_sources = payload.get("fetch_full_sources", False)
+            results = dual_retrieval(
+                conn=conn,
+                query_text=query,
+                top_k_pgvector=top_k,
+                top_k_pinecone=top_k,
+                source_filter=source_filter,
+                fetch_full_sources=fetch_full_sources
+            )
+            print(json.dumps({"results": results}, default=str))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+    finally:
+        conn.close()
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "--json":
-        try:
-            input_data = json.load(sys.stdin)
-            action = input_data.get("action", "search")
-            
-            if action == "get_citation":
-                source_table = input_data.get("source_table")
-                record_id = input_data.get("record_id")
-                parent_id = input_data.get("parent_id")
-                
-                result = get_citation(source_table, record_id, parent_id)
-                print(json.dumps(result, default=str))
-            else:
-                query = input_data.get("query", "")
-                top_k = input_data.get("top_k", 5)
-                hybrid = input_data.get("hybrid", True)
-                source_filter = input_data.get("source_filter", None)
-                
-                results = search(query, top_k=top_k, hybrid=hybrid, source_filter=source_filter, enable_cohere=False)
-                print(json.dumps({"results": results}, default=str))
-        except Exception as e:
-            print(json.dumps({"error": str(e)}, default=str))
+    if "--json" in sys.argv:
+        handle_json_input()
         return
 
-    query = input("Ask a legal question: ").strip()
+    query = None
+    if len(sys.argv) > 1:
+        query = " ".join([arg for arg in sys.argv[1:] if arg != "--json"])
+
+    if not query and not sys.stdin.isatty():
+        handle_json_input()
+        return
+
     if not query:
-        print("Empty query.")
-        return
+        query = "What are the rules regarding company deposits under Companies Act 2013?"
 
-    results = search(query, top_k=5, hybrid=True)
-    if not results:
-        print("No matches found in the embedded data.")
-        return
-
-    for i, r in enumerate(results, 1):
-        print(f"\n[{i}] {r['source_table']} | {r.get('doc_title') or 'untitled'} "
-              f"| Category: {r.get('category')} | Sections: {r.get('sections')} "
-              f"| score: {r.get('score', r.get('rrf_score', 0)):.4f}")
-        print(r["chunk_text"][:400] + ("..." if len(r["chunk_text"]) > 400 else ""))
+    conn = get_db_connection()
+    try:
+        results = dual_retrieval(conn, query, top_k_pgvector=5, top_k_pinecone=5)
+        print(json.dumps(results, indent=2, default=str))
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
     main()
-

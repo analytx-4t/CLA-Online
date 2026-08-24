@@ -84,38 +84,82 @@ function agentToSourceType(agentName) {
   return mapping[agentName] || agentName.toLowerCase().replace('_agent', '');
 }
 
-// Queries the MongoDB vector database
+const { spawn } = require('child_process');
+
+// Queries Neon PostgreSQL (PGVector) and Pinecone vector databases
 async function searchVectorDb(query, sourceType, keywords = [], limit = 5) {
-  try {
-    const db = await connectDB();
-    const collection = db.collection('cla_online_vector_db');
+  return new Promise((resolve) => {
+    try {
+      let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
+      if (!fs.existsSync(pythonPath)) {
+        pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
+      }
+      const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
+      const child = spawn(pythonPath, [scriptPath, '--json']);
+      let stdout = '';
+      let stderr = '';
 
-    // Safety check: if collection doesn't exist or has 0 documents, return empty array immediately
-    const count = await collection.countDocuments().catch(() => 0);
-    if (count === 0) {
-      return [];
+      child.stdout.on('data', (d) => stdout += d.toString());
+      child.stderr.on('data', (d) => stderr += d.toString());
+
+      child.on('error', (err) => {
+        console.error(`[Agent Vector Search Error] ${err.message}`);
+        resolve([]);
+      });
+
+      child.on('close', (code) => {
+        console.log(`[Agent Vector Search Close] Code: ${code}, Stdout len: ${stdout.length}, Stderr: ${stderr.slice(0, 100)}`);
+        if (code !== 0) {
+          console.error(`[Agent Vector Search] Python process exited code ${code}: ${stderr}`);
+          return resolve([]);
+        }
+        try {
+          const res = JSON.parse(stdout);
+          const results = res.results || [];
+          const mapped = results.map(r => ({
+            file: (r.original && r.original.child && r.original.child.FileName) || (r.original && r.original.parent && r.original.parent.FileName) || r.file || r.filename || 'Unknown',
+            title: r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled',
+            source_type: r.source_table || sourceType,
+            source_table: r.source_table || sourceType,
+            record_id: r.record_id || null,
+            parent_id: r.parent_id || null,
+            content: r.chunk_text || r.content || r.text || '',
+            excerpt: r.chunk_text ? r.chunk_text.slice(0, 300) : (r.content ? r.content.slice(0, 300) : ''),
+            author: (r.original && r.original.parent && r.original.parent.Author) || r.author || null,
+            sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
+            category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+            subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
+            doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null
+          }));
+          console.log(`[Agent Vector Search] Retrieved ${mapped.length} chunks for ${sourceType}`);
+          resolve(mapped);
+        } catch (e) {
+          console.error(`[Agent Vector Search] JSON parse failed: ${e.message}`);
+          resolve([]);
+        }
+      });
+
+      const cleanQuery = String(query || '')
+        .split(/\r?\n/)
+        .map(l => l.replace(/^(?:EXPANDED_QUERY|QUERY|KEYWORDS|SUGGESTED_FILTERS|CLARIFYING_QUESTION)\s*:\s*/gi, '').trim())
+        .filter(l => l && l.length > 3)
+        .join(' ')
+        .slice(0, 250);
+      const searchQuery = [cleanQuery, ...keywords.slice(0, 5)].filter(Boolean).join(' ');
+      const payload = JSON.stringify({
+        query: searchQuery || 'Companies Act share capital',
+        top_k: limit,
+        hybrid: true,
+        source_filter: null
+      });
+
+      child.stdin.write(payload);
+      child.stdin.end();
+    } catch (err) {
+      console.error(`[Agent Vector Search] Failed to run search: ${err.message}`);
+      resolve([]);
     }
-
-    // Build filter based on source_type
-    const filter = { source_type: sourceType };
-
-    // Try a simple search using regex match on content/title, or keywords if available
-    if (query || keywords.length > 0) {
-      const searchTerms = [query, ...keywords].filter(Boolean);
-      const regexPatterns = searchTerms.map(term => new RegExp(term.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'i'));
-      filter.$or = [
-        { content: { $in: regexPatterns } },
-        { title: { $in: regexPatterns } },
-        { text: { $in: regexPatterns } }
-      ];
-    }
-
-    const results = await collection.find(filter).limit(limit).toArray();
-    return results;
-  } catch (error) {
-    console.error(`Database search failed for source_type "${sourceType}":`, error);
-    return [];
-  }
+  });
 }
 
 // Helper to handle LLM generation with automatic rate-limit retries (exponential backoff)
@@ -143,7 +187,7 @@ async function generateWithRetry(provider, options, maxRetries = 5) {
 
 function cleanParsedValue(value) {
   if (!value) return '';
-  return value.replace(/[\*`_\#]/g, '').trim();
+  return value.replace(/[\*`\#]/g, '').trim();
 }
 /**
  * Runs only the Query Expansion Agent.
@@ -617,7 +661,8 @@ async function runAgentFlow(userMessage, options = {}) {
     return {
       agentName,
       content: agentResponse.content || '',
-      retrievedDocuments: docs.length
+      retrievedDocuments: docs.length,
+      docs
     };
   });
 
@@ -748,13 +793,42 @@ async function runAgentFlow(userMessage, options = {}) {
     console.log(`Generated ${followUpQuestions.length} follow-up questions.`);
   }
 
+  const allSources = [];
+  const seenSources = new Set();
+  for (const res of agentResults) {
+    if (Array.isArray(res.docs)) {
+      for (const doc of res.docs) {
+        const title = doc.title || 'Untitled';
+        const filename = doc.file || 'Unknown';
+        const key = `${title}:::${filename}`;
+        if (!seenSources.has(key)) {
+          seenSources.add(key);
+          allSources.push({
+            title,
+            filename,
+            source_table: doc.source_table || doc.source_type || 'unknown',
+            record_id: doc.record_id || null,
+            parent_id: doc.parent_id || null,
+            excerpt: doc.excerpt || (doc.content ? doc.content.slice(0, 350) : ''),
+            author: doc.author || null,
+            sections: doc.sections || null,
+            category: doc.category || null,
+            subject: doc.subject || null,
+            doc_date: doc.doc_date || null
+          });
+        }
+      }
+    }
+  }
+
   console.log('--- Agent Flow Completed ---');
 
   return {
     content: finalAnswer,
     route,
     isClarifying: false,
-    follow_up_questions: followUpQuestions
+    follow_up_questions: followUpQuestions,
+    sources: allSources
   };
 }
 
