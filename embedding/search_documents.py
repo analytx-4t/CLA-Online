@@ -18,9 +18,12 @@ Retrieval Strategy: Top-5 from PGVector + Top-5 from Pinecone (Total 10 chunks c
 import os
 import re
 import json
-import sys
-import psycopg2
-from psycopg2.extras import RealDictCursor
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    sys.stderr.write("[ERROR] Missing required Python package 'psycopg2'. Please run: pip install psycopg2-binary\n")
+    raise
 from dotenv import load_dotenv
 from openai import OpenAI
 

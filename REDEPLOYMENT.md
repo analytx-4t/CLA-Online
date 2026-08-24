@@ -19,9 +19,15 @@ cd /var/www/cla-online
 git pull origin priyanshu   # Or 'main', depending on target branch
 ```
 
-### Step 3: Update Backend Dependencies (If modified)
+### Step 3: Update Backend & Python Dependencies
 ```bash
 npm install
+
+# Update Python environment dependencies for RAG retrieval engine
+cd /var/www/cla-online/embedding
+python3 -m venv venv
+./venv/bin/pip install psycopg2-binary pinecone-client openai python-dotenv PyMuPDF
+cd /var/www/cla-online
 ```
 
 ### Step 4: Rebuild Admin Dashboard Frontend
