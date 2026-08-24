@@ -1776,7 +1776,7 @@ async function handleUserSend() {
     messagesBySession[sessionId].push(assistantMsgObj);
     messagesToAnimate.add(assistantMsgObj.message_id);
     renderMessages();
-    renderSessionsList();
+    renderSessions();
 
     // Persist to MongoDB in background without blocking UI rendering
     sendMessageToSession(sessionId, persistPayload).then(saveResult => {
@@ -1792,7 +1792,7 @@ async function handleUserSend() {
           if (saveResult.session.last_message_at) session.last_message_at = saveResult.session.last_message_at;
           if (typeof saveResult.session.message_count === 'number') session.message_count = saveResult.session.message_count;
         }
-        renderSessionsList();
+        renderSessions();
       }
     }).catch(err => {
       console.warn('[Chatbot UI] Background message persistence notice:', err);
