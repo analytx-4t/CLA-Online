@@ -1,11 +1,13 @@
 import { NavLink } from 'react-router-dom';
-import { ChevronLeft, ClipboardCheck, Database, LayoutDashboard, Settings, ShieldCheck } from 'lucide-react';
+import { ChevronLeft, ClipboardCheck, Database, LayoutDashboard, Settings, Target, Sparkles } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
 const navItems = [
   { label: 'Overview', to: '/', icon: LayoutDashboard },
-  { label: 'Online Eval', to: '/online-eval', icon: ClipboardCheck },
   { label: 'Golden Dataset', to: '/golden-dataset', icon: Database },
+  { label: 'Retrieval Eval', to: '/retrieval-eval', icon: Target },
+  { label: 'Generation Eval', to: '/generation-eval', icon: Sparkles },
+  { label: 'Online Eval', to: '/online-eval', icon: ClipboardCheck },
   { label: 'Settings', to: '/settings', icon: Settings },
 ];
 

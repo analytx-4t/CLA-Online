@@ -8,6 +8,8 @@ function setJsonHeaders(res, statusCode) {
 }
 
 const { handleGoldenDatasetRoutes } = require('./goldenDataset/routes');
+const { handleRetrievalEvalRoutes } = require('./retrievalEval/routes');
+const { handleGenerationEvalRoutes } = require('./generationEval/routes');
 const { settings: llmSettings, getProviderHealth } = require('./config');
 const { getEvaluationToggle, setEvaluationToggle } = require('./settingsStore');
 
@@ -147,6 +149,14 @@ async function handleAdminRoutes(req, res, db) {
   const path = req.url.split('?')[0] || '/';
 
   if (await handleGoldenDatasetRoutes(req, res, db)) {
+    return true;
+  }
+
+  if (await handleRetrievalEvalRoutes(req, res, db)) {
+    return true;
+  }
+
+  if (await handleGenerationEvalRoutes(req, res, db)) {
     return true;
   }
 

@@ -9,6 +9,8 @@ import OnlineEvalPage from './pages/OnlineEvalPage';
 import SettingsPage from './pages/SettingsPage';
 import RequestDetailsPage from './pages/RequestDetailsPage';
 import GoldenDatasetPage from './pages/GoldenDatasetPage';
+import RetrievalEvalPage from './pages/RetrievalEvalPage';
+import GenerationEvalPage from './pages/GenerationEvalPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 export default function App() {
@@ -42,8 +44,10 @@ export default function App() {
           <main className="mx-auto min-w-0 flex-1 w-full max-w-[1680px] p-4 sm:p-5 lg:p-6">
             <Routes>
               <Route path="/" element={<OverviewPage />} />
-              <Route path="/online-eval" element={<OnlineEvalPage />} />
               <Route path="/golden-dataset" element={<GoldenDatasetPage />} />
+              <Route path="/retrieval-eval" element={<RetrievalEvalPage />} />
+              <Route path="/generation-eval" element={<GenerationEvalPage />} />
+              <Route path="/online-eval" element={<OnlineEvalPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/request/:requestId" element={<RequestDetailsPage />} />
               <Route path="*" element={<NotFoundPage />} />
