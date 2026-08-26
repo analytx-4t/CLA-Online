@@ -1179,11 +1179,7 @@ function extractSearchPhrasesAndWords(excerptText, userQueryText) {
 function highlightRelevantExcerpt(html, excerptText = '', userQueryText = '') {
   if (!html) return html;
   
-  const { phrases, words } = extractSearchPhrasesAndWords(excerptText, userQueryText);
-
-  // Pattern for statutory references & defined legal concepts
-  const legalRefRegex = /\b(?:Section|Sub-section|Clause|Rule|Regulation|Article)\s+\d+[A-Za-z]*(?:\(\d+\))?(?:\([a-z]\))?|\b(?:IT Act|Companies Act|Board meetings?|video conferencing|articles of association|notice period|electronic mode|Circular)\b/gi;
-
+  const { phrases } = extractSearchPhrasesAndWords(excerptText, userQueryText);
   let totalMatches = 0;
 
   const highlighted = html.replace(/>([^<]+)</g, (match, content) => {
@@ -1191,7 +1187,7 @@ function highlightRelevantExcerpt(html, excerptText = '', userQueryText = '') {
 
     let updated = content;
 
-    // A. Sentence / Phrase Highlighting (Cited Passage)
+    // Sentence / Phrase Highlighting (Cited Passage - Yellow highlight)
     for (const phrase of phrases) {
       if (!phrase || phrase.length < 6 || totalMatches >= 30) continue;
       const safePhrase = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
@@ -1204,34 +1200,12 @@ function highlightRelevantExcerpt(html, excerptText = '', userQueryText = '') {
       } catch (e) {}
     }
 
-    // B. Statutory & Defined Legal Terms Highlighting
-    try {
-      updated = updated.replace(legalRefRegex, (m) => {
-        return `<mark class="legal-term-mark">${m}</mark>`;
-      });
-    } catch (e) {}
-
-    // C. Important Query Keywords Highlighting
-    if (words.length > 0 && totalMatches < 60) {
-      const targetWords = words.filter(w => w.length >= 4).slice(0, 15);
-      if (targetWords.length > 0) {
-        const kwPattern = targetWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-        try {
-          const kwRegex = new RegExp(`\\b(${kwPattern})\\b`, 'gi');
-          const parts = updated.split(/(<mark[^>]*>.*?<\/mark>)/gi);
-          updated = parts.map(part => {
-            if (part.startsWith('<mark')) return part;
-            return part.replace(kwRegex, '<mark class="query-keyword-mark">$1</mark>');
-          }).join('');
-        } catch (e) {}
-      }
-    }
-
     return `>${updated}<`;
   });
 
   return highlighted;
 }
+
 
 function renderCitationHTML(data, theme = 'dark', highlightQuery = '', userQuery = '') {
   const root = (data && data.results) ? data.results : (data || {});
@@ -1611,48 +1585,25 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '', userQuery
       text-decoration: underline !important;
     }
 
-    /* Multi-layered Highlighting System */
-    .content-body mark.cited-mark, .content-body .cited-mark {
-      background-color: rgba(254, 240, 138, 0.55) !important;
+    /* Clean Yellow Highlighting System */
+    .content-body mark.cited-mark, .content-body .cited-mark, .content-body mark {
+      background-color: #fef08a !important;
       color: #0f172a !important;
-      padding: 2px 5px !important;
+      padding: 2px 6px !important;
       border-radius: 4px !important;
       font-weight: 600 !important;
-      border-bottom: 2px solid #eab308 !important;
-    }
-
-    body.dark-theme .content-body mark.cited-mark, body.dark-theme .content-body .cited-mark {
-      background-color: rgba(234, 179, 8, 0.3) !important;
-      color: #fef08a !important;
       border-bottom: 2px solid #facc15 !important;
+      box-shadow: 0 1px 3px rgba(250, 204, 21, 0.25);
     }
 
-    .content-body mark.legal-term-mark, .content-body .legal-term-mark {
-      background-color: rgba(12, 135, 66, 0.16) !important;
-      color: var(--primary) !important;
-      padding: 1px 6px !important;
-      border-radius: 4px !important;
-      font-weight: 700 !important;
-      border: 1px solid rgba(12, 135, 66, 0.3) !important;
-    }
-
-    body.dark-theme .content-body mark.legal-term-mark, body.dark-theme .content-body .legal-term-mark {
-      background-color: rgba(16, 185, 129, 0.22) !important;
-      color: #34d399 !important;
-      border: 1px solid rgba(52, 211, 153, 0.35) !important;
-    }
-
-    .content-body mark.query-keyword-mark, .content-body .query-keyword-mark {
-      background-color: rgba(59, 130, 246, 0.15) !important;
-      color: #0369a1 !important;
-      padding: 1px 4px !important;
+    body.dark-theme .content-body mark.cited-mark, body.dark-theme .content-body .cited-mark, body.dark-theme .content-body mark {
+      background-color: rgba(250, 204, 21, 0.28) !important;
+      color: #fef08a !important;
+      padding: 2px 6px !important;
       border-radius: 4px !important;
       font-weight: 600 !important;
-    }
-
-    body.dark-theme .content-body mark.query-keyword-mark, body.dark-theme .content-body .query-keyword-mark {
-      background-color: rgba(96, 165, 250, 0.22) !important;
-      color: #93c5fd !important;
+      border-bottom: 2px solid #facc15 !important;
+      box-shadow: 0 1px 3px rgba(250, 204, 21, 0.3);
     }
 
     .content-body .key-term {
@@ -2195,6 +2146,77 @@ async function startServer() {
         return;
       }
 
+      if ((path === '/api/view-pdf' || path === '/api/pdf') && req.method === 'GET') {
+        try {
+          const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+          const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+
+          const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+          let rawFile = urlParsed.searchParams.get('file') || urlParsed.searchParams.get('fileName') || urlParsed.searchParams.get('file_name') || '';
+          let page = urlParsed.searchParams.get('page') || urlParsed.searchParams.get('page_number') || '1';
+
+          let fileName = decodeURIComponent(rawFile).trim();
+
+          const s3BookFiles = [
+            "Basic Concepts of Company & It's Structure_PRINT.pdf",
+            "Basic_Concepts_of_Company_and_Its_Structure_PRINT.pdf",
+            "Company Finance, Investment & Audit_PRINT.pdf",
+            "Company_Finance_Investment_and_Audit_PRINT.pdf",
+            "Corporate Compliance & Law_PRINT.pdf",
+            "Corporate Dispute & Remedies_PRINT.pdf",
+            "Corporate_Compliance_and_Law_PRINT.pdf",
+            "Corporate_Dispute_and_Remedies_PRINT.pdf",
+            "Key Managerial Personnel_PRINT.pdf",
+            "Key_Managerial_Personnel_PRINT.pdf",
+            "Legal Doctrines & Principles_PRINT.pdf",
+            "Legal_Doctrines_and_Principles_PRINT.pdf",
+            "Meetings & Governance_PRINT.pdf",
+            "Meetings_and_Governance_PRINT.pdf",
+            "Share Capital & Securities Law_PRINT (1).pdf",
+            "Share_Capital_and_Securities_Law_PRINT.pdf",
+            "Share_Capital_and_Securities_Law_PRINT_1.pdf"
+          ];
+
+          let targetKey = null;
+          if (!fileName || fileName.toLowerCase() === 'unknown' || fileName.toLowerCase() === 'null') {
+            targetKey = `books/${s3BookFiles[0]}`;
+          } else {
+            if (!fileName.endsWith('.pdf')) fileName += '.pdf';
+            const normSearch = fileName.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const match = s3BookFiles.find(b => b.toLowerCase().replace(/[^a-z0-9]/g, '') === normSearch) ||
+                          s3BookFiles.find(b => normSearch.length > 3 && b.toLowerCase().replace(/[^a-z0-9]/g, '').includes(normSearch)) ||
+                          s3BookFiles.find(b => normSearch.length > 3 && normSearch.includes(b.toLowerCase().replace(/[^a-z0-9]/g, ''))) ||
+                          s3BookFiles.find(b => b.toLowerCase().includes(fileName.toLowerCase().replace('.pdf', ''))) ||
+                          fileName;
+            targetKey = `books/${match.startsWith('books/') ? match.slice(6) : match}`;
+          }
+
+          const s3Client = new S3Client({
+            region: process.env.AWS_REGION || 'us-east-1',
+            credentials: {
+              accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+              secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+            }
+          });
+
+          const command = new GetObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME || 'james-fixer',
+            Key: targetKey
+          });
+
+          const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 7200 });
+          const redirectUrl = `${presignedUrl}#page=${page}`;
+
+          res.writeHead(302, { 'Location': redirectUrl });
+          res.end();
+        } catch (pdfErr) {
+          console.error('[PDF Endpoint] Error generating presigned URL:', pdfErr.message);
+          res.writeHead(500, { 'Content-Type': 'text/html' });
+          res.end(`<h1>500 Internal Server Error</h1><p>Unable to open requested PDF: ${escapeHTML(pdfErr.message)}</p>`);
+        }
+        return;
+      }
+
       if (path === '/api/llm/health' && req.method === 'GET') {
         setJsonHeaders(res, 200);
         res.end(JSON.stringify(getProviderHealth()));
@@ -2674,9 +2696,8 @@ async function startServer() {
             // Format search context
             const contextBlock = results.map((r, idx) => {
               const sourceIndex = idx + 1;
-              const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-              const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-                (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
+              const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || r.subject || 'Untitled';
+              const fileName = r.file_name || r.file || r.filename || (r.original && r.original.child && r.original.child.FileName) || (r.original && r.original.parent && r.original.parent.FileName) || r.doc_title || r.subject || title || 'Unknown';
               const category = r.category || 'Unknown';
               const subject = r.subject || 'Unknown';
               const sections = r.sections || 'Unknown';
@@ -3076,11 +3097,11 @@ What is the penalty for violating this provision?`;
 
             if (Array.isArray(results)) {
               results.forEach((r, idx) => {
-                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                const fileName =
-                  (r.original && r.original.child && r.original.child.FileName) ||
-                  (r.original && r.original.parent && r.original.parent.FileName) ||
-                  'Unknown';
+                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || r.subject || 'Untitled';
+                const fileName = r.file_name || r.file || r.filename || (r.original && r.original.child && r.original.child.FileName) || (r.original && r.original.parent && r.original.parent.FileName) || r.doc_title || r.subject || title || 'Unknown';
+                const isBook = Boolean(r.is_book || r.source_table === 'CLA Books' || r.database_source === 'Pinecone' || (fileName && String(fileName).endsWith('.pdf')));
+                const pageNumber = r.page_number || r.parent_id || r.page_no || 1;
+                const s3Url = r.s3_url || (isBook && fileName !== 'Unknown' ? `/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNumber}#page=${pageNumber}` : null);
 
                 const getCategory = (res) => {
                   const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
@@ -3091,14 +3112,18 @@ What is the penalty for violating this provision?`;
                 allSources.push({
                   title,
                   filename: fileName,
+                  file_name: fileName,
+                  is_book: isBook,
+                  s3_url: s3Url,
                   source_table: r.source_table || (r.database_source === 'Pinecone' ? 'CLA Books' : 'Unknown'),
                   record_id: r.record_id,
                   parent_id: r.parent_id,
+                  page_number: pageNumber,
+                  page_no: pageNumber,
                   database_source: r.database_source || (r.source_table === 'CLA Books' ? 'Pinecone' : 'PGVector'),
                   law_title: r.law_title || null,
-                  page_no: r.parent_id || null,
                   excerpt: truncateExcerpt(r.chunk_text),
-                  author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                  author: (r.original && r.original.parent && r.original.parent.Author) || r.author || null,
                   sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
                   category: getCategory(r) || (r.database_source === 'Pinecone' || r.source_table === 'CLA Books' ? 'Book / PDF (Pinecone)' : null),
                   subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,

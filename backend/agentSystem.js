@@ -117,10 +117,15 @@ async function searchVectorDb(query, sourceType, keywords = [], limit = 5) {
           const res = JSON.parse(stdout);
           const results = res.results || [];
           const mapped = results.map(r => ({
-            file: (r.original && r.original.child && r.original.child.FileName) || (r.original && r.original.parent && r.original.parent.FileName) || r.file || r.filename || 'Unknown',
+            file: r.file_name || r.file || r.filename || (r.original && r.original.child && r.original.child.FileName) || (r.original && r.original.parent && r.original.parent.FileName) || r.doc_title || 'Unknown',
+            file_name: r.file_name || r.file || r.filename || r.doc_title || 'Unknown',
+            page_number: r.page_number || r.parent_id || 1,
+            s3_url: r.s3_url || null,
+            is_book: Boolean(r.is_book || r.source_table === 'CLA Books' || r.database_source === 'Pinecone'),
             title: r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled',
             source_type: r.source_table || sourceType,
             source_table: r.source_table || sourceType,
+            database_source: r.database_source || 'PGVector',
             record_id: r.record_id || null,
             parent_id: r.parent_id || null,
             content: r.chunk_text || r.content || r.text || '',
@@ -139,19 +144,29 @@ async function searchVectorDb(query, sourceType, keywords = [], limit = 5) {
         }
       });
 
-      const cleanQuery = String(query || '')
-        .split(/\r?\n/)
-        .map(l => l.replace(/^(?:EXPANDED_QUERY|QUERY|KEYWORDS|SUGGESTED_FILTERS|CLARIFYING_QUESTION)\s*:\s*/gi, '').trim())
-        .filter(l => l && l.length > 3)
-        .join(' ')
-        .slice(0, 250);
-      const searchQuery = [cleanQuery, ...keywords.slice(0, 5)].filter(Boolean).join(' ');
+      const lines = String(query || '').split(/\r?\n/);
+      let extractedQuery = '';
+      for (const line of lines) {
+        if (/^\*?EXPANDED_QUERY\*?\s*:/i.test(line) || /^\*?QUERY\*?\s*:/i.test(line)) {
+          extractedQuery = line.replace(/^\*?(?:EXPANDED_QUERY|QUERY)\*?\s*:\s*/i, '').trim();
+          break;
+        }
+      }
+      if (!extractedQuery) {
+        extractedQuery = lines
+          .filter(l => !/^(?:KEYWORDS|SUGGESTED_FILTERS|CLARIFYING_QUESTION)\s*:/i.test(l.trim()))
+          .join(' ')
+          .trim();
+      }
+      const cleanQuery = extractedQuery.slice(0, 300);
+      const searchQuery = [cleanQuery, ...keywords.slice(0, 3)].filter(Boolean).join(' ');
       const payload = JSON.stringify({
         query: searchQuery || 'Companies Act share capital',
         top_k: limit,
         hybrid: true,
         source_filter: null
       });
+
 
       child.stdin.write(payload);
       child.stdin.end();
@@ -220,22 +235,23 @@ function resolveAndSanitizeCitations(finalAnswer, sources = []) {
   return cleanAnswer;
 }
 
-// Helper to handle LLM generation with automatic rate-limit retries (exponential backoff)
-async function generateWithRetry(provider, options, maxRetries = 5) {
-  let delay = 2000;
+// Helper to handle LLM generation with automatic DeepSeek v4 Pro fallback on OpenAI/quota errors
+async function generateWithRetry(provider, options, maxRetries = 3) {
+  let delay = 1500;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       return await provider.generate(options);
     } catch (error) {
-      const isRateLimit = error.message && (
-        error.message.includes('rate limit') ||
-        error.message.includes('quota') ||
-        error.message.includes('429')
-      );
-      if (isRateLimit && attempt < maxRetries) {
-        console.warn(`Rate limit encountered. Retrying in ${delay}ms (Attempt ${attempt}/${maxRetries})...`);
+      console.warn(`[LLM Provider Warning] Primary provider error (${error.message}). Executing DeepSeek v4 Pro fallback...`);
+      try {
+        const deepseekFallback = getLLMProvider('deepseek', 'deepseek-v4-pro');
+        return await deepseekFallback.generate(options);
+      } catch (fallbackErr) {
+        console.error(`[DeepSeek Fallback Error] ${fallbackErr.message}`);
+      }
+      if (attempt < maxRetries) {
         await new Promise(resolve => setTimeout(resolve, delay));
-        delay *= 2; // exponential backoff
+        delay *= 2;
         continue;
       }
       throw error;
@@ -258,8 +274,8 @@ async function expandLegalQuery(userMessage) {
   const prompts = loadAgentPrompts();
   const { settings } = require('./config');
 
-  // Query Expansion uses DeepSeek v4 Pro
-  const expansionProvider = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
+  // Query Expansion uses OpenAI primary with DeepSeek v4 Pro fallback
+  const expansionProvider = getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini');
 
   console.log(
     `[Query Expansion] Expanding legal query: "${userMessage}"`
@@ -569,10 +585,11 @@ async function runAgentFlow(userMessage, options = {}) {
     };
   }
 
-  // Step 2: Query Expansion
+  // Step 2: Query Expansion (OpenAI Primary, DeepSeek Fallback)
   console.log('Running Query_Expansion_Agent...');
   const expansionPrompt = assemblePrompt(prompts.Query_Expansion_Agent, prompts);
-  const expansionResponse = await generateWithRetry(defaultProvider, {
+  const openaiExpansionProvider = getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini');
+  const expansionResponse = await generateWithRetry(openaiExpansionProvider, {
     messages: [{ role: 'user', content: userMessage }],
     systemPrompt: expansionPrompt,
     temperature: 0.2
@@ -873,25 +890,35 @@ async function runAgentFlow(userMessage, options = {}) {
   for (const res of agentResults) {
     if (Array.isArray(res.docs)) {
       for (const doc of res.docs) {
-        const title = doc.title || doc.file || 'Untitled';
-        const filename = doc.file || 'Unknown';
-        const key = `${title}:::${filename}`;
+        const title = doc.title || doc.doc_title || doc.file || doc.file_name || 'Untitled';
+        const filename = doc.file_name || doc.file || doc.filename || doc.title || 'Unknown';
+        const isBook = Boolean(doc.is_book || doc.source_table === 'CLA Books' || doc.database_source === 'Pinecone' || (filename && String(filename).endsWith('.pdf')));
+        const pageNumber = doc.page_number || doc.parent_id || 1;
+        const s3Url = isBook ? `/api/view-pdf?file=${encodeURIComponent(filename)}&page=${pageNumber}#page=${pageNumber}` : (doc.s3_url || null);
+        const key = `${title}:::${filename}:::${pageNumber}`;
+
         if (!seenSources.has(key)) {
           seenSources.add(key);
           rawSourcesList.push({
             title,
             filename,
-            source_table: doc.source_table || doc.source_type || 'unknown',
-            record_id: doc.record_id || null,
-            parent_id: doc.parent_id || null,
+            file_name: filename,
+            source_table: isBook ? 'CLA Books' : (doc.source_table || doc.source_type || 'unknown'),
+            record_id: doc.record_id || doc.embedding_id || null,
+            parent_id: pageNumber,
+            page_number: pageNumber,
+            is_book: isBook,
+            s3_url: s3Url,
+            database_source: doc.database_source || (isBook ? 'Pinecone' : 'PGVector'),
             excerpt: doc.excerpt || (doc.content ? doc.content.slice(0, 350) : ''),
             author: doc.author || null,
             sections: doc.sections || null,
-            category: doc.category || null,
+            category: isBook ? 'Legal Reference Books & Publications' : (doc.category || null),
             subject: doc.subject || null,
             doc_date: doc.doc_date || null
           });
         }
+
       }
     }
   }

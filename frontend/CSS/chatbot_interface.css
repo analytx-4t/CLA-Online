@@ -855,6 +855,53 @@ html[data-theme="dark"] .open-citation-btn:hover {
   visibility: visible;
 }
 
+/* Clickable Cited Quotes & Phrases */
+blockquote.cited-quote-block, .chat-message blockquote {
+  background: rgba(254, 240, 138, 0.15);
+  border-left: 4px solid #facc15;
+  margin: 10px 0;
+  padding: 8px 14px;
+  border-radius: 0 8px 8px 0;
+  font-style: italic;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+blockquote.cited-quote-block:hover, .chat-message blockquote:hover {
+  background: rgba(254, 240, 138, 0.3);
+  border-left-color: #eab308;
+  transform: translateX(2px);
+  box-shadow: 0 2px 8px rgba(250, 204, 21, 0.25);
+}
+
+html[data-theme="dark"] blockquote.cited-quote-block, html[data-theme="dark"] .chat-message blockquote {
+  background: rgba(250, 204, 21, 0.1);
+  border-left-color: #facc15;
+}
+
+html[data-theme="dark"] blockquote.cited-quote-block:hover, html[data-theme="dark"] .chat-message blockquote:hover {
+  background: rgba(250, 204, 21, 0.22);
+}
+
+mark.answer-highlight.clickable-phrase {
+  background-color: #fef08a;
+  color: #854d0e;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border-bottom: 2px solid #facc15;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+mark.answer-highlight.clickable-phrase:hover {
+  background-color: #fde047;
+  color: #713f12;
+  box-shadow: 0 2px 6px rgba(250, 204, 21, 0.4);
+}
+
+
 /* Citations Breadcrumbs Styling */
 .citations-breadcrumbs {
   display: flex;

@@ -463,11 +463,12 @@ function formatMarkdown(text) {
   html = html.replace(/(<li>.*?<\/li>)/gs, '<ol>$1</ol>');
   html = html.replace(/<\/ol>\s*<ol>/g, '');
 
-  // Parse bold, italic, code, highlights
+  // Parse bold, italic, code, highlights, blockquotes
   html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
   html = html.replace(/`(.*?)`/g, '<code>$1</code>');
-  html = html.replace(/==(.*?)==/g, '<mark class="answer-highlight">$1</mark>');
+  html = html.replace(/==(.*?)==/g, '<mark class="answer-highlight clickable-phrase" title="Click to open source PDF / document">$1</mark>');
+  html = html.replace(/^\s*>\s*(.*?)$/gm, '<blockquote class="cited-quote-block" title="Click to open source PDF / document at this section">$1</blockquote>');
 
   // Parse citation tags: [1] -> superscript link
   html = html.replace(/\[([1-9])\]/g, '<a href="#citation-$1" class="citation-ref-link" data-citation-index="$1">[$1]</a>');
@@ -478,6 +479,7 @@ function formatMarkdown(text) {
 
   return html;
 }
+
 
 function sanitizeCitations(text, maxIndex) {
   if (!text) return '';
@@ -964,6 +966,22 @@ function ensureCitationVisible(citationsContainer, cardEl) {
 
 function openChunkDetailModal(s, idx) {
   const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
+  const isBook = Boolean(s.is_book || s.database_source === 'Pinecone' || s.source_table === 'CLA Books' || (s.filename && String(s.filename).endsWith('.pdf')));
+  
+  if (isBook) {
+    let fileName = s.file_name || s.filename || s.file || s.title || s.subject || 'CLA Books PDF';
+    if (fileName === 'Unknown' || fileName === 'null') {
+      fileName = s.title || s.subject || 'CLA Books PDF';
+    }
+    const pageNo = s.page_number || s.parent_id || 1;
+    let s3Url = s.s3_url;
+    if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null')) {
+      s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}#page=${pageNo}`;
+    }
+    window.open(s3Url, '_blank');
+    return;
+  }
+
   let modalOverlay = document.getElementById('chunkDetailModalOverlay');
   if (!modalOverlay) {
     modalOverlay = document.createElement('div');
@@ -973,9 +991,8 @@ function openChunkDetailModal(s, idx) {
   }
 
   const sourceNum = idx + 1;
-  const isBook = s.database_source === 'Pinecone' || s.source_table === 'CLA Books';
-  const badgeText = isBook ? 'Book / Manual' : 'Legal Record';
-  const badgeClass = isBook ? 'badge-book' : 'badge-record';
+  const badgeText = 'Legal Record';
+  const badgeClass = 'badge-record';
 
   const excerptText = s.excerpt || s.chunk_text || s.content || s.text || '';
   const docTitle = s.title || s.law_title || s.filename || 'Untitled Reference';
@@ -987,6 +1004,7 @@ function openChunkDetailModal(s, idx) {
     const highlightParam = excerptText ? `&highlight=${encodeURIComponent(excerptText)}` : '';
     openLinkUrl = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(recId)}${parentParam}&theme=${activeTheme}${highlightParam}`;
   }
+
 
   modalOverlay.innerHTML = `
     <div class="dialog-card citation-modal-card">
@@ -1142,15 +1160,31 @@ function renderSourceCitations(container, message) {
       const rawExcerpt = s.excerpt || s.chunk_text || s.content || s.text || '';
       const cardRecId = s.record_id || s.embedding_id;
       const userQueryVal = message.query || (message.metadata && message.metadata.query) || '';
+      const isBook = Boolean(s.is_book || s.database_source === 'Pinecone' || s.source_table === 'CLA Books' || (s.filename && String(s.filename).endsWith('.pdf')));
+      let fileName = s.file_name || s.filename || s.file || s.title || s.subject || 'Book PDF';
+      if (fileName === 'Unknown' || fileName === 'null') {
+        fileName = s.title || s.subject || 'Book PDF';
+      }
+      const pageNo = s.page_number || s.parent_id || 1;
+      let s3Url = s.s3_url;
+      if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null')) {
+        s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}#page=${pageNo}`;
+      }
+
       let openLinkHtml = '';
-      if (s.source_table && cardRecId) {
+      if (isBook) {
+        openLinkHtml = `<a href="${s3Url}" target="_blank" class="open-citation-btn book-pdf-btn" title="Open full S3 PDF document at page ${pageNo}"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>📖 Open Full PDF (Page ${pageNo})</a>`;
+      } else if (s.source_table && cardRecId) {
         const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
         const highlightParam = rawExcerpt ? `&highlight=${encodeURIComponent(rawExcerpt)}` : '';
         const queryParam = userQueryVal ? `&query=${encodeURIComponent(userQueryVal)}` : '';
         openLinkHtml = `<a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(cardRecId)}${parentParam}&theme=${activeTheme}${highlightParam}${queryParam}" target="_blank" class="open-citation-btn" title="Open full source content directly with text highlighting"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="vertical-align: middle; margin-right: 3px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Full Content</a>`;
       }
 
-      const viewChunkBtnHtml = `<button type="button" class="view-chunk-modal-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 3px;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>View</button>`;
+      const viewChunkBtnHtml = isBook
+        ? `<a href="${s3Url}" target="_blank" class="view-chunk-modal-btn book-view-btn" title="Open full PDF at page ${pageNo}">📖 Open PDF</a>`
+        : `<button type="button" class="view-chunk-modal-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 3px;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>View</button>`;
+
 
       let excerptHtml = '';
       if (rawExcerpt) {
@@ -1305,8 +1339,55 @@ function renderMessageActions(container, message) {
 
   container.appendChild(actionsRow);
 
+  // Setup click listeners for quoted text/phrases and blockquotes in the answer
+  container.querySelectorAll('.cited-quote-block, .clickable-phrase, blockquote').forEach(quoteEl => {
+    quoteEl.style.cursor = 'pointer';
+    quoteEl.title = 'Click to open source PDF / document at this section';
+    quoteEl.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const quoteText = quoteEl.innerText.trim();
+      const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
+      
+      let matchedSource = sources.find(s => {
+        const txt = s.excerpt || s.chunk_text || s.content || s.text || '';
+        return txt && quoteText && (txt.includes(quoteText.slice(0, 25)) || quoteText.includes(txt.slice(0, 25)));
+      }) || sources[0];
+
+      if (matchedSource) {
+        const isBook = Boolean(matchedSource.is_book || matchedSource.database_source === 'Pinecone' || matchedSource.source_table === 'CLA Books' || (matchedSource.filename && String(matchedSource.filename).endsWith('.pdf')));
+        if (isBook) {
+          let fileName = matchedSource.file_name || matchedSource.filename || matchedSource.file || matchedSource.title || matchedSource.subject || 'Book PDF';
+          if (fileName === 'Unknown' || fileName === 'null') {
+            fileName = matchedSource.title || matchedSource.subject || 'Book PDF';
+          }
+          const pageNo = matchedSource.page_number || matchedSource.parent_id || 1;
+          let s3Url = matchedSource.s3_url;
+          if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null')) {
+            s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}#page=${pageNo}`;
+          }
+          window.open(s3Url, '_blank');
+          return;
+        }
+        if (matchedSource.source_table && matchedSource.record_id) {
+          const parentParam = matchedSource.parent_id ? `&parentId=${encodeURIComponent(matchedSource.parent_id)}` : '';
+          const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(matchedSource.source_table)}&recordId=${encodeURIComponent(matchedSource.record_id)}${parentParam}&theme=${document.documentElement.getAttribute('data-theme') || 'light'}&highlight=${encodeURIComponent(quoteText || matchedSource.excerpt || '')}`;
+          window.open(url, '_blank');
+          return;
+        }
+      }
+      
+      const citationsContainer = container.querySelector('.citations-container');
+      if (citationsContainer) {
+        setCitationCardsExpanded(citationsContainer, true);
+        citationsContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  });
+
   // Setup click listeners for inline superscript citation links in the text
   container.querySelectorAll('.citation-ref-link').forEach(link => {
+
     link.addEventListener('click', (e) => {
       e.preventDefault();
       const index = parseInt(link.getAttribute('data-citation-index'), 10) - 1;
@@ -1314,12 +1395,23 @@ function renderMessageActions(container, message) {
       // citation page straight to that highlighted passage instead of just the card.
       const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
       const src = sources[index];
-      if (src && src.source_table && src.record_id && src.excerpt) {
-        const parentParam = src.parent_id ? `&parentId=${encodeURIComponent(src.parent_id)}` : '';
-        const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(src.source_table)}&recordId=${encodeURIComponent(src.record_id)}${parentParam}&theme=${document.documentElement.getAttribute('data-theme') || 'light'}&highlight=${encodeURIComponent(src.excerpt)}`;
-        window.open(url, '_blank');
-        return;
+      if (src) {
+        const isBook = Boolean(src.is_book || src.database_source === 'Pinecone' || src.source_table === 'CLA Books' || (src.filename && String(src.filename).endsWith('.pdf')));
+        if (isBook) {
+          const fileName = src.file_name || src.filename || src.file || src.title;
+          const pageNo = src.page_number || src.parent_id || 1;
+          const s3Url = src.s3_url || `https://james-fixer.s3.us-east-1.amazonaws.com/books/${encodeURIComponent(fileName)}#page=${pageNo}`;
+          window.open(s3Url, '_blank');
+          return;
+        }
+        if (src.source_table && src.record_id && src.excerpt) {
+          const parentParam = src.parent_id ? `&parentId=${encodeURIComponent(src.parent_id)}` : '';
+          const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(src.source_table)}&recordId=${encodeURIComponent(src.record_id)}${parentParam}&theme=${document.documentElement.getAttribute('data-theme') || 'light'}&highlight=${encodeURIComponent(src.excerpt)}`;
+          window.open(url, '_blank');
+          return;
+        }
       }
+
 
       const citationsContainer = container.querySelector('.citations-container');
       if (!citationsContainer) return;

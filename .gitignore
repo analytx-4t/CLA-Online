@@ -107,3 +107,4 @@ embedding/embeddings_cache.npz
 *.sqlite
 *.sqlite3
 session_code.txt
+scratch/

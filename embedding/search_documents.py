@@ -27,6 +27,9 @@ except ImportError:
     raise
 from dotenv import load_dotenv
 from openai import OpenAI
+from urllib.parse import quote
+
+_embed_cache = {}
 
 dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
 if os.path.exists(dotenv_path):
@@ -78,17 +81,70 @@ def get_pinecone_index():
 
 
 def embed_query(query_text):
-    """Generate query embedding using text-embedding-3-small (1536 dims)."""
+    """Generate query embedding using text-embedding-3-small (1536 dims). Safely returns None on API error."""
+    cleaned_query = str(query_text or '').strip()[:8000]
+    if not cleaned_query:
+        cleaned_query = "legal search"
+    if cleaned_query in _embed_cache:
+        return _embed_cache[cleaned_query]
+
     try:
         result = _openai_client.embeddings.create(
             model=EMBEDDING_MODEL,
-            input=[query_text],
+            input=[cleaned_query],
             dimensions=EMBEDDING_DIMENSIONS
         )
-        return result.data[0].embedding
+        vec = result.data[0].embedding
+        _embed_cache[cleaned_query] = vec
+        return vec
     except Exception as e:
-        sys.stderr.write(f"[Embedding Error] Failed to generate query embedding: {e}\n")
-        raise e
+        sys.stderr.write(f"[Embedding Warning] OpenAI embedding failed ({e}). Falling back to relational & text search.\n")
+        return None
+
+
+def postgres_text_fallback_search(conn, query_text, limit=5):
+    """Fallback text search in PostgreSQL when vector embedding service is unavailable or quota exceeded."""
+    results = []
+    words = [w for w in re.findall(r'\w+', str(query_text or '')) if len(w) > 3 and w.lower() not in ['what', 'where', 'which', 'every', 'also', 'under', 'with', 'from', 'this', 'that', 'have', 'been', 'were']]
+    if not words:
+        return results
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        first_word = f"%{words[0]}%"
+        second_word = f"%{words[1]}%" if len(words) > 1 else first_word
+        cur.execute('''
+            SELECT "embedding_id", "source_table", "record_id", "parent_id", "chunk_text",
+                   "category", "subject", "sections", "doc_title", "law_title", "doc_date"
+            FROM "document_embeddings"
+            WHERE "chunk_text" ILIKE %s AND "chunk_text" ILIKE %s
+            LIMIT %s;
+        ''', (first_word, second_word, limit))
+        rows = cur.fetchall()
+        for r in rows:
+            results.append({
+                "embedding_id": str(r["embedding_id"]),
+                "source_table": r["source_table"],
+                "record_id": r["record_id"],
+                "parent_id": r["parent_id"],
+                "chunk_text": r["chunk_text"],
+                "category": r["category"],
+                "subject": r["subject"],
+                "sections": r["sections"],
+                "doc_title": r["doc_title"],
+                "law_title": r["law_title"],
+                "doc_date": str(r["doc_date"]) if r["doc_date"] else None,
+                "score": 0.80,
+                "database_source": "PG_Text_Fallback"
+            })
+    except Exception as e:
+        sys.stderr.write(f"[Postgres Text Fallback Error] {e}\n")
+    finally:
+        cur.close()
+    return results
+
+
+
 
 # ---------- 1. PGVECTOR SEARCH (STRUCTURED DATA) ----------
 
@@ -168,11 +224,14 @@ def pinecone_search(query_text, top_k=5, query_vec=None):
             meta = match.metadata or {}
             chunk_text = meta.get("text") or meta.get("raw_text") or ""
             book_name = meta.get("book_name") or meta.get("file_name") or "Unstructured Document"
-            page_no = meta.get("page_number")
+            file_name = meta.get("file_name") or (f"{book_name}.pdf" if not str(book_name).endswith(".pdf") else str(book_name))
+            page_no = meta.get("page_number") or meta.get("page_no") or 1
             section_label = meta.get("section_label") or meta.get("source")
+            s3_url = f"/api/view-pdf?file={quote(file_name)}&page={page_no}#page={page_no}"
+
 
             if not chunk_text.startswith("["):
-                header_parts = ["Pinecone Unstructured", f"Book: {book_name}"]
+                header_parts = ["CLA Books", f"Book: {book_name}"]
                 if page_no:
                     header_parts.append(f"Page: {page_no}")
                 if section_label:
@@ -184,20 +243,26 @@ def pinecone_search(query_text, top_k=5, query_vec=None):
 
             results.append({
                 "embedding_id": str(match.id),
-                "source_table": meta.get("source") or "Pinecone_Unstructured",
+                "source_table": "CLA Books",
                 "record_id": str(match.id),
                 "parent_id": page_no,
                 "chunk_text": enriched_text,
-                "category": "Unstructured Books / Documents",
+                "category": "Legal Reference Books & Publications",
                 "subject": book_name,
                 "sections": section_label,
                 "doc_title": book_name,
-                "law_title": f"Book Page {page_no}" if page_no else "Unstructured PDF",
+                "law_title": f"{book_name} (Page {page_no})",
+                "file_name": file_name,
+                "filename": file_name,
+                "page_number": page_no,
+                "s3_url": s3_url,
+                "is_book": True,
                 "doc_date": None,
                 "score": float(match.score),
                 "database_source": "Pinecone"
             })
         return results
+
     except Exception as e:
         sys.stderr.write(f"[Pinecone Search Error] {e}\n")
         return []
@@ -320,17 +385,29 @@ def fetch_source_details(conn, source_table, record_id, parent_id):
                             doc_title = meta.get("doc_title") or meta.get("subject") or meta.get("book_name") or "CLA Books & Unstructured Documents"
                             sec_info = meta.get("sections") or f"Page {meta.get('page_no') or parent_id or 'N/A'}"
 
+                            meta_fn = meta.get("file_name") or (f"{doc_title}.pdf" if not str(doc_title).endswith(".pdf") else str(doc_title))
+                            meta_pn = meta.get("page_number") or meta.get("page_no") or parent_id or 1
+                            s3_url = f"/api/view-pdf?file={quote(meta_fn)}&page={meta_pn}#page={meta_pn}"
+
                             parent["Title"] = doc_title
                             parent["Sections"] = sec_info
                             parent["Subject"] = meta.get("subject") or doc_title
+                            parent["FileName"] = meta_fn
+                            parent["s3_url"] = s3_url
+                            parent["is_book"] = True
+
+                            child["FileName"] = meta_fn
                             child["Sections"] = sec_info
                             child["chunk_text"] = chunk_txt
                             child["Filetext"] = chunk_txt
                             child["Article_Text"] = chunk_txt
-                            return {"child": child, "parent": parent, "text": chunk_txt}
+                            child["s3_url"] = s3_url
+                            child["is_book"] = True
+                            return {"child": child, "parent": parent, "text": chunk_txt, "is_book": True, "s3_url": s3_url}
             except Exception as pc_err:
                 sys.stderr.write(f"[Pinecone Citation Detail Error] {pc_err}\n")
             return {"child": child, "parent": parent}
+
     except Exception as e:
         sys.stderr.write(f"[Source Detail Error] {source_table} ID {record_id}: {e}\n")
     finally:
@@ -341,7 +418,7 @@ def fetch_source_details(conn, source_table, record_id, parent_id):
 def relational_statute_search(conn, query_text, source_filter=None, limit=5):
     """
     Direct relational lookup in PostgreSQL primary tables for statutory Acts, Case Laws, 
-    Commentaries, and Procedures to resolve vector DB coverage gaps for non-Articles tables.
+    Commentaries, Notifications, Circulars, Procedures, and Q&A to resolve vector DB coverage gaps.
     """
     results = []
     sec_matches = re.findall(r'\b(?:section|sec\.?|s\.?)\s*(\d+[a-z]?|\d+\(\d+\)(?:\([a-z]\))?)\b', query_text, re.I)
@@ -357,7 +434,7 @@ def relational_statute_search(conn, query_text, source_filter=None, limit=5):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # 1. Legislation (Acts & Rules)
+        # Priority 1: Legislation (Acts & Rules)
         if not source_filter or source_filter.lower() in ['legislation', 'all', 'acts']:
             act_title = None
             if is_companies_act:
@@ -399,7 +476,6 @@ def relational_statute_search(conn, query_text, source_filter=None, limit=5):
                     row = cur.fetchone()
                     if row:
                         txt = row["Filetext"] or ""
-                        # Extract snippet around section
                         pos = txt.find(f"{sec}.")
                         if pos == -1:
                             pos = txt.find(f"Section {sec}")
@@ -417,6 +493,7 @@ def relational_statute_search(conn, query_text, source_filter=None, limit=5):
                             "law_title": act_title,
                             "doc_date": "2013-08-29",
                             "score": 0.99,
+                            "legal_priority_rank": 1,
                             "database_source": "PG_Relational_Legislation"
                         })
                 elif act_title:
@@ -442,10 +519,38 @@ def relational_statute_search(conn, query_text, source_filter=None, limit=5):
                             "law_title": row['Title'],
                             "doc_date": None,
                             "score": 0.98,
+                            "legal_priority_rank": 1,
                             "database_source": "PG_Relational_Legislation"
                         })
 
-        # 2. CaseLaws
+        # Priority 2: CLASE Commentary
+        if not source_filter or source_filter.lower() in ['commentary', 'clase_commentary', 'all']:
+            for sec in sections:
+                cur.execute('''
+                    SELECT "ID", "Title", "Section", "Commentary_Details"
+                    FROM "CLASE_Commentary"
+                    WHERE "Section" ILIKE %s OR "Title" ILIKE %s
+                    LIMIT 2;
+                ''', (f'%{sec}%', f'%{sec}%'))
+                for r in cur.fetchall():
+                    results.append({
+                        "embedding_id": f"rel-comm-{r['ID']}",
+                        "source_table": "CLASE_Commentary",
+                        "record_id": r['ID'],
+                        "parent_id": r['ID'],
+                        "chunk_text": f"Commentary Title: {r['Title']} | Section: {r['Section']}\nDetails:\n{r['Commentary_Details'][:1000]}",
+                        "category": "Section Commentary",
+                        "subject": r['Title'],
+                        "sections": r['Section'],
+                        "doc_title": r['Title'],
+                        "law_title": r['Title'],
+                        "doc_date": None,
+                        "score": 0.95,
+                        "legal_priority_rank": 2,
+                        "database_source": "PG_Relational_Commentary"
+                    })
+
+        # Priority 3: CaseLaws
         if not source_filter or source_filter.lower() in ['caselaw', 'caselaws', 'all']:
             for sec in sections:
                 cur.execute('''
@@ -467,34 +572,65 @@ def relational_statute_search(conn, query_text, source_filter=None, limit=5):
                         "doc_title": r['Versus'],
                         "law_title": r['Versus'],
                         "doc_date": None,
-                        "score": 0.95,
+                        "score": 0.92,
+                        "legal_priority_rank": 3,
                         "database_source": "PG_Relational_CaseLaws"
                     })
 
-        # 3. Commentary
-        if not source_filter or source_filter.lower() in ['commentary', 'clase_commentary', 'all']:
+        # Priority 4: Notifications & Circulars
+        if not source_filter or source_filter.lower() in ['notifications', 'circular', 'all']:
             for sec in sections:
                 cur.execute('''
-                    SELECT "ID", "Title", "Section", "Commentary_Details"
-                    FROM "CLASE_Commentary"
-                    WHERE "Section" ILIKE %s OR "Title" ILIKE %s
+                    SELECT n."Id", n."Title", n."NotificationNo", nd."Filetext"
+                    FROM "notifications_2025" n
+                    LEFT JOIN "notifications_data_2025" nd ON n."Id" = nd."Notification_ID"
+                    WHERE n."Sections" ILIKE %s OR n."Title" ILIKE %s
                     LIMIT 2;
                 ''', (f'%{sec}%', f'%{sec}%'))
                 for r in cur.fetchall():
+                    txt = r["Filetext"] or ""
                     results.append({
-                        "embedding_id": f"rel-comm-{r['ID']}",
-                        "source_table": "CLASE_Commentary",
-                        "record_id": r['ID'],
-                        "parent_id": r['ID'],
-                        "chunk_text": f"Commentary Title: {r['Title']} | Section: {r['Section']}\nDetails:\n{r['Commentary_Details'][:1000]}",
-                        "category": "Secondary Commentary",
+                        "embedding_id": f"rel-notif-{r['Id']}",
+                        "source_table": "Notifications",
+                        "record_id": r['Id'],
+                        "parent_id": r['Id'],
+                        "chunk_text": f"Notification: {r['Title']} | No: {r['NotificationNo'] or 'N/A'}\nText:\n{txt[:1000]}",
+                        "category": "Government Notification",
                         "subject": r['Title'],
-                        "sections": r['Section'],
+                        "sections": f"Section {sec}",
                         "doc_title": r['Title'],
                         "law_title": r['Title'],
                         "doc_date": None,
-                        "score": 0.90,
-                        "database_source": "PG_Relational_Commentary"
+                        "score": 0.88,
+                        "legal_priority_rank": 4,
+                        "database_source": "PG_Relational_Notifications"
+                    })
+
+        # Priority 5: Procedures & Q&A
+        if not source_filter or source_filter.lower() in ['procedure', 'query', 'all']:
+            for sec in sections:
+                cur.execute('''
+                    SELECT "ID", "Title", "Heading", "Procedure", "LawTitle"
+                    FROM "CLASE_Procedure_Details_2025"
+                    WHERE "Heading" ILIKE %s OR "Title" ILIKE %s OR "Procedure" ILIKE %s
+                    LIMIT 2;
+                ''', (f'%{sec}%', f'%{sec}%', f'%{sec}%'))
+                for r in cur.fetchall():
+                    results.append({
+                        "embedding_id": f"rel-proc-{r['ID']}",
+                        "source_table": "CLASE_Procedure_Details",
+                        "record_id": r['ID'],
+                        "parent_id": r['ID'],
+                        "chunk_text": f"Procedure Title: {r['Title']} | Heading: {r['Heading']}\nSteps:\n{str(r['Procedure'])[:1000]}",
+                        "category": "Legal Procedure & Compliance",
+                        "subject": r['Title'],
+                        "sections": f"Section {sec}",
+                        "doc_title": r['Title'],
+                        "law_title": r['LawTitle'] or r['Title'],
+                        "doc_date": None,
+                        "score": 0.85,
+                        "legal_priority_rank": 5,
+                        "database_source": "PG_Relational_Procedure"
                     })
 
     except Exception as e:
@@ -505,36 +641,72 @@ def relational_statute_search(conn, query_text, source_filter=None, limit=5):
     return results
 
 
-def dual_retrieval(conn, query_text, top_k_pgvector=5, top_k_pinecone=5, source_filter=None, fetch_full_sources=True):
+def dual_retrieval(conn, query_text, top_k_pgvector=8, top_k_pinecone=10, source_filter=None, fetch_full_sources=True):
     """
-    Retrieve Top-K chunks from BOTH PGVector (structured data) AND Pinecone (unstructured data),
-    augmented with direct Relational Statute Search to guarantee statutory section coverage.
+    Retrieve candidate chunks from BOTH PGVector / PostgreSQL (Structured Legal Tables) AND Pinecone (Unstructured PDFs).
+    Enforces a strict 5-Tier Legal Table Prioritization while ensuring Pinecone PDF candidates are mandatory candidates when matched.
+    The Cohere Re-ranker makes the final decision on relevance.
     """
-    query_vec = embed_query(query_text)
+    import re
 
-    # 1. Relational statutory search for exact section/Act lookup
-    relational_chunks = relational_statute_search(conn, query_text, source_filter=source_filter, limit=5)
+    # Extract sub-queries for multi-part / multi-question prompts
+    raw_sub_queries = re.split(r'(?:\?|\n+|(?:^|\s+)\d+[\.\)]\s*)', str(query_text or ''))
+    clean_sub_queries = [q.strip() for q in raw_sub_queries if q and len(q.strip()) > 8]
+    
+    # Deduplicated list of search queries: full query + sub-queries (up to 4 sub-queries)
+    search_queries = list(dict.fromkeys([query_text] + clean_sub_queries[:4]))
 
-    # 2. Retrieve PGVector chunks (structured data)
-    try:
-        pg_chunks = vector_search(conn, query_text, top_k=top_k_pgvector, source_filter=source_filter, query_vec=query_vec)
-    except Exception as e:
-        sys.stderr.write(f"[PGVector Search Error] {e}\n")
-        pg_chunks = []
+    all_relational_chunks = []
+    all_pg_chunks = []
+    all_pc_chunks = []
 
-    # Attach full source data for PGVector hits if requested
-    if fetch_full_sources and pg_chunks:
-        for hit in pg_chunks:
-            full_data = fetch_source_details(conn, hit["source_table"], hit["record_id"], hit["parent_id"])
-            hit["full_source"] = full_data
+    sf = str(source_filter or "").lower()
+    should_search_pinecone = not sf or sf.startswith("!") or any(k in sf for k in ["pinecone", "book", "cla", "commentary", "all", "procedure", "article", "query"])
 
-    # 3. Retrieve Pinecone chunks (unstructured data)
-    pc_chunks = []
-    if not source_filter or source_filter.startswith("!") or "pinecone" in str(source_filter).lower() or "book" in str(source_filter).lower() or "cla" in str(source_filter).lower():
-        pc_chunks = pinecone_search(query_text, top_k=top_k_pinecone, query_vec=query_vec)
+    for sub_q in search_queries:
+        if not sub_q or not sub_q.strip():
+            continue
+            
+        q_vec = embed_query(sub_q)
+
+        # 1. Relational statutory search for exact section/Act lookup across prioritized tables
+        try:
+            rel_hits = relational_statute_search(conn, sub_q, source_filter=source_filter, limit=5)
+            all_relational_chunks.extend(rel_hits)
+        except Exception as e:
+            sys.stderr.write(f"[Relational Search Sub-query Error] {e}\n")
+
+        # 2. Retrieve PGVector chunks (structured data)
+        if q_vec is not None:
+            try:
+                pg_hits = vector_search(conn, sub_q, top_k=top_k_pgvector, source_filter=source_filter, query_vec=q_vec)
+                all_pg_chunks.extend(pg_hits)
+            except Exception as e:
+                sys.stderr.write(f"[PGVector Search Sub-query Error] {e}\n")
+        else:
+            try:
+                text_hits = postgres_text_fallback_search(conn, sub_q, limit=6)
+                all_pg_chunks.extend(text_hits)
+            except Exception as e:
+                sys.stderr.write(f"[Postgres Text Fallback Sub-query Error] {e}\n")
+
+        # 3. Retrieve Pinecone chunks (unstructured PDFs/books)
+        if should_search_pinecone and q_vec is not None:
+            try:
+                pc_hits = pinecone_search(sub_q, top_k=top_k_pinecone, query_vec=q_vec)
+                all_pc_chunks.extend(pc_hits)
+            except Exception as e:
+                sys.stderr.write(f"[Pinecone Search Sub-query Error] {e}\n")
+
+    # Attach full source details for PGVector hits
+    if fetch_full_sources and all_pg_chunks:
+        for hit in all_pg_chunks:
+            if "full_source" not in hit:
+                full_data = fetch_source_details(conn, hit["source_table"], hit["record_id"], hit["parent_id"])
+                hit["full_source"] = full_data
 
     # Combine all retrieval channels
-    combined_results = relational_chunks + pg_chunks + pc_chunks
+    combined_results = all_relational_chunks + all_pg_chunks + all_pc_chunks
 
     # Deduplicate by title & excerpt prefix
     seen = set()
@@ -545,19 +717,41 @@ def dual_retrieval(conn, query_text, top_k_pgvector=5, top_k_pinecone=5, source_
             seen.add(key)
             unique_results.append(doc)
 
-    # USER INSTRUCTION: Primary Legislation (Statute) chunks MUST BE Top Priority from NeonDB
-    def chunk_priority_key(doc):
-        src = str(doc.get("source_table") or "").lower()
-        cat = str(doc.get("category") or "").lower()
-        if "legis" in src or "statute" in cat or "primary" in cat:
-            return 0  # Priority 1: Statutory / Primary Legislation
-        elif "case" in src or "precedent" in cat:
-            return 1  # Priority 2: Judicial Precedent
-        else:
-            return 2  # Priority 3: Secondary Commentary
+    # Categorize into Priority Buckets:
+    # Tier 1: Legislation
+    tier1_legislation = [d for d in unique_results if "legis" in str(d.get("source_table")).lower() or "statute" in str(d.get("category")).lower()]
+    # Tier 2: CLASE Commentary
+    tier2_commentary = [d for d in unique_results if "comm" in str(d.get("source_table")).lower() or "commentary" in str(d.get("category")).lower()]
+    # Tier 3: Case Laws
+    tier3_caselaws = [d for d in unique_results if "case" in str(d.get("source_table")).lower() or "precedent" in str(d.get("category")).lower()]
+    # Tier 4: Notifications & Circulars
+    tier4_regulatory = [d for d in unique_results if any(k in str(d.get("source_table")).lower() for k in ["notif", "circ"])]
+    # Tier 5: Procedures, Queries & Articles
+    tier5_procedures_articles = [d for d in unique_results if any(k in str(d.get("source_table")).lower() for k in ["proc", "query", "art"])]
+    # Pinecone PDFs & Unstructured Books
+    pinecone_books = [d for d in unique_results if d.get("is_book") or "book" in str(d.get("source_table")).lower() or "pinecone" in str(d.get("database_source")).lower()]
+    # Unmatched / catch-all
+    others = [d for d in unique_results if d not in tier1_legislation and d not in tier2_commentary and d not in tier3_caselaws and d not in tier4_regulatory and d not in tier5_procedures_articles and d not in pinecone_books]
 
-    unique_results.sort(key=chunk_priority_key)
-    return unique_results[:12]
+    # Assemble multi-tier candidate pool (Up to 30 candidates for Cohere Reranker)
+    balanced_pool = (
+        tier1_legislation[:8] +
+        tier2_commentary[:6] +
+        tier3_caselaws[:6] +
+        tier4_regulatory[:4] +
+        tier5_procedures_articles[:4] +
+        pinecone_books[:8] +
+        others[:4]
+    )
+
+    # Fill up to 30 if pool has room
+    if len(balanced_pool) < 30:
+        remaining = [d for d in unique_results if d not in balanced_pool]
+        balanced_pool.extend(remaining[:30 - len(balanced_pool)])
+
+    return balanced_pool[:30]
+
+
 
 
 def hybrid_search(conn, query_text, top_k=5, source_filter=None, fetch_full_sources=True):

@@ -139,7 +139,22 @@ async function cohereRerank(query, documents, topK = 5, options = {}) {
         }
       }
 
-      const finalScore = Math.min(1.0, rawScore + sectionBonus);
+      // Legal Table Priority Hierarchy Weighting Bonus
+      let tableBonus = 0;
+      if (origDoc) {
+        const srcTable = String(origDoc.source_table || origDoc.category || '').toLowerCase();
+        if (srcTable.includes('legis') || srcTable.includes('statute')) {
+          tableBonus = 0.04; // Priority 1: Legislation
+        } else if (srcTable.includes('comm')) {
+          tableBonus = 0.03; // Priority 2: CLASE Commentary
+        } else if (srcTable.includes('case')) {
+          tableBonus = 0.02; // Priority 3: Judicial Precedents
+        } else if (srcTable.includes('notif') || srcTable.includes('circ')) {
+          tableBonus = 0.01; // Priority 4: Notifications & Circulars
+        }
+      }
+
+      const finalScore = Math.min(1.0, rawScore + sectionBonus + tableBonus);
 
       return {
         ...origDoc,
