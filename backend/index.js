@@ -2356,6 +2356,21 @@ async function startServer() {
 
           console.log(`[RAG Endpoint] Received question: "${question.trim()}"`);
 
+          // Conversational Contextualizer: rephrase follow-up questions using session history
+          const { contextualizeUserQuery } = require('./contextualizer');
+          const contextualResult = await contextualizeUserQuery({
+            question: question.trim(),
+            chatHistory: payload.history || payload.chatHistory || [],
+            db,
+            sessionId: req.requestContext.sessionId
+          });
+
+          const activeQuery = contextualResult.standaloneQuery || question.trim();
+          const chatSessionHistory = contextualResult.history || [];
+          if (contextualResult.isFollowUp) {
+            console.log(`[RAG Endpoint] Follow-up query detected. Contextualized query: "${activeQuery}"`);
+          }
+
           const attachmentContext = buildAttachmentContextBlock(payload.attachments);
           if (attachmentContext) {
             console.log(`[RAG Endpoint] Using ${payload.attachments.length} attachment(s) as supplementary context.`);
@@ -2369,9 +2384,9 @@ async function startServer() {
           try {
             const { checkGuardrails } = require('./guardrails');
             guardrailResult = await traceGuardrails({
-              question: question.trim(),
+              question: activeQuery,
               checkGuardrails: async () => {
-                return await checkGuardrails(question.trim());
+                return await checkGuardrails(activeQuery);
               },
               requestContext: req.requestContext,
               metadata: {
@@ -2514,9 +2529,9 @@ async function startServer() {
 
             const expansionStartedAt = Date.now();
             const queryExpansion = await traceQueryExpansion({
-              originalQuestion: question.trim(),
+              originalQuestion: activeQuery,
               expandLegalQuery: async () => {
-                return await expandLegalQuery(question.trim());
+                return await expandLegalQuery(activeQuery);
               },
               requestContext: req.requestContext,
               metadata: {
@@ -2528,7 +2543,7 @@ async function startServer() {
             const expansionTimeMs = Date.now() - expansionStartedAt;
 
             const expandedQuery =
-              queryExpansion.expandedQuery || question.trim();
+              queryExpansion.expandedQuery || activeQuery;
 
             const expansionKeywords =
               Array.isArray(queryExpansion.keywords)
@@ -2780,6 +2795,17 @@ What is the penalty for violating this provision?`;
 
             let lastLLMErr = null;
 
+            const llmMessages = [];
+            if (Array.isArray(chatSessionHistory) && chatSessionHistory.length > 0) {
+              for (const h of chatSessionHistory.slice(-6)) {
+                llmMessages.push({
+                  role: h.role === 'assistant' ? 'assistant' : 'user',
+                  content: String(h.content || '').substring(0, 500)
+                });
+              }
+            }
+            llmMessages.push({ role: 'user', content: userContent });
+
             for (const tier of uniqueTiers) {
               try {
                 llmStartedAt = Date.now();
@@ -2795,7 +2821,7 @@ What is the penalty for violating this provision?`;
                   generate: async () => {
                     return await currentLlm.generate({
                       systemPrompt: systemPrompt,
-                      messages: [{ role: 'user', content: userContent }],
+                      messages: llmMessages,
                       temperature: 0.1,
                       maxTokens: 2048
                     });
@@ -3478,10 +3504,24 @@ What is the penalty for violating this provision?`;
           let searchResults = [];
           if (!assistantMsgDoc) {
             if (session.mode === 'rag') {
-              console.log(`[RAG Session Flow] Executing search for question: "${payload.content}"`);
+              const { contextualizeUserQuery } = require('./contextualizer');
+              const contextHistory = previousMessages.slice(0, -1);
+              const contextualResult = await contextualizeUserQuery({
+                question: payload.content,
+                chatHistory: contextHistory,
+                db,
+                sessionId: session.session_id
+              });
+
+              const activeSessionQuery = contextualResult.standaloneQuery || payload.content;
+              if (contextualResult.isFollowUp) {
+                console.log(`[RAG Session Flow] Follow-up query detected. Contextualized query: "${activeSessionQuery}"`);
+              }
+
+              console.log(`[RAG Session Flow] Executing search for question: "${activeSessionQuery}"`);
               let results = [];
               try {
-                const prioritizedOutcome = await performPrioritizedLegalSearch(payload.content, payload.content);
+                const prioritizedOutcome = await performPrioritizedLegalSearch(activeSessionQuery, payload.content);
                 results = Array.isArray(prioritizedOutcome) ? prioritizedOutcome : (prioritizedOutcome.results || []);
                 searchResults = results;
                 console.log(`[RAG Session Flow] Search results count: ${results.length}`);
@@ -3533,11 +3573,23 @@ What is the penalty for violating this provision?`;
                 const model = settings.DEFAULT_LLM_MODEL;
                 const llm = getLLMProvider(provider, model);
 
+                const sessionLLmMessages = [];
+                for (const m of contextHistory.slice(-6)) {
+                  sessionLLmMessages.push({
+                    role: m.role === 'assistant' ? 'assistant' : 'user',
+                    content: String(m.content || '').substring(0, 500)
+                  });
+                }
+                sessionLLmMessages.push({
+                  role: 'user',
+                  content: `Question: ${payload.content}\n\nSearch Context:\n${contextBlock}`
+                });
+
                 let llmResponse;
                 try {
                   llmResponse = await llm.generate({
                     systemPrompt: systemPrompt,
-                    messages: [{ role: 'user', content: `Question: ${payload.content}\n\nSearch Context:\n${contextBlock}` }],
+                    messages: sessionLLmMessages,
                     temperature: 0.1,
                     maxTokens: 2048,
                     requestContext: req.requestContext,
