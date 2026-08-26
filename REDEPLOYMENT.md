@@ -16,7 +16,8 @@ ssh -i "path/to/your-key.pem" ubuntu@<YOUR-EC2-PUBLIC-IP>
 ### Step 2: Navigate & Pull Latest Code
 ```bash
 cd /var/www/cla-online
-git pull origin priyanshu   # Or 'main', depending on target branch
+git checkout package-lock.json   # Discards local lockfile changes on server if needed
+git pull origin priyanshu          # Or 'main', depending on target branch
 ```
 
 ### Step 3: Update Backend & Python Dependencies
