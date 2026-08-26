@@ -131,30 +131,51 @@ async function cohereRerank(query, documents, topK = 5, options = {}) {
       
       let sectionBonus = 0;
       if (requestedSections.length > 0 && origDoc) {
-        const searchableSections = String(origDoc.sections || '').toLowerCase();
+        const searchableSections = (
+          String(origDoc.sections || '') + ' ' +
+          String(origDoc.chunk_text || '') + ' ' +
+          String(origDoc.doc_title || '')
+        ).toLowerCase();
         for (const sec of requestedSections) {
           if (searchableSections.includes(sec)) {
-            sectionBonus += 0.05; // 5% bonus for exact statutory section match
+            sectionBonus += 0.20; // 20% bonus for exact statutory section match
           }
         }
       }
 
       // Legal Table Priority Hierarchy Weighting Bonus
+      // Primary Statutory Law (Legislation) & Official Commentary are legally authoritative
+      // and must always outrank generic secondary articles.
       let tableBonus = 0;
       if (origDoc) {
-        const srcTable = String(origDoc.source_table || origDoc.category || '').toLowerCase();
-        if (srcTable.includes('legis') || srcTable.includes('statute')) {
-          tableBonus = 0.04; // Priority 1: Legislation
-        } else if (srcTable.includes('comm')) {
-          tableBonus = 0.03; // Priority 2: CLASE Commentary
-        } else if (srcTable.includes('case')) {
-          tableBonus = 0.02; // Priority 3: Judicial Precedents
-        } else if (srcTable.includes('notif') || srcTable.includes('circ')) {
-          tableBonus = 0.01; // Priority 4: Notifications & Circulars
+        const srcTable = String(origDoc.source_table || '').toLowerCase();
+        const category = String(origDoc.category || '').toLowerCase();
+
+        if (srcTable.includes('legis') || category.includes('statute') || category.includes('primary legislation')) {
+          tableBonus = 0.30; // Priority 1: Primary Acts & Statutory Provisions
+        } else if (srcTable.includes('comm') || category.includes('commentary')) {
+          tableBonus = 0.25; // Priority 2: Official Statutory Commentary
+        } else if (srcTable.includes('book') || origDoc.is_book || category.includes('publication')) {
+          tableBonus = 0.20; // Priority 3: Core CLA Books & Reference Texts
+        } else if (srcTable.includes('notif') || srcTable.includes('circ') || category.includes('government')) {
+          tableBonus = 0.15; // Priority 4: Regulatory Notifications & Circulars
+        } else if (srcTable.includes('case') || category.includes('precedent')) {
+          tableBonus = 0.10; // Priority 5: Judicial Precedents
+        } else if (srcTable.includes('proc') || srcTable.includes('query')) {
+          tableBonus = 0.05; // Priority 6: Compliance Procedures & Q&A
+        } else if (srcTable.includes('art') || category.includes('articles')) {
+          tableBonus = -0.15; // Priority 7: Secondary Articles (penalized so statutory law outranks opinion pieces)
         }
       }
 
-      const finalScore = Math.min(1.0, rawScore + sectionBonus + tableBonus);
+      // Penalize outdated 1956 Act chunks if 2013 Act is not mentioned
+      let legacyPenalty = 0;
+      const searchableFullText = (String(origDoc.doc_title || '') + ' ' + String(origDoc.chunk_text || '')).toLowerCase();
+      if ((searchableFullText.includes('1956 act') || searchableFullText.includes('act, 1956')) && !searchableFullText.includes('2013')) {
+        legacyPenalty = -0.15;
+      }
+
+      const finalScore = Math.min(1.0, rawScore + sectionBonus + tableBonus + legacyPenalty);
 
       return {
         ...origDoc,

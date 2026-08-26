@@ -753,7 +753,38 @@ function heuristicRerankSearchResults(query, results, topK = 5) {
       );
 
       if (sectionPattern.test(searchableText)) {
-        relevanceScore += 10;
+        relevanceScore += 20;
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // STATUTORY SOURCE PRIORITY BOOST (Tier Hierarchy)
+    // ------------------------------------------------------------------
+    // Primary Statutory Law (Legislation) & Official Commentary are
+    // legally authoritative and must always outrank generic articles.
+    const tableStr = (result.source_table || '').toLowerCase();
+    const categoryStr = (result.category || '').toLowerCase();
+
+    if (tableStr.includes('legis') || categoryStr.includes('statute') || categoryStr.includes('primary legislation')) {
+      relevanceScore += 15; // Tier 1: Primary Legislation / Acts
+    } else if (tableStr.includes('comm') || categoryStr.includes('commentary')) {
+      relevanceScore += 12; // Tier 2: Official Statutory Commentary
+    } else if (tableStr.includes('book') || result.is_book || categoryStr.includes('publication')) {
+      relevanceScore += 10; // Tier 3: Core CLA Books & Reference Texts
+    } else if (tableStr.includes('notif') || tableStr.includes('circ') || categoryStr.includes('government')) {
+      relevanceScore += 8;  // Tier 4: Regulatory Notifications & Circulars
+    } else if (tableStr.includes('case') || categoryStr.includes('precedent')) {
+      relevanceScore += 6;  // Tier 5: Judicial Precedents
+    } else if (tableStr.includes('proc') || tableStr.includes('query')) {
+      relevanceScore += 4;  // Tier 6: Compliance Procedures & Q&A
+    } else if (tableStr.includes('art')) {
+      relevanceScore += 1;  // Tier 7: Secondary Articles (lowest priority)
+    }
+
+    // Penalize legacy 1956 Act material if not mentioning Companies Act 2013
+    if (searchableText.includes('1956 act') || searchableText.includes('act, 1956')) {
+      if (!searchableText.includes('2013')) {
+        relevanceScore -= 5;
       }
     }
 
@@ -3608,81 +3639,49 @@ What is the penalty for violating this provision?`;
 
                 answerText = parsedResponse.answer;
                 suggestions = parsedResponse.suggestions;
-                // Find all bracketed citation numbers, e.g., [1], [2]
-                const citationRegex = /\[([1-9])\]/g;
-                let match;
-                const citedIndices = new Set();
-                while ((match = citationRegex.exec(answerText)) !== null) {
-                  const idx = parseInt(match[1], 10) - 1;
-                  if (idx >= 0 && idx < results.length) {
-                    citedIndices.add(idx);
-                  }
-                }
+                // Format sources array for session message metadata
+                const allSources = [];
+                if (Array.isArray(results)) {
+                  results.forEach((r, idx) => {
+                    const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || r.subject || 'Untitled';
+                    const fileName = r.file_name || r.file || r.filename || (r.original && r.original.child && r.original.child.FileName) || (r.original && r.original.parent && r.original.parent.FileName) || r.doc_title || r.subject || title || 'Unknown';
+                    const isBook = Boolean(r.is_book || r.source_table === 'CLA Books' || r.database_source === 'Pinecone' || (fileName && String(fileName).endsWith('.pdf')));
+                    const pageNumber = r.page_number || r.parent_id || r.page_no || 1;
+                    const s3Url = r.s3_url || (isBook && fileName !== 'Unknown' ? `/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNumber}#page=${pageNumber}` : null);
 
-                // Fallback to title/filename matching if no numerical citations found
-                if (citedIndices.size === 0) {
-                  for (let i = 0; i < results.length; i++) {
-                    const r = results[i];
-                    const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                    const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-                      (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-                    if (answerText.toLowerCase().includes(title.toLowerCase().slice(0, 30)) ||
-                      answerText.toLowerCase().includes(fileName.toLowerCase())) {
-                      citedIndices.add(i);
-                    }
-                  }
-                }
+                    const getCategory = (res) => {
+                      const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
+                      if (cat && (String(cat).includes('text-embedding') || String(cat).includes('embedding-3'))) return null;
+                      return cat;
+                    };
 
-                const seenSources = new Set();
-                citedIndices.forEach(idx => {
-                  const r = results[idx];
-                  const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                  const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-                    (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-                  const sourceKey = `${title}:::${fileName}`;
-                  if (!seenSources.has(sourceKey)) {
-                    seenSources.add(sourceKey);
-                    uniqueSources.push({
+                    allSources.push({
                       title,
                       filename: fileName,
-                      source_table: r.source_table,
+                      file_name: fileName,
+                      is_book: isBook,
+                      s3_url: s3Url,
+                      source_table: r.source_table || (r.database_source === 'Pinecone' ? 'CLA Books' : 'Unknown'),
                       record_id: r.record_id,
                       parent_id: r.parent_id,
+                      page_number: pageNumber,
+                      page_no: pageNumber,
+                      database_source: r.database_source || (r.source_table === 'CLA Books' ? 'Pinecone' : 'PGVector'),
+                      law_title: r.law_title || null,
                       excerpt: truncateExcerpt(r.chunk_text),
-                      author: (r.original && r.original.parent && r.original.parent.Author) || null,
+                      author: (r.original && r.original.parent && r.original.parent.Author) || r.author || null,
                       sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-                      category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
+                      category: getCategory(r) || (r.database_source === 'Pinecone' || r.source_table === 'CLA Books' ? 'Book / PDF (Pinecone)' : null),
                       subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
                       doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
                       vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
                       issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
-                      issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
+                      issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null,
+                      score: r.backend_relevance_score || r.score || null
                     });
-                  }
-                });
-
-                if (uniqueSources.length === 0 && results.length > 0) {
-                  const r = results[0];
-                  const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                  const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-                    (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-                  uniqueSources.push({
-                    title,
-                    filename: fileName,
-                    source_table: r.source_table,
-                    record_id: r.record_id,
-                    parent_id: r.parent_id,
-                    excerpt: truncateExcerpt(r.chunk_text),
-                    author: (r.original && r.original.parent && r.original.parent.Author) || null,
-                    sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-                    category: r.category || (r.original && r.original.parent && r.original.parent.Category) || null,
-                    subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
-                    doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
-                    vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
-                    issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
-                    issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null
                   });
                 }
+                uniqueSources = allSources;
               }
 
               assistantMsgDoc = {
