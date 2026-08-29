@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import OverviewPage from './pages/OverviewPage';
+import UserFeedbackPage from './pages/UserFeedbackPage';
 import OnlineEvalPage from './pages/OnlineEvalPage';
 import SettingsPage from './pages/SettingsPage';
 import RequestDetailsPage from './pages/RequestDetailsPage';
@@ -44,6 +45,7 @@ export default function App() {
           <main className="mx-auto min-w-0 flex-1 w-full max-w-[1680px] p-4 sm:p-5 lg:p-6">
             <Routes>
               <Route path="/" element={<OverviewPage />} />
+              <Route path="/feedback-logs" element={<UserFeedbackPage />} />
               <Route path="/golden-dataset" element={<GoldenDatasetPage />} />
               <Route path="/retrieval-eval" element={<RetrievalEvalPage />} />
               <Route path="/generation-eval" element={<GenerationEvalPage />} />

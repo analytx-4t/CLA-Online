@@ -329,6 +329,10 @@ async function expandLegalQuery(userMessage) {
     // the user's original question.
     let expandedQuery = userMessage;
     let keywords = [];
+    let inferredSections = [];
+    let primaryAct = null;
+    let actFilter = null;
+    let currencyRequirement = '';
     let suggestedFilters = '';
     let clarifyingQuestion = 'NONE';
 
@@ -375,6 +379,58 @@ async function expandLegalQuery(userMessage) {
         continue;
       }
 
+      const isMatch = cleanLine.match(
+        /^\*?(?:INFERRED_SECTIONS|SECTIONS|SECTIONS_INFERRED)\*?\s*:\s*(.*)$/i
+      );
+
+      if (isMatch) {
+        const isStr = cleanParsedValue(isMatch[1]);
+        if (isStr && isStr.toLowerCase() !== 'none') {
+          inferredSections = isStr
+            .split(',')
+            .map(s => cleanParsedValue(s).replace(/^section\s+/i, '').trim())
+            .filter(Boolean);
+        }
+        continue;
+      }
+
+      const paMatch = cleanLine.match(
+        /^\*?(?:PRIMARY_ACT|TARGET_ACT|ACT)\*?\s*:\s*(.*)$/i
+      );
+
+      if (paMatch) {
+        const paStr = cleanParsedValue(paMatch[1]);
+        if (paStr && paStr.toLowerCase() !== 'none') {
+          primaryAct = paStr;
+        }
+        continue;
+      }
+
+      const afMatch = cleanLine.match(
+        /^\*?(?:ACT_FILTER|ACT_YEAR|ACT_SPECIFICATION)\*?\s*:\s*(.*)$/i
+      );
+
+      if (afMatch) {
+        const afStr = cleanParsedValue(afMatch[1]);
+        if (afStr && afStr.toLowerCase() !== 'none') {
+          actFilter = afStr;
+          if (!primaryAct) primaryAct = afStr;
+        }
+        continue;
+      }
+
+      const crMatch = cleanLine.match(
+        /^\*?(?:CURRENCY_REQUIREMENT|CURRENCY_CHECK|CURRENCY)\*?\s*:\s*(.*)$/i
+      );
+
+      if (crMatch) {
+        const crStr = cleanParsedValue(crMatch[1]);
+        if (crStr && crStr.toLowerCase() !== 'none') {
+          currencyRequirement = crStr;
+        }
+        continue;
+      }
+
       const sfMatch = cleanLine.match(
         /^\*?SUGGESTED_FILTERS\*?\s*:\s*(.*)$/i
       );
@@ -403,6 +459,10 @@ async function expandLegalQuery(userMessage) {
       expandedQuery:
         expandedQuery || userMessage,
       keywords,
+      inferredSections,
+      primaryAct: primaryAct || actFilter || null,
+      actFilter: actFilter || primaryAct || null,
+      currencyRequirement: currencyRequirement || 'as_of: today; mode = CURRENT',
       suggestedFilters,
       clarifyingQuestion:
         clarifyingQuestion || 'NONE'

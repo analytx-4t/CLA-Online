@@ -137,45 +137,79 @@ async function cohereRerank(query, documents, topK = 5, options = {}) {
           String(origDoc.doc_title || '')
         ).toLowerCase();
         for (const sec of requestedSections) {
-          if (searchableSections.includes(sec)) {
+          const secRegex = new RegExp(`\\b(?:section|sec\\.?|s\\.?)\\s*${sec}\\b|\\b${sec}\\b`, 'i');
+          if (secRegex.test(searchableSections)) {
             sectionBonus += 0.20; // 20% bonus for exact statutory section match
           }
         }
       }
 
-      // Legal Table Priority Hierarchy Weighting Bonus
-      // Primary Statutory Law (Legislation) & Official Commentary are legally authoritative
-      // and must always outrank generic secondary articles.
+      // 6-Tier Legal Table Priority Hierarchy Weighting:
+      // Priority 1: Law (Legislation)
+      // Priority 2: CaseLaw
+      // Priority 3: Article
+      // Priority 4: Commentary
+      // Priority 5: Notification (Notifications & Circulars)
+      // Priority 6: Etc (Procedures, Queries, Books & Unstructured PDFs)
       let tableBonus = 0;
       if (origDoc) {
         const srcTable = String(origDoc.source_table || '').toLowerCase();
         const category = String(origDoc.category || '').toLowerCase();
 
         if (srcTable.includes('legis') || category.includes('statute') || category.includes('primary legislation')) {
-          tableBonus = 0.30; // Priority 1: Primary Acts & Statutory Provisions
-        } else if (srcTable.includes('comm') || category.includes('commentary')) {
-          tableBonus = 0.25; // Priority 2: Official Statutory Commentary
-        } else if (srcTable.includes('book') || origDoc.is_book || category.includes('publication')) {
-          tableBonus = 0.20; // Priority 3: Core CLA Books & Reference Texts
-        } else if (srcTable.includes('notif') || srcTable.includes('circ') || category.includes('government')) {
-          tableBonus = 0.15; // Priority 4: Regulatory Notifications & Circulars
+          tableBonus = 0.40; // Tier 1: Law (Legislation)
         } else if (srcTable.includes('case') || category.includes('precedent')) {
-          tableBonus = 0.10; // Priority 5: Judicial Precedents
-        } else if (srcTable.includes('proc') || srcTable.includes('query')) {
-          tableBonus = 0.05; // Priority 6: Compliance Procedures & Q&A
-        } else if (srcTable.includes('art') || category.includes('articles')) {
-          tableBonus = -0.15; // Priority 7: Secondary Articles (penalized so statutory law outranks opinion pieces)
+          tableBonus = 0.32; // Tier 2: CaseLaw
+        } else if (srcTable.includes('art') || category.includes('article')) {
+          tableBonus = 0.26; // Tier 3: Article
+        } else if (srcTable.includes('comm') || category.includes('commentary')) {
+          tableBonus = 0.20; // Tier 4: Commentary
+        } else if (srcTable.includes('notif') || srcTable.includes('circ') || category.includes('government')) {
+          tableBonus = 0.14; // Tier 5: Notification & Circular
+        } else {
+          tableBonus = 0.08; // Tier 6: Etc (Procedures, Queries, Books)
         }
       }
 
-      // Penalize outdated 1956 Act chunks if 2013 Act is not mentioned
+      // Statutory Revision & Year Preference Logic:
+      // Ensure current/revised laws always take precedence over older superseded statutes.
+      let revisionBonus = 0;
       let legacyPenalty = 0;
-      const searchableFullText = (String(origDoc.doc_title || '') + ' ' + String(origDoc.chunk_text || '')).toLowerCase();
-      if ((searchableFullText.includes('1956 act') || searchableFullText.includes('act, 1956')) && !searchableFullText.includes('2013')) {
-        legacyPenalty = -0.15;
+      const searchableFullText = (
+        String(origDoc.doc_title || '') + ' ' +
+        String(origDoc.law_title || '') + ' ' +
+        String(origDoc.subject || '') + ' ' +
+        String(origDoc.chunk_text || '') + ' ' +
+        String(origDoc.doc_date || '')
+      ).toLowerCase();
+
+      // Extract 4-digit years
+      const yearMatches = [...searchableFullText.matchAll(/\b(19\d\d|20\d\d)\b/g)];
+      if (yearMatches.length > 0) {
+        const years = yearMatches.map(m => parseInt(m[1], 10)).filter(y => y >= 1900 && y <= 2030);
+        if (years.length > 0) {
+          const maxYear = Math.max(...years);
+          if (maxYear >= 2020) {
+            revisionBonus += 0.25; // High priority boost for post-2020 recent statutory revisions
+          } else if (maxYear >= 2013) {
+            revisionBonus += 0.15; // Moderate boost for recent Acts (e.g., Companies Act 2013, IBC 2016)
+          } else if (maxYear < 2000) {
+            legacyPenalty -= 0.15; // Penalty for pre-2000 legacy provisions
+          }
+        }
       }
 
-      const finalScore = Math.min(1.0, rawScore + sectionBonus + tableBonus + legacyPenalty);
+      // Check for explicit amendment/revision keywords
+      if (searchableFullText.includes('amendment') || searchableFullText.includes('revised') || searchableFullText.includes('substituted') || searchableFullText.includes('w.e.f.')) {
+        revisionBonus += 0.10;
+      }
+
+      // Penalize outdated 1956 Act chunks if newer 2013/2020 provisions exist
+      if ((searchableFullText.includes('1956 act') || searchableFullText.includes('act, 1956')) && !searchableFullText.includes('2013')) {
+        legacyPenalty -= 0.20;
+      }
+
+      const finalScore = Math.min(1.0, rawScore + sectionBonus + tableBonus + revisionBonus + legacyPenalty);
 
       return {
         ...origDoc,

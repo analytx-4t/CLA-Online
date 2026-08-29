@@ -415,10 +415,11 @@ def fetch_source_details(conn, source_table, record_id, parent_id):
     return None
 
 
-def relational_statute_search(conn, query_text, source_filter=None, limit=5):
+def relational_statute_search(conn, query_text, source_filter=None, limit=5, inferred_sections=None, primary_act=None):
     """
     Direct relational lookup in PostgreSQL primary tables for statutory Acts, Case Laws, 
     Commentaries, Notifications, Circulars, Procedures, and Q&A to resolve vector DB coverage gaps.
+    Dynamically uses explicit query section numbers and LLM-inferred statutory section numbers.
     """
     results = []
     sec_matches = re.findall(r'\b(?:section|sec\.?|s\.?)\s*(\d+[a-z]?|\d+\(\d+\)(?:\([a-z]\))?)\b', query_text, re.I)
@@ -428,100 +429,73 @@ def relational_statute_search(conn, query_text, source_filter=None, limit=5):
         if nm not in sections and int(nm) <= 500:
             sections.append(nm)
 
-    is_companies_act = bool(re.search(r'\b(?:companies\s*act|ca\s*2013|ca\s*1956|mgt-7|buyback|borrowing|oppression|body\s*corporate|dematerialised|liaison)\b', query_text, re.I))
-    is_ibc = bool(re.search(r'\b(?:ibc|insolvency|cirp|moratorium|corporate\s*applicant|guarantor)\b', query_text, re.I))
-    is_ni_act = bool(re.search(r'\b(?:negotiable|ni\s*act|138|cheque|bounce|non-executive)\b', query_text, re.I))
+    # Append LLM-inferred section numbers dynamically passed from Node.js query expansion payload
+    if inferred_sections and isinstance(inferred_sections, list):
+        for isec in inferred_sections:
+            clean_sec = str(isec).strip().lower().replace("section", "").strip()
+            if clean_sec and clean_sec not in sections:
+                sections.append(clean_sec)
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         # Priority 1: Legislation (Acts & Rules)
         if not source_filter or source_filter.lower() in ['legislation', 'all', 'acts']:
-            act_title = None
-            if is_companies_act:
-                act_title = 'Companies Act 2013'
-            elif is_ibc:
-                act_title = 'Insolvency and Bankruptcy Code, 2016'
-            elif is_ni_act:
-                act_title = 'Negotiable Instruments Act 1881'
-
-            chapter_map = {
-                '2': 'Companies_Act_CHAPTER_1.htm',
-                '29': 'Companies_Act_CHAPTER_3.htm',
-                '58': 'Companies_Act_CHAPTER_4.htm',
-                '68': 'Companies_Act_CHAPTER_4.htm',
-                '70': 'Companies_Act_CHAPTER_4.htm',
-                '73': 'Companies_Act_CHAPTER_5.htm',
-                '92': 'Companies_Act_CHAPTER_7.htm',
-                '139': 'Companies_Act_CHAPTER_10.htm',
-                '164': 'Companies_Act_CHAPTER_11.htm',
-                '167': 'Companies_Act_CHAPTER_11.htm',
-                '180': 'Companies_Act_CHAPTER_12.htm',
-                '188': 'Companies_Act_CHAPTER_12.htm',
-                '241': 'Companies_Act_CHAPTER_16.htm',
-                '242': 'Companies_Act_CHAPTER_16.htm',
-                '244': 'Companies_Act_CHAPTER_16.htm',
-                '380': 'Companies_Act_CHAPTER_22.htm'
-            }
-
             for sec in sections:
-                target_file = chapter_map.get(sec)
-                if target_file and act_title == 'Companies Act 2013':
+                # Dynamic SQL lookup across Legislation_2025 and Legislation_data_2025 for section text
+                clean_act_title = None
+                if primary_act:
+                    pa_lower = str(primary_act).lower()
+                    if 'companies' in pa_lower:
+                        clean_act_title = '%Companies Act%'
+                    elif 'ibc' in pa_lower or 'insolvency' in pa_lower:
+                        clean_act_title = '%Insolvency%'
+                    elif 'sebi' in pa_lower:
+                        clean_act_title = '%SEBI%'
+                    elif 'fema' in pa_lower:
+                        clean_act_title = '%FEMA%'
+                    elif 'negotiable' in pa_lower or 'ni act' in pa_lower:
+                        clean_act_title = '%Negotiable%'
+
+                if clean_act_title:
                     cur.execute('''
                         SELECT l."id", l."Title", l."Headings", ld."Filetext", ld."FileName"
                         FROM "Legislation_2025" l
-                        JOIN "Legislation_data_2025" ld ON l."Filename" = ld."FileName"
-                        WHERE l."Title" = %s AND ld."FileName" = %s
-                        LIMIT 1;
-                    ''', (act_title, target_file))
-                    row = cur.fetchone()
-                    if row:
-                        txt = row["Filetext"] or ""
-                        pos = txt.find(f"{sec}.")
-                        if pos == -1:
-                            pos = txt.find(f"Section {sec}")
-                        snippet = txt[max(0, pos-100):pos+1500] if pos != -1 else txt[:1500]
-                        results.append({
-                            "embedding_id": f"rel-leg-{row['id']}-{sec}",
-                            "source_table": "Legislation",
-                            "record_id": row["id"],
-                            "parent_id": row["id"],
-                            "chunk_text": f"Act: {act_title} | Section {sec} | Heading: {row['Headings']}\nText:\n{snippet}",
-                            "category": "Statute / Primary Legislation",
-                            "subject": act_title,
-                            "sections": f"Section {sec}",
-                            "doc_title": f"{act_title} - Section {sec}",
-                            "law_title": act_title,
-                            "doc_date": "2013-08-29",
-                            "score": 0.99,
-                            "legal_priority_rank": 1,
-                            "database_source": "PG_Relational_Legislation"
-                        })
-                elif act_title:
+                        LEFT JOIN "Legislation_data_2025" ld ON l."Filename" = ld."FileName" OR l."id" = ld."Legislation_ID"
+                        WHERE l."Title" ILIKE %s AND (l."Headings" ILIKE %s OR ld."Filetext" ILIKE %s OR ld."FileName" ILIKE %s)
+                        LIMIT 3;
+                    ''', (clean_act_title, f'%Section {sec}%', f'%{sec}.%', f'%_{sec}.%'))
+                else:
                     cur.execute('''
                         SELECT l."id", l."Title", l."Headings", ld."Filetext", ld."FileName"
                         FROM "Legislation_2025" l
-                        LEFT JOIN "Legislation_data_2025" ld ON l."id" = ld."Legislation_ID" OR l."Filename" = ld."FileName"
-                        WHERE l."Title" ILIKE %s AND (l."Headings" ILIKE %s OR ld."Filetext" ILIKE %s)
-                        LIMIT 2;
-                    ''', (f'%{act_title}%', f'%{sec}%', f'%{sec}%'))
-                    for row in cur.fetchall():
-                        txt = row["Filetext"] or ""
-                        results.append({
-                            "embedding_id": f"rel-leg-{row['id']}-{sec}",
-                            "source_table": "Legislation",
-                            "record_id": row["id"],
-                            "parent_id": row["id"],
-                            "chunk_text": f"Act: {row['Title']} | Heading: {row['Headings']}\nText:\n{txt[:1200]}",
-                            "category": "Statute / Primary Legislation",
-                            "subject": row['Title'],
-                            "sections": f"Section {sec}",
-                            "doc_title": f"{row['Title']} - {row['Headings']}",
-                            "law_title": row['Title'],
-                            "doc_date": None,
-                            "score": 0.98,
-                            "legal_priority_rank": 1,
-                            "database_source": "PG_Relational_Legislation"
-                        })
+                        LEFT JOIN "Legislation_data_2025" ld ON l."Filename" = ld."FileName" OR l."id" = ld."Legislation_ID"
+                        WHERE (l."Headings" ILIKE %s OR ld."Filetext" ILIKE %s OR ld."FileName" ILIKE %s)
+                        LIMIT 3;
+                    ''', (f'%Section {sec}%', f'%{sec}.%', f'%_{sec}.%'))
+                rows = cur.fetchall()
+                for row in rows:
+                    txt = row["Filetext"] or ""
+                    pos = txt.find(f"{sec}.")
+                    if pos == -1:
+                        pos = txt.find(f"Section {sec}")
+                    snippet = txt[max(0, pos-100):pos+1500] if pos != -1 else txt[:1500]
+                    act_name = row["Title"] or primary_act or "Primary Legislation"
+                    results.append({
+                        "embedding_id": f"rel-leg-{row['id']}-{sec}",
+                        "source_table": "Legislation",
+                        "record_id": row["id"],
+                        "parent_id": row["id"],
+                        "chunk_text": f"Act: {act_name} | Section {sec} | Heading: {row['Headings']}\nText:\n{snippet}",
+                        "category": "Statute / Primary Legislation",
+                        "subject": act_name,
+                        "sections": f"Section {sec}",
+                        "doc_title": f"{act_name} - Section {sec}",
+                        "law_title": act_name,
+                        "doc_date": "2013-08-29",
+                        "score": 0.99,
+                        "legal_priority_rank": 1,
+                        "database_source": "PG_Relational_Legislation"
+                    })
 
         # Priority 2: CLASE Commentary
         if not source_filter or source_filter.lower() in ['commentary', 'clase_commentary', 'all']:
@@ -641,7 +615,7 @@ def relational_statute_search(conn, query_text, source_filter=None, limit=5):
     return results
 
 
-def dual_retrieval(conn, query_text, top_k_pgvector=8, top_k_pinecone=10, source_filter=None, fetch_full_sources=True):
+def dual_retrieval(conn, query_text, top_k_pgvector=8, top_k_pinecone=10, source_filter=None, fetch_full_sources=True, inferred_sections=None, primary_act=None):
     """
     Retrieve candidate chunks from BOTH PGVector / PostgreSQL (Structured Legal Tables) AND Pinecone (Unstructured PDFs).
     Enforces a strict 5-Tier Legal Table Prioritization while ensuring Pinecone PDF candidates are mandatory candidates when matched.
@@ -671,7 +645,13 @@ def dual_retrieval(conn, query_text, top_k_pgvector=8, top_k_pinecone=10, source
 
         # 1. Relational statutory search for exact section/Act lookup across prioritized tables
         try:
-            rel_hits = relational_statute_search(conn, sub_q, source_filter=source_filter, limit=5)
+            rel_hits = relational_statute_search(
+                conn, sub_q, 
+                source_filter=source_filter, 
+                limit=5, 
+                inferred_sections=inferred_sections, 
+                primary_act=primary_act
+            )
             all_relational_chunks.extend(rel_hits)
         except Exception as e:
             sys.stderr.write(f"[Relational Search Sub-query Error] {e}\n")
@@ -717,34 +697,31 @@ def dual_retrieval(conn, query_text, top_k_pgvector=8, top_k_pinecone=10, source
             seen.add(key)
             unique_results.append(doc)
 
-    # Categorize into Priority Buckets:
-    # Tier 1: Legislation
-    tier1_legislation = [d for d in unique_results if "legis" in str(d.get("source_table")).lower() or "statute" in str(d.get("category")).lower()]
-    # Tier 2: CLASE Commentary
-    tier2_commentary = [d for d in unique_results if "comm" in str(d.get("source_table")).lower() or "commentary" in str(d.get("category")).lower()]
-    # Tier 3: Case Laws
-    tier3_caselaws = [d for d in unique_results if "case" in str(d.get("source_table")).lower() or "precedent" in str(d.get("category")).lower()]
-    # Tier 4: Notifications & Circulars
-    tier4_regulatory = [d for d in unique_results if any(k in str(d.get("source_table")).lower() for k in ["notif", "circ"])]
-    # Tier 5: Procedures, Queries & Articles
-    tier5_procedures_articles = [d for d in unique_results if any(k in str(d.get("source_table")).lower() for k in ["proc", "query", "art"])]
-    # Pinecone PDFs & Unstructured Books
-    pinecone_books = [d for d in unique_results if d.get("is_book") or "book" in str(d.get("source_table")).lower() or "pinecone" in str(d.get("database_source")).lower()]
-    # Unmatched / catch-all
-    others = [d for d in unique_results if d not in tier1_legislation and d not in tier2_commentary and d not in tier3_caselaws and d not in tier4_regulatory and d not in tier5_procedures_articles and d not in pinecone_books]
+    # Categorize into Strict 6-Tier Priority Buckets:
+    # Priority 1: Law (Legislation)
+    tier1_law = [d for d in unique_results if "legis" in str(d.get("source_table")).lower() or "statute" in str(d.get("category")).lower()]
+    # Priority 2: CaseLaw
+    tier2_caselaw = [d for d in unique_results if "case" in str(d.get("source_table")).lower() or "precedent" in str(d.get("category")).lower()]
+    # Priority 3: Article
+    tier3_article = [d for d in unique_results if "art" in str(d.get("source_table")).lower() or "article" in str(d.get("category")).lower()]
+    # Priority 4: Commentary
+    tier4_commentary = [d for d in unique_results if "comm" in str(d.get("source_table")).lower() or "commentary" in str(d.get("category")).lower()]
+    # Priority 5: Notification & Circular
+    tier5_notification = [d for d in unique_results if any(k in str(d.get("source_table")).lower() for k in ["notif", "circ"])]
+    # Priority 6: Etc (Procedures, Queries, Books & Unstructured PDFs)
+    tier6_etc = [d for d in unique_results if d not in tier1_law and d not in tier2_caselaw and d not in tier3_article and d not in tier4_commentary and d not in tier5_notification]
 
-    # Assemble multi-tier candidate pool (Up to 30 candidates for Cohere Reranker)
+    # Assemble multi-tier candidate pool prioritizing statutory law and latest amendments
     balanced_pool = (
-        tier1_legislation[:8] +
-        tier2_commentary[:6] +
-        tier3_caselaws[:6] +
-        tier4_regulatory[:4] +
-        tier5_procedures_articles[:4] +
-        pinecone_books[:8] +
-        others[:4]
+        tier1_law[:8] +
+        tier2_caselaw[:6] +
+        tier3_article[:5] +
+        tier4_commentary[:4] +
+        tier5_notification[:4] +
+        tier6_etc[:5]
     )
 
-    # Fill up to 30 if pool has room
+    # Fill up to 30 candidates for Cohere Reranker if pool has room
     if len(balanced_pool) < 30:
         remaining = [d for d in unique_results if d not in balanced_pool]
         balanced_pool.extend(remaining[:30 - len(balanced_pool)])
@@ -793,6 +770,8 @@ def handle_json_input():
             query = payload.get("query", "")
             top_k = payload.get("top_k", 5)
             source_filter = payload.get("source_filter")
+            inferred_sections = payload.get("inferred_sections", [])
+            primary_act = payload.get("primary_act", None)
             
             fetch_full_sources = payload.get("fetch_full_sources", False)
             results = dual_retrieval(
@@ -801,7 +780,9 @@ def handle_json_input():
                 top_k_pgvector=top_k,
                 top_k_pinecone=top_k,
                 source_filter=source_filter,
-                fetch_full_sources=fetch_full_sources
+                fetch_full_sources=fetch_full_sources,
+                inferred_sections=inferred_sections,
+                primary_act=primary_act
             )
             print(json.dumps({"results": results}, default=str))
     except Exception as e:

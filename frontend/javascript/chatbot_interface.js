@@ -470,8 +470,12 @@ function formatMarkdown(text) {
   html = html.replace(/==(.*?)==/g, '<mark class="answer-highlight clickable-phrase" title="Click to open source PDF / document">$1</mark>');
   html = html.replace(/^\s*>\s*(.*?)$/gm, '<blockquote class="cited-quote-block" title="Click to open source PDF / document at this section">$1</blockquote>');
 
-  // Parse citation tags: [1] -> superscript link
-  html = html.replace(/\[([1-9])\]/g, '<a href="#citation-$1" class="citation-ref-link" data-citation-index="$1">[$1]</a>');
+  // Parse citation tags: [Source 1], [1], [Source 1, 2], [1, 2] -> interactive citation pill links
+  html = html.replace(/\[(?:Source\s*)?(\d+)(?:\s*,\s*(?:Source\s*)?(\d+))*\]/gi, (match) => {
+    const nums = match.match(/\d+/g);
+    if (!nums || !nums.length) return match;
+    return nums.map(n => `<a href="#citation-${n}" class="citation-ref-link" data-citation-index="${n}" title="Click to view Source ${n} details">Source [${n}]</a>`).join(' ');
+  });
 
   // Handle carriage returns
   html = html.replace(/\n\n/g, '<p></p>');
@@ -483,11 +487,16 @@ function formatMarkdown(text) {
 
 function sanitizeCitations(text, maxIndex) {
   if (!text) return '';
-  // remove citation markers [n] where n > maxIndex or if maxIndex is 0 (no sources)
-  return text.replace(/\[(\d+)\]/g, (match, num) => {
-    const n = Number(num);
-    if (!maxIndex || isNaN(n) || n > maxIndex) return ''; // remove the citation entirely
-    return `[${n}]`;
+  // Clean citation markers [Source N] or [N] where N > maxIndex
+  return text.replace(/\[(?:Source\s*)?(\d+)(?:\s*,\s*(?:Source\s*)?(\d+))*\]/gi, (match) => {
+    const nums = match.match(/\d+/g);
+    if (!nums || !nums.length) return '';
+    const valid = nums.filter(n => {
+      const idx = Number(n);
+      return maxIndex && !isNaN(idx) && idx <= maxIndex;
+    });
+    if (!valid.length) return '';
+    return `[${valid.map(v => `Source ${v}`).join(', ')}]`;
   });
 }
 
@@ -974,9 +983,10 @@ function openChunkDetailModal(s, idx) {
       fileName = s.title || s.subject || 'CLA Books PDF';
     }
     const pageNo = s.page_number || s.parent_id || 1;
+    const excerptText = s.excerpt || s.chunk_text || s.content || s.text || '';
     let s3Url = s.s3_url;
-    if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null')) {
-      s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}#page=${pageNo}`;
+    if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null') || !s3Url.includes('highlight=')) {
+      s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}&highlight=${encodeURIComponent(excerptText)}#page=${pageNo}`;
     }
     window.open(s3Url, '_blank');
     return;
@@ -1051,6 +1061,136 @@ function openChunkDetailModal(s, idx) {
 
   if (closeBtn) closeBtn.onclick = hideModal;
   if (dismissBtn) dismissBtn.onclick = hideModal;
+}
+
+function openUserFeedbackModal(message) {
+  let modalOverlay = document.getElementById('userFeedbackModalOverlay');
+  if (!modalOverlay) {
+    modalOverlay = document.createElement('div');
+    modalOverlay.id = 'userFeedbackModalOverlay';
+    modalOverlay.className = 'dialog-overlay feedback-modal-overlay';
+    document.body.appendChild(modalOverlay);
+  }
+
+  // Find user question corresponding to this assistant message
+  const session = getCurrentSession();
+  const messages = session ? getMessagesForSession(session.session_id) : [];
+  const msgIdx = messages.findIndex(m => m.message_id === message.message_id);
+  let userQuestion = 'No question available';
+  if (msgIdx > 0 && messages[msgIdx - 1].role === 'user') {
+    userQuestion = messages[msgIdx - 1].content || '';
+  }
+
+  const chunks = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
+
+  modalOverlay.innerHTML = `
+    <div class="dialog-card feedback-modal-card" style="width: min(560px, 94vw); max-height: 90vh; overflow-y: auto;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+        <h3 class="dialog-title" style="margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+          <span>💬</span> Submit Response Feedback
+        </h3>
+        <button type="button" class="action-btn" id="closeFeedbackModalBtn" style="font-size: 1.2rem; cursor: pointer;">&times;</button>
+      </div>
+
+      <div style="margin-bottom: 12px;">
+        <label style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 4px;">User Question:</label>
+        <div style="padding: 10px 12px; border-radius: 8px; background: var(--surface-soft); border: 1px solid var(--border); font-size: 0.88rem; font-weight: 600; color: var(--text); max-height: 80px; overflow-y: auto;">
+          ${escapeHTML(userQuestion)}
+        </div>
+      </div>
+
+      <div style="margin-bottom: 12px;">
+        <label style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 4px;">Response Preview:</label>
+        <div style="padding: 10px 12px; border-radius: 8px; background: var(--surface-soft); border: 1px solid var(--border); font-size: 0.84rem; color: var(--muted); max-height: 100px; overflow-y: auto;">
+          ${escapeHTML((message.content || '').slice(0, 300))}${message.content && message.content.length > 300 ? '...' : ''}
+        </div>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <label style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 4px;">Cited Sources (${chunks.length}):</label>
+        <div style="font-size: 0.8rem; color: var(--muted);">
+          ${chunks.length > 0 ? chunks.map((c, i) => `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: var(--surface-soft); border: 1px solid var(--border); margin: 2px 4px 2px 0;">[Source ${i+1}] ${escapeHTML(c.title || c.law_title || c.source_table || 'Document')}</span>`).join('') : 'No cited chunks.'}
+        </div>
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <label for="feedbackTextInput" style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 4px;">Your Feedback / Notes:</label>
+        <textarea id="feedbackTextInput" placeholder="Type your detailed feedback, corrections, or audit comments here..." style="width: 100%; min-height: 100px; padding: 10px; border-radius: 8px; border: 1px solid var(--chat-input-border); background: var(--chat-input-bg); color: var(--text); outline: none; font-size: 0.9rem; resize: vertical;"></textarea>
+      </div>
+
+      <div id="feedbackModalNotice" style="margin-bottom: 10px; font-size: 0.85rem; display: none;"></div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="dialog-btn secondary" id="cancelFeedbackBtn">Cancel</button>
+        <button type="button" class="dialog-btn primary-action" id="submitFeedbackBtn" style="background: var(--primary); color: #fff; border: none; border-radius: 8px; padding: 8px 16px; font-weight: 600; cursor: pointer;">Submit Feedback</button>
+      </div>
+    </div>
+  `;
+
+  modalOverlay.removeAttribute('hidden');
+  modalOverlay.style.display = 'flex';
+
+  const closeBtn = modalOverlay.querySelector('#closeFeedbackModalBtn');
+  const cancelBtn = modalOverlay.querySelector('#cancelFeedbackBtn');
+  const submitBtn = modalOverlay.querySelector('#submitFeedbackBtn');
+  const noticeEl = modalOverlay.querySelector('#feedbackModalNotice');
+  const textInput = modalOverlay.querySelector('#feedbackTextInput');
+
+  const hideModal = () => {
+    modalOverlay.style.display = 'none';
+    modalOverlay.setAttribute('hidden', 'true');
+  };
+
+  if (closeBtn) closeBtn.onclick = hideModal;
+  if (cancelBtn) cancelBtn.onclick = hideModal;
+
+  if (submitBtn) {
+    submitBtn.onclick = async () => {
+      const text = textInput ? textInput.value.trim() : '';
+      if (!text) {
+        noticeEl.style.display = 'block';
+        noticeEl.style.color = '#dc2626';
+        noticeEl.textContent = 'Please enter your feedback before submitting.';
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitting...';
+
+      try {
+        const response = await fetch(`${getApiBaseUrl()}/api/feedback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: userQuestion,
+            answer: message.content || '',
+            chunks: chunks,
+            feedback: text,
+            sessionId: message.session_id || currentSessionId
+          })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+          noticeEl.style.display = 'block';
+          noticeEl.style.color = '#059669';
+          noticeEl.textContent = 'Thank you! Your feedback has been saved successfully.';
+          setTimeout(() => {
+            hideModal();
+          }, 1400);
+        } else {
+          throw new Error(data.error || 'Failed to save feedback');
+        }
+      } catch (err) {
+        noticeEl.style.display = 'block';
+        noticeEl.style.color = '#dc2626';
+        noticeEl.textContent = err.message || 'Error submitting feedback. Please try again.';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit Feedback';
+      }
+    };
+  }
+
   modalOverlay.onclick = (e) => {
     if (e.target === modalOverlay) hideModal();
   };
@@ -1167,8 +1307,8 @@ function renderSourceCitations(container, message) {
       }
       const pageNo = s.page_number || s.parent_id || 1;
       let s3Url = s.s3_url;
-      if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null')) {
-        s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}#page=${pageNo}`;
+      if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null') || !s3Url.includes('highlight=')) {
+        s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}&highlight=${encodeURIComponent(rawExcerpt)}#page=${pageNo}`;
       }
 
       let openLinkHtml = '';
@@ -1333,9 +1473,23 @@ function renderMessageActions(container, message) {
     }
   });
 
+  const feedbackBtn = document.createElement('button');
+  feedbackBtn.type = 'button';
+  feedbackBtn.className = 'action-btn feedback-btn';
+  feedbackBtn.setAttribute('data-tooltip', 'Submit feedback');
+  feedbackBtn.innerHTML = `
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+    </svg>
+  `;
+  feedbackBtn.addEventListener('click', () => {
+    openUserFeedbackModal(message);
+  });
+
   actionsRow.appendChild(copyBtn);
   actionsRow.appendChild(thumbsUpBtn);
   actionsRow.appendChild(thumbsDownBtn);
+  actionsRow.appendChild(feedbackBtn);
 
   container.appendChild(actionsRow);
 
@@ -1400,7 +1554,11 @@ function renderMessageActions(container, message) {
         if (isBook) {
           const fileName = src.file_name || src.filename || src.file || src.title;
           const pageNo = src.page_number || src.parent_id || 1;
-          const s3Url = src.s3_url || `https://james-fixer.s3.us-east-1.amazonaws.com/books/${encodeURIComponent(fileName)}#page=${pageNo}`;
+          const excerptText = src.excerpt || src.chunk_text || src.content || src.text || '';
+          let s3Url = src.s3_url;
+          if (!s3Url || !s3Url.includes('highlight=')) {
+            s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}&highlight=${encodeURIComponent(excerptText)}#page=${pageNo}`;
+          }
           window.open(s3Url, '_blank');
           return;
         }

@@ -605,7 +605,7 @@ async function validateEmbeddingConfiguration() {
   }
 }
 
-function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
+function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null, inferredSections = [], primaryAct = null) {
   return new Promise((resolve, reject) => {
     // Validate embedding configuration before retrieval
     validateEmbeddingConfiguration();
@@ -659,7 +659,9 @@ function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null) {
       query: query,
       top_k: topK,
       hybrid: hybrid,
-      source_filter: sourceFilter
+      source_filter: sourceFilter,
+      inferred_sections: inferredSections,
+      primary_act: primaryAct
     });
 
     child.stdin.write(inputPayload);
@@ -822,7 +824,7 @@ function heuristicRerankSearchResults(query, results, topK = 5) {
   return (relevantResults.length > 0 ? relevantResults : ranked).slice(0, topK);
 }
 
-async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = null, expansionKeywords = []) {
+async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = null, expansionKeywords = [], inferredSections = [], primaryAct = null) {
   const normRetrieval = normalizeLegalQuery(retrievalQuery);
   const targetQuestion = normalizeLegalQuery(originalQuestion || retrievalQuery);
 
@@ -841,7 +843,7 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
   let candidateChunks = [];
 
   try {
-    const rawRes = await runPythonSearch(normKeywordQuery, 60, true, null).catch(err => {
+    const rawRes = await runPythonSearch(normKeywordQuery, 60, true, null, inferredSections, primaryAct).catch(err => {
       console.error('[Prioritized Search] Retrieval failed:', err.message);
       return [];
     });
@@ -855,8 +857,13 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
     ? await rerankSearchResults(targetQuestion, candidateChunks, 60)
     : [];
 
-  // Step 3: Apply per-table top-5 cap to ensure balanced source distribution
+  // Step 3: Filter low-relevance chunks and apply per-table top-5 cap to ensure balanced source distribution
   const TOP_CHUNKS_PER_TABLE = 5;
+
+  const topScore = rerankedResults[0]?.backend_relevance_score || 0;
+  // Dynamic threshold: drop chunks that score less than 35% of top score or below 0.20 absolute score
+  const minScoreThreshold = Math.max(0.20, topScore * 0.35);
+  const filteredRerankedResults = rerankedResults.filter(r => (r.backend_relevance_score || 0) >= minScoreThreshold);
 
   const capPerTable = (results, maxPerTable = TOP_CHUNKS_PER_TABLE) => {
     const tableBuckets = {};
@@ -872,7 +879,7 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
       .sort((a, b) => (b.backend_relevance_score || 0) - (a.backend_relevance_score || 0));
   };
 
-  const combinedResults = capPerTable(rerankedResults, TOP_CHUNKS_PER_TABLE);
+  const combinedResults = capPerTable(filteredRerankedResults, TOP_CHUNKS_PER_TABLE);
 
   // Attach object properties to array for backwards compatibility
   combinedResults.results = combinedResults;
@@ -1618,23 +1625,23 @@ function renderCitationHTML(data, theme = 'dark', highlightQuery = '', userQuery
 
     /* Clean Yellow Highlighting System */
     .content-body mark.cited-mark, .content-body .cited-mark, .content-body mark {
-      background-color: #fef08a !important;
+      background-color: #ebd038 !important;
       color: #0f172a !important;
-      padding: 2px 6px !important;
+      padding: 3px 6px !important;
       border-radius: 4px !important;
       font-weight: 600 !important;
-      border-bottom: 2px solid #facc15 !important;
-      box-shadow: 0 1px 3px rgba(250, 204, 21, 0.25);
+      border-bottom: 2px solid #ca8a04 !important;
+      box-shadow: 0 1px 3px rgba(202, 138, 4, 0.35);
     }
 
     body.dark-theme .content-body mark.cited-mark, body.dark-theme .content-body .cited-mark, body.dark-theme .content-body mark {
-      background-color: rgba(250, 204, 21, 0.28) !important;
-      color: #fef08a !important;
-      padding: 2px 6px !important;
+      background-color: rgba(234, 179, 8, 0.45) !important;
+      color: #fef9c3 !important;
+      padding: 3px 6px !important;
       border-radius: 4px !important;
       font-weight: 600 !important;
-      border-bottom: 2px solid #facc15 !important;
-      box-shadow: 0 1px 3px rgba(250, 204, 21, 0.3);
+      border-bottom: 2px solid #eab308 !important;
+      box-shadow: 0 1px 3px rgba(234, 179, 8, 0.35);
     }
 
     .content-body .key-term {
@@ -2185,6 +2192,7 @@ async function startServer() {
           const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
           let rawFile = urlParsed.searchParams.get('file') || urlParsed.searchParams.get('fileName') || urlParsed.searchParams.get('file_name') || '';
           let page = urlParsed.searchParams.get('page') || urlParsed.searchParams.get('page_number') || '1';
+          let highlightText = urlParsed.searchParams.get('highlight') || urlParsed.searchParams.get('text') || urlParsed.searchParams.get('excerpt') || '';
 
           let fileName = decodeURIComponent(rawFile).trim();
 
@@ -2236,7 +2244,31 @@ async function startServer() {
           });
 
           const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 7200 });
-          const redirectUrl = `${presignedUrl}#page=${page}`;
+
+          let pdfHash = `page=${page}`;
+          if (highlightText) {
+            let clean = decodeURIComponent(highlightText)
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/[\*\_`==#"'()\[\]{},;:.!?-]+/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            const words = clean.split(' ').filter(w => w.length >= 2);
+            if (words.length > 0) {
+              if (words.length <= 8) {
+                const fullPhrase = words.join(' ');
+                const enc = encodeURIComponent(fullPhrase);
+                pdfHash += `&search=${enc}:~:text=${enc}`;
+              } else {
+                const startPhrase = words.slice(0, 5).join(' ');
+                const endPhrase = words.slice(-5).join(' ');
+                const encStart = encodeURIComponent(startPhrase);
+                const encEnd = encodeURIComponent(endPhrase);
+                pdfHash += `&search=${encStart}:~:text=${encStart},${encEnd}`;
+              }
+            }
+          }
+
+          const redirectUrl = `${presignedUrl}#${pdfHash}`;
 
           res.writeHead(302, { 'Location': redirectUrl });
           res.end();
@@ -2608,6 +2640,10 @@ async function startServer() {
                 originalQuery: question.trim(),
                 expandedQuery,
                 keywords: expansionKeywords,
+                inferredSections: queryExpansion.inferredSections || [],
+                primaryAct: queryExpansion.primaryAct || null,
+                actFilter: queryExpansion.actFilter || null,
+                currencyRequirement: queryExpansion.currencyRequirement || '',
                 suggestedFilters:
                   queryExpansion.suggestedFilters || ''
               }
@@ -2638,7 +2674,13 @@ async function startServer() {
               query: retrievalQuery,
               topK: 9,
               performSearch: async () => {
-                return await performPrioritizedLegalSearch(retrievalQuery, question, expansionKeywords);
+                return await performPrioritizedLegalSearch(
+                  retrievalQuery, 
+                  question, 
+                  expansionKeywords,
+                  queryExpansion.inferredSections || [],
+                  queryExpansion.primaryAct || null
+                );
               },
               requestContext: req.requestContext,
               metadata: {

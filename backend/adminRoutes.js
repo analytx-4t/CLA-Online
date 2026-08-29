@@ -148,6 +148,99 @@ function getRagasFilter(query) {
 async function handleAdminRoutes(req, res, db) {
   const path = req.url.split('?')[0] || '/';
 
+  // ----- USER FEEDBACK SYSTEM ENDPOINTS -----
+  if ((path === '/api/feedback' || path === '/api/admin/feedback') && req.method === 'POST') {
+    try {
+      const payload = await parseJsonBody(req);
+      const { question, answer, chunks, feedback, sessionId } = payload;
+      
+      const record = {
+        question: question || '',
+        answer: answer || '',
+        chunks: Array.isArray(chunks) ? chunks : [],
+        feedback: feedback || '',
+        sessionId: sessionId || null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const feedbackCollection = db.collection('user_feedback');
+      const insertRes = await feedbackCollection.insertOne(record);
+
+      sendJson(res, 200, {
+        success: true,
+        message: 'Feedback submitted successfully.',
+        id: insertRes.insertedId ? insertRes.insertedId.toString() : null,
+        record
+      });
+    } catch (error) {
+      console.error('[Feedback POST Error]', error);
+      sendJson(res, 500, { success: false, error: 'Failed to save user feedback.' });
+    }
+    return true;
+  }
+
+  if (path === '/api/admin/feedback' && req.method === 'GET') {
+    try {
+      const feedbackCollection = db.collection('user_feedback');
+      const items = await feedbackCollection.find({}).sort({ created_at: -1 }).toArray();
+
+      const formatted = items.map(item => ({
+        id: item._id ? item._id.toString() : item.id,
+        question: item.question || '',
+        answer: item.answer || '',
+        chunks: item.chunks || [],
+        feedback: item.feedback || '',
+        sessionId: item.sessionId || null,
+        created_at: item.created_at || item.timestamp || new Date().toISOString(),
+        updated_at: item.updated_at || item.created_at || new Date().toISOString(),
+      }));
+
+      sendJson(res, 200, { success: true, count: formatted.length, feedback: formatted });
+    } catch (error) {
+      console.error('[Feedback GET Error]', error);
+      sendJson(res, 500, { success: false, error: 'Failed to retrieve feedback records.' });
+    }
+    return true;
+  }
+
+  if ((path.startsWith('/api/admin/feedback/update') || path.match(/\/api\/admin\/feedback\/[a-f0-9]{24}$/i)) && (req.method === 'PUT' || req.method === 'POST')) {
+    try {
+      const payload = await parseJsonBody(req);
+      const { id, feedback } = payload;
+      const { ObjectId } = require('mongodb');
+      
+      const targetId = id || path.split('/').pop();
+      let queryId;
+      try {
+        queryId = new ObjectId(targetId);
+      } catch (e) {
+        queryId = targetId;
+      }
+
+      const feedbackCollection = db.collection('user_feedback');
+      const updateResult = await feedbackCollection.updateOne(
+        { $or: [{ _id: queryId }, { id: targetId }] },
+        {
+          $set: {
+            feedback: feedback || '',
+            updated_at: new Date().toISOString()
+          }
+        }
+      );
+
+      sendJson(res, 200, {
+        success: true,
+        message: 'Feedback updated successfully.',
+        modifiedCount: updateResult.modifiedCount
+      });
+    } catch (error) {
+      console.error('[Feedback UPDATE Error]', error);
+      sendJson(res, 500, { success: false, error: 'Failed to update feedback record.' });
+    }
+    return true;
+  }
+
   if (await handleGoldenDatasetRoutes(req, res, db)) {
     return true;
   }
