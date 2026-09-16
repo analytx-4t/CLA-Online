@@ -605,21 +605,28 @@ async function validateEmbeddingConfiguration() {
   }
 }
 
+function getPythonExecutable() {
+  const venvUnix = path.resolve(__dirname, '../embedding/venv/bin/python');
+  const venvWin = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
+  if (fs.existsSync(venvUnix)) return venvUnix;
+  if (fs.existsSync(venvWin)) return venvWin;
+  if (process.env.PYTHON_PATH && fs.existsSync(process.env.PYTHON_PATH)) return process.env.PYTHON_PATH;
+
+  if (process.platform === 'win32') {
+    const localPy312 = 'C:\\Users\\hp\\AppData\\Local\\Programs\\Python\\Python312\\python.exe';
+    if (fs.existsSync(localPy312)) return localPy312;
+  }
+  return 'python3';
+}
+
 function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null, inferredSections = [], primaryAct = null) {
   return new Promise((resolve, reject) => {
     // Validate embedding configuration before retrieval
     validateEmbeddingConfiguration();
 
-    let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
-    if (!require('fs').existsSync(pythonPath)) {
-      pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
-    }
-    if (!require('fs').existsSync(pythonPath)) {
-      pythonPath = 'python';
-    }
-
+    const pythonPath = getPythonExecutable();
     const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
-    if (!require('fs').existsSync(scriptPath)) {
+    if (!fs.existsSync(scriptPath)) {
       return reject(new Error(`search_documents.py not found at ${scriptPath}`));
     }
 
@@ -892,16 +899,9 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
 
 function runPythonCitation(sourceTable, recordId, parentId = null) {
   return new Promise((resolve, reject) => {
-    let pythonPath = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
-    if (!require('fs').existsSync(pythonPath)) {
-      pythonPath = path.resolve(__dirname, '../embedding/venv/bin/python');
-    }
-    if (!require('fs').existsSync(pythonPath)) {
-      pythonPath = 'python';
-    }
-
+    const pythonPath = getPythonExecutable();
     const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
-    if (!require('fs').existsSync(scriptPath)) {
+    if (!fs.existsSync(scriptPath)) {
       return reject(new Error(`search_documents.py not found at ${scriptPath}`));
     }
 
@@ -3896,9 +3896,11 @@ What is the penalty for violating this provision?`;
 
         try {
           const payload = await getRequestBody(req);
-          const { session_id, message_id, feedback } = payload;
+          const targetSessionId = payload.session_id || payload.sessionId;
+          const targetMessageId = payload.message_id || payload.messageId;
+          const feedback = payload.feedback;
 
-          if (!session_id || !message_id) {
+          if (!targetSessionId || !targetMessageId) {
             setJsonHeaders(res, 400);
             res.end(JSON.stringify({ error: 'session_id and message_id are required.' }));
             return;
@@ -3921,16 +3923,21 @@ What is the penalty for violating this provision?`;
             updatePayload.feedback = feedback;
           }
 
-          const result = await messagesCollection.updateOne(
-            { session_id, message_id, user_id: userId },
-            { $set: updatePayload }
+          await messagesCollection.updateOne(
+            {
+              session_id: targetSessionId,
+              message_id: targetMessageId
+            },
+            {
+              $set: updatePayload,
+              $setOnInsert: {
+                created_at: new Date().toISOString(),
+                user_id: userId,
+                role: 'assistant'
+              }
+            },
+            { upsert: true }
           );
-
-          if (result.matchedCount === 0) {
-            setJsonHeaders(res, 404);
-            res.end(JSON.stringify({ error: 'Message not found.' }));
-            return;
-          }
 
           setJsonHeaders(res, 200);
           res.end(JSON.stringify({ success: true, feedback: updatePayload.feedback }));

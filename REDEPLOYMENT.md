@@ -16,18 +16,19 @@ ssh -i "path/to/your-key.pem" ubuntu@<YOUR-EC2-PUBLIC-IP>
 ### Step 2: Navigate & Pull Latest Code
 ```bash
 cd /var/www/cla-online
-git checkout package-lock.json   # Discards local lockfile changes on server if needed
-git pull origin priyanshu          # Or 'main', depending on target branch
+git checkout package-lock.json
+git pull origin priyanshu
 ```
 
 ### Step 3: Update Backend & Python Dependencies
 ```bash
 npm install
 
-# Update Python environment dependencies for RAG retrieval engine
+# Update Python environment dependencies for Dual-Pinecone RAG retrieval engine
 cd /var/www/cla-online/embedding
 python3 -m venv venv
-./venv/bin/pip install psycopg2-binary pinecone-client openai python-dotenv PyMuPDF
+./venv/bin/pip install --upgrade pip
+./venv/bin/pip install pinecone openai python-dotenv
 cd /var/www/cla-online
 ```
 
@@ -215,13 +216,15 @@ sudo npm install -g pm2
 ### Step 3: Install Microsoft ODBC Driver 18 (For SQL Server Connectivity)
 ```bash
 # Import Microsoft repository signing key
-curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor --overwrite -o /usr/share/keyrings/microsoft-prod.gpg
+sudo rm -f /usr/share/keyrings/microsoft-prod.gpg
+curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+
 
 # Register Ubuntu Noble (24.04) repository pool for msodbcsql18
 curl -fsSL "https://packages.microsoft.com/config/ubuntu/24.04/prod.list" | sudo tee /etc/apt/sources.list.d/msprod.list
-
 sudo apt-get update
 sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev
+
 ```
 
 ---
@@ -244,7 +247,11 @@ Create `/var/www/cla-online/.env` or `/var/www/cla-online/backend/.env`:
 PORT=3000
 MONGODB_URI=mongodb+srv://<USER>:<PASS>@<CLUSTER>.mongodb.net/<DB>?retryWrites=true&w=majority
 OPENAI_API_KEY=sk-proj-xxxx
-SQL_CONN_STR=Driver={ODBC Driver 18 for SQL Server};Server=<SERVER>.database.windows.net,1433;Database=<DB>;Uid=<USER>;Pwd=<PASS>;Encrypt=yes;TrustServerCertificate=yes;Connection Timeout=60;
+PINECONE_API_KEY=pcsk_xxxx
+PINECONE_INDEX_NAME=cla-online
+PINECONE_DB_INDEX_NAME=cla-online-db
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSIONS=1536
 COHERE_API_KEY=xxxx
 ```
 
@@ -277,8 +284,7 @@ npm run build
 ### Step 8: Configure Nginx Reverse Proxy & SSL
 
 Create `/etc/nginx/sites-available/cla-online`:
-
-```nginx
+sudo tee /etc/nginx/sites-available/cla-online > /dev/null <<'EOF'
 server {
     server_name claonline.analytx4t.com;
 
@@ -297,14 +303,12 @@ server {
 server {
     server_name adminclaonline.analytx4t.com;
 
-    # Admin Panel Static Build
     location / {
         root /var/www/cla-online/admin-dashboard/dist;
         index index.html;
         try_files $uri $uri/ /index.html;
     }
 
-    # Proxy API & WebSockets to Backend
     location /api/ {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -323,7 +327,8 @@ server {
         proxy_read_timeout 300s;
     }
 }
-```
+EOF
+
 
 Enable site & test configuration:
 ```bash

@@ -196,7 +196,7 @@ async function handleAdminRoutes(req, res, db) {
         updated_at: item.updated_at || item.created_at || new Date().toISOString(),
       }));
 
-      sendJson(res, 200, { success: true, count: formatted.length, feedback: formatted });
+      sendJson(res, 200, { success: true, count: formatted.length, feedback: formatted, feedbacks: formatted });
     } catch (error) {
       console.error('[Feedback GET Error]', error);
       sendJson(res, 500, { success: false, error: 'Failed to retrieve feedback records.' });

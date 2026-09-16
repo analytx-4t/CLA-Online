@@ -956,21 +956,23 @@ function setCitationCardsExpanded(citationsContainer, expanded) {
 function ensureCitationVisible(citationsContainer, cardEl) {
   if (!citationsContainer || !cardEl) return;
 
-  if (citationsContainer.dataset.expanded !== 'true' && Number(cardEl.dataset.citationIndex) > 0) {
-    setCitationCardsExpanded(citationsContainer, true);
-    requestAnimationFrame(() => {
-      cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      cardEl.classList.remove('highlight');
-      void cardEl.offsetWidth;
-      cardEl.classList.add('highlight');
-    });
-    return;
+  const groupBox = cardEl.closest('.citation-group-box');
+  if (groupBox && groupBox.classList.contains('collapsed')) {
+    groupBox.classList.remove('collapsed');
+    const groupHeader = groupBox.querySelector('.citation-group-header');
+    if (groupHeader) {
+      groupHeader.setAttribute('aria-expanded', 'true');
+      const hintEl = groupHeader.querySelector('.expand-hint-text');
+      if (hintEl) hintEl.textContent = 'Collapse';
+    }
   }
 
-  cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  cardEl.classList.remove('highlight');
-  void cardEl.offsetWidth;
-  cardEl.classList.add('highlight');
+  requestAnimationFrame(() => {
+    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    cardEl.classList.remove('highlight');
+    void cardEl.offsetWidth;
+    cardEl.classList.add('highlight');
+  });
 }
 
 function openChunkDetailModal(s, idx) {
@@ -1510,6 +1512,7 @@ function renderMessageActions(container, message) {
 
       if (matchedSource) {
         const isBook = Boolean(matchedSource.is_book || matchedSource.database_source === 'Pinecone' || matchedSource.source_table === 'CLA Books' || (matchedSource.filename && String(matchedSource.filename).endsWith('.pdf')));
+        const excerptText = matchedSource.excerpt || matchedSource.chunk_text || matchedSource.content || matchedSource.text || '';
         if (isBook) {
           let fileName = matchedSource.file_name || matchedSource.filename || matchedSource.file || matchedSource.title || matchedSource.subject || 'Book PDF';
           if (fileName === 'Unknown' || fileName === 'null') {
@@ -1517,15 +1520,21 @@ function renderMessageActions(container, message) {
           }
           const pageNo = matchedSource.page_number || matchedSource.parent_id || 1;
           let s3Url = matchedSource.s3_url;
-          if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null')) {
-            s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}#page=${pageNo}`;
+          if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null') || !s3Url.includes('highlight=')) {
+            s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}&highlight=${encodeURIComponent(excerptText)}#page=${pageNo}`;
           }
           window.open(s3Url, '_blank');
           return;
         }
-        if (matchedSource.source_table && matchedSource.record_id) {
+        const recId = matchedSource.record_id || matchedSource.embedding_id;
+        const sourceTable = matchedSource.source_table || 'Legislation';
+        if (sourceTable && recId) {
           const parentParam = matchedSource.parent_id ? `&parentId=${encodeURIComponent(matchedSource.parent_id)}` : '';
-          const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(matchedSource.source_table)}&recordId=${encodeURIComponent(matchedSource.record_id)}${parentParam}&theme=${document.documentElement.getAttribute('data-theme') || 'light'}&highlight=${encodeURIComponent(quoteText || matchedSource.excerpt || '')}`;
+          const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
+          const userQueryVal = message.query || (message.metadata && message.metadata.query) || '';
+          const queryParam = userQueryVal ? `&query=${encodeURIComponent(userQueryVal)}` : '';
+          const highlightParam = excerptText ? `&highlight=${encodeURIComponent(excerptText)}` : '';
+          const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(sourceTable)}&recordId=${encodeURIComponent(recId)}${parentParam}&theme=${activeTheme}${highlightParam}${queryParam}`;
           window.open(url, '_blank');
           return;
         }
@@ -1533,7 +1542,6 @@ function renderMessageActions(container, message) {
       
       const citationsContainer = container.querySelector('.citations-container');
       if (citationsContainer) {
-        setCitationCardsExpanded(citationsContainer, true);
         citationsContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
     });
@@ -1541,20 +1549,20 @@ function renderMessageActions(container, message) {
 
   // Setup click listeners for inline superscript citation links in the text
   container.querySelectorAll('.citation-ref-link').forEach(link => {
-
     link.addEventListener('click', (e) => {
       e.preventDefault();
       const index = parseInt(link.getAttribute('data-citation-index'), 10) - 1;
-      // If the message metadata for this source has the retrieved excerpt, open the
-      // citation page straight to that highlighted passage instead of just the card.
       const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
       const src = sources[index];
       if (src) {
         const isBook = Boolean(src.is_book || src.database_source === 'Pinecone' || src.source_table === 'CLA Books' || (src.filename && String(src.filename).endsWith('.pdf')));
+        const excerptText = src.excerpt || src.chunk_text || src.content || src.text || '';
         if (isBook) {
-          const fileName = src.file_name || src.filename || src.file || src.title;
+          let fileName = src.file_name || src.filename || src.file || src.title || src.subject || 'Book PDF';
+          if (fileName === 'Unknown' || fileName === 'null') {
+            fileName = src.title || src.subject || 'Book PDF';
+          }
           const pageNo = src.page_number || src.parent_id || 1;
-          const excerptText = src.excerpt || src.chunk_text || src.content || src.text || '';
           let s3Url = src.s3_url;
           if (!s3Url || !s3Url.includes('highlight=')) {
             s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}&highlight=${encodeURIComponent(excerptText)}#page=${pageNo}`;
@@ -1562,14 +1570,19 @@ function renderMessageActions(container, message) {
           window.open(s3Url, '_blank');
           return;
         }
-        if (src.source_table && src.record_id && src.excerpt) {
+        const recId = src.record_id || src.embedding_id;
+        const sourceTable = src.source_table || 'Legislation';
+        if (sourceTable && recId) {
           const parentParam = src.parent_id ? `&parentId=${encodeURIComponent(src.parent_id)}` : '';
-          const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(src.source_table)}&recordId=${encodeURIComponent(src.record_id)}${parentParam}&theme=${document.documentElement.getAttribute('data-theme') || 'light'}&highlight=${encodeURIComponent(src.excerpt)}`;
+          const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
+          const userQueryVal = message.query || (message.metadata && message.metadata.query) || '';
+          const queryParam = userQueryVal ? `&query=${encodeURIComponent(userQueryVal)}` : '';
+          const highlightParam = excerptText ? `&highlight=${encodeURIComponent(excerptText)}` : '';
+          const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(sourceTable)}&recordId=${encodeURIComponent(recId)}${parentParam}&theme=${activeTheme}${highlightParam}${queryParam}`;
           window.open(url, '_blank');
           return;
         }
       }
-
 
       const citationsContainer = container.querySelector('.citations-container');
       if (!citationsContainer) return;
@@ -1577,17 +1590,6 @@ function renderMessageActions(container, message) {
       const cardEl = container.querySelector(`#citation-card-${message.message_id}-${index}`);
       if (cardEl) {
         ensureCitationVisible(citationsContainer, cardEl);
-        return;
-      }
-
-      if (index > 0) {
-        setCitationCardsExpanded(citationsContainer, true);
-        requestAnimationFrame(() => {
-          const expandedCardEl = container.querySelector(`#citation-card-${message.message_id}-${index}`);
-          if (expandedCardEl) {
-            ensureCitationVisible(citationsContainer, expandedCardEl);
-          }
-        });
       }
     });
   });

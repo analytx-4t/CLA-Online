@@ -1,0 +1,7 @@
+pinecone
+openai
+python-dotenv
+python-dateutil
+requests
+tiktoken
+numpy

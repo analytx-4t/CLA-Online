@@ -24,6 +24,11 @@ const settings = {
 
   PROMPT_FILE: process.env.PROMPT_FILE || 'CLAOnline_Agent_Prompts_FINAL.md',
 
+  // Pinecone Configuration
+  PINECONE_API_KEY: process.env.PINECONE_API_KEY || '',
+  PINECONE_INDEX_NAME: process.env.PINECONE_INDEX_NAME || 'cla-online',
+  PINECONE_DB_INDEX_NAME: process.env.PINECONE_DB_INDEX_NAME || 'cla-online-db',
+
   // Embedding Configuration
   EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || 'openai',
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
