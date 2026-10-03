@@ -98,6 +98,9 @@ temp/
 # Regeneratable embeddings cache (too large for git; rebuild via embeded_documents.py)
 embedding/embeddings_cache.npz
 
+# Nightly API -> Pinecone sync: run state, status, history and logs (per-server, regeneratable)
+embedding/sync_state/
+
 
 # ==============================
 # LOCAL DATABASE FILES

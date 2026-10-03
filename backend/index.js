@@ -28,6 +28,7 @@ const { parseAnswerAndSuggestions, normalizeFollowUpQuestions } = require('./res
 const { handleAttachmentUpload, buildAttachmentContextBlock } = require('./attachments');
 const { createRequestContext } = require('./requestContext');
 const { handleAdminRoutes } = require('./adminRoutes');
+const { startDbSyncScheduler } = require('./dbSync/service');
 const { getEvaluationToggle } = require('./settingsStore');
 const { cohereRerank } = require('./cohereReranker');
 const { normalizeLegalQuery } = require('./legalQueryNormalizer');
@@ -3973,6 +3974,7 @@ What is the penalty for violating this provision?`;
       console.log(`Embedding Dimensions : ${embeddingConfig.dimensions}`);
       console.log(`==================================\n`);
       console.log(`Server running on port ${PORT}`);
+      startDbSyncScheduler();
     });
     const shutdown = async () => {
       console.log('Shutting down server...');

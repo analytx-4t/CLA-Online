@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { ChevronLeft, ClipboardCheck, Database, LayoutDashboard, Settings, Target, Sparkles, MessageSquare } from 'lucide-react';
+import { ChevronLeft, ClipboardCheck, Database, DatabaseZap, LayoutDashboard, Settings, Target, Sparkles, MessageSquare } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
 const navItems = [
@@ -9,6 +9,7 @@ const navItems = [
   { label: 'Retrieval Eval', to: '/retrieval-eval', icon: Target },
   { label: 'Generation Eval', to: '/generation-eval', icon: Sparkles },
   { label: 'Online Eval', to: '/online-eval', icon: ClipboardCheck },
+  { label: 'Database Refresh', to: '/database-refresh', icon: DatabaseZap },
   { label: 'Settings', to: '/settings', icon: Settings },
 ];
 

@@ -8,6 +8,7 @@ import OverviewPage from './pages/OverviewPage';
 import UserFeedbackPage from './pages/UserFeedbackPage';
 import OnlineEvalPage from './pages/OnlineEvalPage';
 import SettingsPage from './pages/SettingsPage';
+import DatabaseRefreshPage from './pages/DatabaseRefreshPage';
 import RequestDetailsPage from './pages/RequestDetailsPage';
 import GoldenDatasetPage from './pages/GoldenDatasetPage';
 import RetrievalEvalPage from './pages/RetrievalEvalPage';
@@ -50,6 +51,7 @@ export default function App() {
               <Route path="/retrieval-eval" element={<RetrievalEvalPage />} />
               <Route path="/generation-eval" element={<GenerationEvalPage />} />
               <Route path="/online-eval" element={<OnlineEvalPage />} />
+              <Route path="/database-refresh" element={<DatabaseRefreshPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/request/:requestId" element={<RequestDetailsPage />} />
               <Route path="*" element={<NotFoundPage />} />

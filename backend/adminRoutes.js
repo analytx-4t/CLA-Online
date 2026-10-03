@@ -10,6 +10,7 @@ function setJsonHeaders(res, statusCode) {
 const { handleGoldenDatasetRoutes } = require('./goldenDataset/routes');
 const { handleRetrievalEvalRoutes } = require('./retrievalEval/routes');
 const { handleGenerationEvalRoutes } = require('./generationEval/routes');
+const { handleDbSyncRoutes } = require('./dbSync/routes');
 const { settings: llmSettings, getProviderHealth } = require('./config');
 const { getEvaluationToggle, setEvaluationToggle } = require('./settingsStore');
 
@@ -250,6 +251,10 @@ async function handleAdminRoutes(req, res, db) {
   }
 
   if (await handleGenerationEvalRoutes(req, res, db)) {
+    return true;
+  }
+
+  if (await handleDbSyncRoutes(req, res)) {
     return true;
   }
 

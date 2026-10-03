@@ -354,6 +354,51 @@ pm2 startup
 
 ---
 
+## Part 4: Nightly Database Refresh (CLA Online API -> Pinecone)
+
+The backend starts `embedding/sync_from_api.py` automatically every night at **00:00 IST**. It reads the CLA Online API, finds records that are not in the `cla-online-db` Pinecone index yet, embeds them with the same model as the existing vectors (`text-embedding-3-small`, 1536 dimensions) and appends them. Nothing has to be run by hand: the schedule is active whenever the PM2 backend process is running. If the server was down at midnight, the run starts when the backend comes back (up to 6 hours late).
+
+Admins can also start a refresh and watch progress from the admin dashboard: **Database Refresh** in the sidebar.
+
+### One-time setup on the server
+```bash
+cd /var/www/cla-online
+
+# 1. Python packages used by the sync job
+./embedding/venv/bin/pip install -r embedding/requirements.txt
+
+# 2. Add the API credentials to /var/www/cla-online/.env
+#    (quote the secret: it contains a # character)
+CLA_API_BASE_URL=http://demo.claonline.in/WebService/ClaOnlineApi.asmx
+CLA_API_CLIENT_ID=<client id>
+CLA_API_CLIENT_SECRET="<client secret>"
+
+# 3. Rebuild the admin dashboard and restart
+cd admin-dashboard && npm install && npm run build && cd ..
+pm2 restart cla-backend
+pm2 logs cla-backend --lines 20   # expect: [DB Sync] Nightly sync scheduled at 00:00 Asia/Kolkata
+```
+
+### Settings (optional, in `.env`)
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `DB_SYNC_ENABLED` | `true` | Set to `false` to switch the nightly run off for this backend. |
+| `DB_SYNC_TIME` | `00:00` | Time of day the run starts (24-hour `HH:MM`). |
+| `DB_SYNC_TIMEZONE` | `Asia/Kolkata` | Time zone `DB_SYNC_TIME` is read in. |
+
+> **Two backends, one index:** `cla-backend` and `cla-backend2` use the same Pinecone index. Set `DB_SYNC_ENABLED=false` in `/var/www/cla-online2/.env` so only one of them runs the nightly job. (Running both is harmless, since vector IDs are deterministic, but it embeds the same records twice.)
+
+### Running and checking by hand
+```bash
+cd /var/www/cla-online
+./embedding/venv/bin/python embedding/sync_from_api.py --dry-run   # report what would be added, write nothing
+./embedding/venv/bin/python embedding/sync_from_api.py             # run now
+tail -n 50 embedding/sync_state/logs/sync-$(date +%Y-%m).log        # run log
+```
+Run state, history and logs live in `embedding/sync_state/` (not in git). Deleting that folder is safe: the next run rebuilds its list of indexed records from Pinecone.
+
+---
+
 ## Troubleshooting Cheat Sheet
 
 | Symptom | Cause | Solution |
