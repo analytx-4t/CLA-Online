@@ -23,6 +23,7 @@ const settings = {
   DEFAULT_LLM_MODEL: process.env.DEFAULT_LLM_MODEL || 'deepseek-v4-pro',
 
   PROMPT_FILE: process.env.PROMPT_FILE || 'CLAOnline_Agent_Prompts_FINAL.md',
+  QUERY_EXPANSION_ONTOLOGY_FILE: process.env.QUERY_EXPANSION_ONTOLOGY_FILE || 'CLA_Query_Expansion_Ontology.md',
 
   // Pinecone Configuration
   PINECONE_API_KEY: process.env.PINECONE_API_KEY || '',

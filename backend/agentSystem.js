@@ -69,6 +69,34 @@ function assemblePrompt(rawPrompt, prompts) {
   return assembled;
 }
 
+// Loads the dedicated ontology for the Query_Expansion_Agent (Companies Act "control" + FEMA)
+function loadQueryExpansionOntology() {
+  const { settings } = require('./config');
+  const fileName = process.env.QUERY_EXPANSION_ONTOLOGY_FILE || settings.QUERY_EXPANSION_ONTOLOGY_FILE || 'CLA_Query_Expansion_Ontology.md';
+  return fs.readFileSync(path.resolve(__dirname, '..', fileName), 'utf8').trim();
+}
+
+// Assembles the Query_Expansion_Agent prompt with the query expansion ontology in place of SHARED LEGAL CONTEXT
+function assembleExpansionPrompt(prompts) {
+  let ontology;
+  try {
+    ontology = loadQueryExpansionOntology();
+  } catch (error) {
+    console.error('[Query Expansion] Ontology file not loaded, falling back to SHARED LEGAL CONTEXT:', error.message);
+    return assemblePrompt(prompts.Query_Expansion_Agent, prompts);
+  }
+  const body = prompts.Query_Expansion_Agent
+    .replace('[SHARED LEGAL CONTEXT]', '')
+    .replace('[COMMON RULES]', '')
+    .trim();
+  return [
+    'QUERY EXPANSION ONTOLOGY — traverse this ontology to map the user\'s facts to the governing concepts, Acts, sections, rules, regulations, Master Directions, forms, forums and cases. Use its node names, instrument titles and form identifiers in EXPANDED_QUERY and KEYWORDS.',
+    ontology,
+    prompts.COMMON_RULES || '',
+    body
+  ].filter(Boolean).join('\n\n');
+}
+
 // Maps agent name to its corresponding document source_type in the database
 function agentToSourceType(agentName) {
   const mapping = {
@@ -282,10 +310,7 @@ async function expandLegalQuery(userMessage) {
   );
 
   try {
-    const expansionPrompt = assemblePrompt(
-      prompts.Query_Expansion_Agent,
-      prompts
-    );
+    const expansionPrompt = assembleExpansionPrompt(prompts);
 
     const expansionResponse = await generateWithRetry(
       expansionProvider,
@@ -297,7 +322,8 @@ async function expandLegalQuery(userMessage) {
           }
         ],
         systemPrompt: expansionPrompt,
-        temperature: 0.2
+        temperature: 0.2,
+        maxTokens: 3000
       }
     );
 
@@ -647,12 +673,13 @@ async function runAgentFlow(userMessage, options = {}) {
 
   // Step 2: Query Expansion (OpenAI Primary, DeepSeek Fallback)
   console.log('Running Query_Expansion_Agent...');
-  const expansionPrompt = assemblePrompt(prompts.Query_Expansion_Agent, prompts);
+  const expansionPrompt = assembleExpansionPrompt(prompts);
   const openaiExpansionProvider = getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini');
   const expansionResponse = await generateWithRetry(openaiExpansionProvider, {
     messages: [{ role: 'user', content: userMessage }],
     systemPrompt: expansionPrompt,
-    temperature: 0.2
+    temperature: 0.2,
+    maxTokens: 3000
   });
 
   const expansionText = expansionResponse.content;
@@ -1011,5 +1038,6 @@ async function runAgentFlow(userMessage, options = {}) {
 module.exports = {
   runAgentFlow,
   loadAgentPrompts,
+  assembleExpansionPrompt,
   expandLegalQuery
 };
