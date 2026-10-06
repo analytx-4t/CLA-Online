@@ -3764,6 +3764,12 @@ What is the penalty for violating this provision?`;
             }
           }
 
+          // No-answer responses must not carry source citations
+          if (/could not find authority/i.test(assistantMsgDoc.content || '') && assistantMsgDoc.metadata) {
+            assistantMsgDoc.metadata.sources = [];
+            assistantMsgDoc.metadata.citations = [];
+          }
+
           await messagesCollection.insertOne(assistantMsgDoc);
 
           // Persist evaluation result so queries sent via chat session endpoint appear in Online Eval

@@ -1448,7 +1448,12 @@ function renderSourceCitations(container, message) {
     return;
   }
 
-  const sources = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
+  // Don't show citations when the assistant found no answer
+  if (/could not find authority/i.test(message.content || '')) {
+    return;
+  }
+
+  const sources =message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
   if (sources.length === 0) {
     return;
   }
