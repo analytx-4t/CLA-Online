@@ -101,6 +101,9 @@ embedding/embeddings_cache.npz
 # Nightly API -> Pinecone sync: run state, status, history and logs (per-server, regeneratable)
 embedding/sync_state/
 
+# Pinecone index host cache written by search_documents.py (speed-up only)
+embedding/.index_hosts.json
+
 
 # ==============================
 # LOCAL DATABASE FILES

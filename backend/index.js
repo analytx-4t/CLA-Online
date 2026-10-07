@@ -31,6 +31,9 @@ const { handleAdminRoutes } = require('./adminRoutes');
 const { startDbSyncScheduler } = require('./dbSync/service');
 const { getEvaluationToggle } = require('./settingsStore');
 const { cohereRerank } = require('./cohereReranker');
+const { buildContextBlock, finalizeAnswer } = require('./citations');
+const { renderCitationPage, renderCitationNotFound } = require('./citationPage');
+const { checkBookPdf, presignBookPdf } = require('./bookPdf');
 const { normalizeLegalQuery } = require('./legalQueryNormalizer');
 const { Server } = require('socket.io');
 
@@ -606,6 +609,21 @@ async function validateEmbeddingConfiguration() {
   }
 }
 
+let legislationLabelsCache = null;
+
+// file name (lower case) -> { title, type }, built by embedding/build_legislation_labels.py
+function getLegislationLabels() {
+  if (!legislationLabelsCache) {
+    try {
+      legislationLabelsCache = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../embedding/legislation_labels.json'), 'utf8'));
+    } catch (error) {
+      console.warn('[Legislation Labels] legislation_labels.json could not be read:', error.message);
+      return {};
+    }
+  }
+  return legislationLabelsCache;
+}
+
 function getPythonExecutable() {
   const venvUnix = path.resolve(__dirname, '../embedding/venv/bin/python');
   const venvWin = path.resolve(__dirname, '../embedding/venv/Scripts/python.exe');
@@ -865,29 +883,60 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
     ? await rerankSearchResults(targetQuestion, candidateChunks, 60)
     : [];
 
-  // Step 3: Filter low-relevance chunks and apply per-table top-5 cap to ensure balanced source distribution
+  // Step 3: Relevance filter. Only passages the reranker judges on point reach the answer
+  // model, so only relevant sources can ever be cited. Caps keep one table or one long
+  // document from crowding out the rest.
   const TOP_CHUNKS_PER_TABLE = 5;
+  const TOP_CHUNKS_PER_DOCUMENT = 3;
+  const MAX_CONTEXT_CHUNKS = 16;
+  const MIN_CONTEXT_CHUNKS = 4;
 
-  const topScore = rerankedResults[0]?.backend_relevance_score || 0;
-  // Dynamic threshold: drop chunks that score less than 35% of top score or below 0.20 absolute score
-  const minScoreThreshold = Math.max(0.20, topScore * 0.35);
-  const filteredRerankedResults = rerankedResults.filter(r => (r.backend_relevance_score || 0) >= minScoreThreshold);
+  // Cohere's raw score is the relevance signal when the reranker ran; the heuristic fallback
+  // only produces backend_relevance_score.
+  const hasCohereScores = rerankedResults.some(r => Number.isFinite(r.cohere_relevance_score));
+  const relevanceOf = (r) => (hasCohereScores ? (r.cohere_relevance_score || 0) : (r.backend_relevance_score || 0));
+  const topRelevance = rerankedResults.reduce((max, r) => Math.max(max, relevanceOf(r)), 0);
+  const minRelevance = hasCohereScores
+    ? Math.max(0.12, topRelevance * 0.4)
+    : Math.max(0.20, topRelevance * 0.35);
 
-  const capPerTable = (results, maxPerTable = TOP_CHUNKS_PER_TABLE) => {
-    const tableBuckets = {};
-    for (const r of results) {
+  // When even the best passage scores this low, nothing retrieved is on point: answer
+  // "could not find authority" instead of building an answer on unrelated material.
+  // (Measured on real questions: answerable ones top out at 0.8 or more, questions the
+  // database does not cover at 0.27 or less.)
+  const NO_AUTHORITY_RELEVANCE = 0.30;
+  const nothingOnPoint = hasCohereScores && topRelevance < NO_AUTHORITY_RELEVANCE;
+
+  let filteredRerankedResults = nothingOnPoint ? [] : rerankedResults.filter(r => relevanceOf(r) >= minRelevance);
+  if (!nothingOnPoint && filteredRerankedResults.length < MIN_CONTEXT_CHUNKS) {
+    // A very strong single hit must not starve the answer of supporting context.
+    filteredRerankedResults = [...rerankedResults]
+      .sort((a, b) => relevanceOf(b) - relevanceOf(a))
+      .slice(0, Math.min(MIN_CONTEXT_CHUNKS, rerankedResults.length));
+  }
+
+  const applyCaps = (results) => {
+    const perTable = {};
+    const perDocument = {};
+    const kept = [];
+    const ordered = [...results].sort((a, b) => (b.backend_relevance_score || 0) - (a.backend_relevance_score || 0));
+    for (const r of ordered) {
+      if (kept.length >= MAX_CONTEXT_CHUNKS) break;
       const tableKey = (r.source_table || 'unknown').trim().toLowerCase();
-      if (!tableBuckets[tableKey]) tableBuckets[tableKey] = [];
-      if (tableBuckets[tableKey].length < maxPerTable) {
-        tableBuckets[tableKey].push(r);
-      }
+      const documentKey = r.is_book
+        ? `${tableKey}|${r.file_name}|${r.page_number || r.parent_id}`
+        : `${tableKey}|${r.record_id}`;
+      if ((perTable[tableKey] || 0) >= TOP_CHUNKS_PER_TABLE) continue;
+      if ((perDocument[documentKey] || 0) >= TOP_CHUNKS_PER_DOCUMENT) continue;
+      perTable[tableKey] = (perTable[tableKey] || 0) + 1;
+      perDocument[documentKey] = (perDocument[documentKey] || 0) + 1;
+      kept.push(r);
     }
-    return Object.values(tableBuckets)
-      .flat()
-      .sort((a, b) => (b.backend_relevance_score || 0) - (a.backend_relevance_score || 0));
+    return kept;
   };
 
-  const combinedResults = capPerTable(filteredRerankedResults, TOP_CHUNKS_PER_TABLE);
+  const combinedResults = applyCaps(filteredRerankedResults);
+  console.log(`[Prioritized Search] Relevance filter kept ${filteredRerankedResults.length}/${rerankedResults.length} chunks (min relevance ${minRelevance.toFixed(2)}, top ${topRelevance.toFixed(2)}); ${combinedResults.length} sent to the answer model.`);
 
   // Attach object properties to array for backwards compatibility
   combinedResults.results = combinedResults;
@@ -898,7 +947,7 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
   return combinedResults;
 }
 
-function runPythonCitation(sourceTable, recordId, parentId = null) {
+function runPythonCitation(sourceTable, recordId, parentId = null, fileName = null, focusIndices = []) {
   return new Promise((resolve, reject) => {
     const pythonPath = getPythonExecutable();
     const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
@@ -932,22 +981,62 @@ function runPythonCitation(sourceTable, recordId, parentId = null) {
         if (result.error) {
           return reject(new Error(result.error));
         }
-        resolve(result);
+        resolve(result.results);
       } catch (err) {
-        reject(new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout}`));
+        reject(new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout.slice(0, 300)}`));
       }
     });
 
+    // Record ids are numeric for the structured tables and strings for book chunks.
+    const isNumericId = /^\d+$/.test(String(recordId || ''));
     const inputPayload = JSON.stringify({
       action: "get_citation",
       source_table: sourceTable,
-      record_id: parseInt(recordId, 10) || recordId,
-      parent_id: parentId ? (parseInt(parentId, 10) || parentId) : null
+      record_id: isNumericId ? parseInt(recordId, 10) : (recordId || null),
+      parent_id: parentId ? (parseInt(parentId, 10) || parentId) : null,
+      file_name: fileName || null,
+      focus_indices: focusIndices
     });
 
     child.stdin.write(inputPayload);
     child.stdin.end();
   });
+}
+
+// A reader usually opens several citations of the same document in a row, so loaded
+// sources are kept for a while instead of being fetched again for every click.
+const CITATION_CACHE_TTL_MS = 30 * 60 * 1000;
+const CITATION_CACHE_MAX_ENTRIES = 40;
+const citationSourceCache = new Map();
+
+async function loadCitationSource(sourceTable, recordId, parentId, fileName, citedIds = []) {
+  const isBook = /book|pinecone/i.test(String(sourceTable || ''));
+  const key = isBook
+    ? `book|${recordId || ''}|${fileName || ''}|${parentId || ''}`
+    : `${sourceTable}|${recordId}`;
+  const cached = citationSourceCache.get(key);
+  if (cached && cached.expires > Date.now()) {
+    // A very long statute is cached as the part around earlier citations; it only serves
+    // this request if it already holds the passages cited now.
+    const loadedIds = new Set(cached.details.chunks.map(chunk => String(chunk.id)));
+    if (isBook || cached.details.complete !== false || (citedIds.length > 0 && citedIds.every(id => loadedIds.has(String(id))))) {
+      return cached.details;
+    }
+  }
+  // Vector ids end in the chunk's position ("Legislation|79|33"), which tells the lookup
+  // where to read in a record too long to load whole.
+  const focusIndices = citedIds
+    .map(id => parseInt(String(id).split('|').pop(), 10))
+    .filter(Number.isFinite);
+  const details = await runPythonCitation(sourceTable, recordId, parentId, fileName, focusIndices);
+  if (details && Array.isArray(details.chunks) && details.chunks.length > 0) {
+    citationSourceCache.delete(key);
+    if (citationSourceCache.size >= CITATION_CACHE_MAX_ENTRIES) {
+      citationSourceCache.delete(citationSourceCache.keys().next().value);
+    }
+    citationSourceCache.set(key, { details, expires: Date.now() + CITATION_CACHE_TTL_MS });
+  }
+  return details;
 }
 
 function escapeHTML(str) {
@@ -960,1108 +1049,6 @@ function escapeHTML(str) {
     .replace(/'/g, '&#039;');
 }
 
-function formatDocumentContent(rawText) {
-  if (!rawText) return '<p>No content available.</p>';
-
-  const trimmed = rawText.trim();
-  const hasHTML = /<[a-z][\s\S]*>/i.test(trimmed) && (
-    trimmed.includes('</') ||
-    trimmed.includes('/>') ||
-    trimmed.toLowerCase().includes('<br>') ||
-    trimmed.toLowerCase().includes('<p>')
-  );
-
-  if (hasHTML) {
-    let bodyContent = rawText;
-    const bodyMatch = rawText.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    if (bodyMatch) {
-      bodyContent = bodyMatch[1];
-    } else {
-      bodyContent = bodyContent.replace(/<head[^>]*>[\s\S]*?<\/head>/i, '');
-    }
-    bodyContent = bodyContent
-      .replace(/<html[^>]*>/gi, '')
-      .replace(/<\/html>/gi, '')
-      .replace(/<!doctype[^>]*>/gi, '')
-      .replace(/<link[^>]*>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-
-    return bodyContent.trim();
-  }
-
-  // Pre-process to separate glued paragraph boundaries
-  const preProcessed = rawText
-    .replace(/([.!?])([A-Z])/g, '$1\n$2')
-    .replace(/([.!?])(\d+(?:\.\d+)?\s+[A-Z])/g, '$1\n$2');
-
-  const lines = preProcessed.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  let htmlResult = '';
-
-  let inFootnotes = false;
-  let inList = false;
-
-  for (let idx = 0; idx < lines.length; idx++) {
-    let line = lines[idx].trim();
-    if (!line) continue;
-
-    // Detect Footnotes/References section at the end of document
-    const isFootnote = line.startsWith('*') || /^\d+\s+[a-zA-Z\[]/.test(line) || /^\d+\s+See\s+/.test(line);
-
-    if (isFootnote && idx > lines.length * 0.6) {
-      if (!inFootnotes) {
-        if (inList) {
-          htmlResult += '</ul>';
-          inList = false;
-        }
-        htmlResult += '<div class="footnotes-section" style="margin-top: 40px; padding-top: 20px; border-top: 1px dashed var(--border);">';
-        htmlResult += '<h4 style="font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px;">References / Footnotes</h4>';
-        inFootnotes = true;
-      }
-
-      htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
-      continue;
-    }
-
-    if (inFootnotes) {
-      htmlResult += `<div class="footnote-item" style="font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; line-height: 1.5;">${escapeHTML(line)}</div>`;
-      continue;
-    }
-
-    const isBulletMarker = line.startsWith('-') || line.startsWith('•') || line.startsWith('*') ||
-      /^[a-z0-9]\)\s+/i.test(line) || /^\([a-z0-9]\)\s+/i.test(line);
-
-    let shouldBeListItem = isBulletMarker;
-    if (!shouldBeListItem && idx > 0) {
-      const prevLine = lines[idx - 1].trim();
-      if (prevLine.endsWith(':') && line.length < 150) {
-        shouldBeListItem = true;
-      } else if (inList && line.length < 150 && !/^\d+\.\s+/.test(line)) {
-        shouldBeListItem = true;
-      }
-    }
-
-    if (shouldBeListItem) {
-      if (!inList) {
-        htmlResult += '<ul style="margin-bottom: 1.6em; padding-left: 24px;">';
-        inList = true;
-      }
-      const cleaned = line
-        .replace(/^[-•*]\s*/, '')
-        .replace(/^[a-z0-9]\)\s+/i, '')
-        .replace(/^\([a-z0-9]\)\s+/i, '');
-      htmlResult += `<li style="margin-bottom: 0.5em; font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.7; color: var(--text);">${escapeHTML(cleaned)}</li>`;
-      continue;
-    }
-
-    if (inList) {
-      htmlResult += '</ul>';
-      inList = false;
-    }
-
-    const isAllUpper = line.length < 150 && line === line.toUpperCase() && /[A-Z]/.test(line);
-    const isNumberHeader = line.length < 120 && (/^\d+\.\s+[A-Z]/i.test(line) || /^[IVXLCDM]+\.\s+[A-Z]/i.test(line));
-    const isShortNoPeriod = line.length < 100 && !line.endsWith('.');
-    const isDocHeaderLine = idx < 3 && line.length < 120;
-
-    if (isAllUpper || isNumberHeader || isShortNoPeriod || isDocHeaderLine) {
-      let level = 3;
-      if (idx === 0) {
-        level = 2;
-      } else if (isAllUpper && line.length < 60) {
-        level = 2;
-      }
-
-      htmlResult += `<h${level} style="font-family: var(--font-sans); font-weight: 700; color: var(--text); margin-top: 1.6em; margin-bottom: 0.6em; line-height: 1.3;">${escapeHTML(line)}</h${level}>`;
-    } else {
-      let formattedLine = escapeHTML(line);
-      formattedLine = formattedLine.replace(/^(\d+(?:\.\d+)?\s+)/, '<strong>$1</strong>');
-
-      // Assign a stable passage id for each paragraph so front-end can deep-link
-      const passageId = `p-${idx}-${Math.abs(hashCode(line)).toString(36)}`;
-      if ((line.startsWith('“') && line.endsWith('”')) || (line.startsWith('"') && line.endsWith('"')) || (line.startsWith('‘') && line.endsWith('’')) || (line.startsWith("'") && line.endsWith("'"))) {
-        htmlResult += `<p data-passage-id="${passageId}" style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em; font-style: italic; padding-left: 20px; border-left: 3px solid var(--primary-light);">${formattedLine}</p>`;
-      } else {
-        htmlResult += `<p data-passage-id="${passageId}" style="font-family: var(--font-serif); font-size: 1.15rem; line-height: 1.8; color: var(--text); margin-bottom: 1.6em;">${formattedLine}</p>`;
-      }
-    }
-  }
-
-  if (inList) {
-    htmlResult += '</ul>';
-  }
-  if (inFootnotes) {
-    htmlResult += '</div>';
-  }
-
-  return htmlResult;
-}
-
-// Simple string hash for generating stable ids
-function hashCode(str) {
-  let hash = 0;
-  if (!str) return hash;
-  for (let i = 0; i < str.length; i++) {
-    const chr = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + chr;
-    hash |= 0; // Convert to 32bit integer
-  }
-  return hash;
-}
-
-function highlightTextInHtml(html, query) {
-  if (!html || !query) return html;
-  const safeQuery = String(query).trim();
-  if (!safeQuery) return html;
-  const escapedQuery = safeQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`(${escapedQuery})`, 'ig');
-  return html.replace(/>([^<]+)</g, (match, content) => {
-    const highlighted = content.replace(pattern, '<mark>$1</mark>');
-    return `>${highlighted}<`;
-  });
-}
-
-function normalizeWhitespace(str) {
-  return String(str || '').replace(/\s+/g, ' ').trim();
-}
-
-// Truncate a retrieved chunk to a citation excerpt without cutting a
-// sentence (or word) in half, so it reads cleanly and matches real
-// sentence boundaries in the source document for highlighting.
-function truncateExcerpt(text, maxLength = 500) {
-  if (!text) return null;
-  // Indexed chunks carry a leading "[Table | Title: ... | File: ...]" context
-  // header for the LLM prompt — strip it for the citation excerpt, since it
-  // never appears in the actual document body and would never highlight.
-  const trimmed = String(text).replace(/^\s*\[[^\]]*\]\s*/, '').trim();
-  if (!trimmed) return null;
-  if (trimmed.length <= maxLength) return trimmed;
-
-  const slice = trimmed.slice(0, maxLength);
-  const lastSentenceEnd = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('! '), slice.lastIndexOf('? '));
-  if (lastSentenceEnd > maxLength * 0.4) {
-    return slice.slice(0, lastSentenceEnd + 1).trim();
-  }
-
-  const lastSpace = slice.lastIndexOf(' ');
-  return (lastSpace > 0 ? slice.slice(0, lastSpace) : slice).trim();
-}
-
-// Split a retrieved excerpt into individual sentences so each one can be
-// located and highlighted independently inside the full document — the
-// excerpt as a whole almost never appears as one contiguous run of text
-// once formatDocumentContent has re-wrapped the source into paragraphs.
-function splitIntoSentences(text) {
-  const normalized = normalizeWhitespace(text);
-  if (!normalized) return [];
-  return normalized
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'\u201c\u2018])/)
-    .map(normalizeWhitespace)
-    .filter((sentence) => sentence.length >= 15);
-}
-
-// Stop words filter for keyword extraction
-const HIGHLIGHT_STOP_WORDS = new Set([
-  'a', 'an', 'the', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'in', 'on', 'at', 'to', 'for', 'with', 'by', 'about', 'against', 'between', 'into', 'through',
-  'during', 'before', 'after', 'above', 'below', 'from', 'up', 'down', 'of', 'off', 'over', 'under',
-  'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
-  'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own',
-  'same', 'so', 'than', 'too', 'very', 'can', 'will', 'just', 'should', 'now', 'this', 'that', 'these',
-  'those', 'am', 'it', 'its', 'has', 'have', 'had', 'do', 'does', 'did', 'would', 'could', 'may', 'might',
-  'must', 'shall', 'also', 'which', 'what', 'their', 'them', 'they', 'under', 'within', 'from'
-]);
-
-function extractSearchPhrasesAndWords(excerptText, userQueryText) {
-  const phrases = [];
-  const words = [];
-  const combined = `${excerptText || ''} ${userQueryText || ''}`.trim();
-  if (!combined) return { phrases, words };
-
-  // 1. Sentences from excerpt
-  if (excerptText) {
-    const rawSentences = excerptText
-      .split(/(?<=[.!?])\s+|\n+/)
-      .map(s => normalizeWhitespace(s))
-      .filter(s => s.length >= 10);
-    phrases.push(...rawSentences);
-  }
-
-  // 2. Extract key individual terms (ignoring common stop words)
-  const rawWords = combined
-    .replace(/[^\w\s\d_-]/g, ' ')
-    .split(/\s+/)
-    .map(w => w.trim())
-    .filter(w => w.length >= 3);
-
-  for (let i = 0; i < rawWords.length; i++) {
-    const w = rawWords[i];
-    if (!HIGHLIGHT_STOP_WORDS.has(w.toLowerCase()) && !words.includes(w)) {
-      words.push(w);
-    }
-  }
-
-  // 3. Create 3-5 word phrase chunks if excerpt is long
-  if (excerptText && rawWords.length >= 3) {
-    for (let i = 0; i <= rawWords.length - 3; i += 2) {
-      const chunk = rawWords.slice(i, i + 4).join(' ');
-      if (chunk.length >= 10 && !phrases.includes(chunk)) {
-        phrases.push(chunk);
-      }
-    }
-  }
-
-  return { phrases, words };
-}
-
-// Highlight the passage that was actually retrieved, sentence by sentence,
-// along with statutory references and key query words.
-function highlightRelevantExcerpt(html, excerptText = '', userQueryText = '') {
-  if (!html) return html;
-  
-  const { phrases } = extractSearchPhrasesAndWords(excerptText, userQueryText);
-  let totalMatches = 0;
-
-  const highlighted = html.replace(/>([^<]+)</g, (match, content) => {
-    if (!content || !content.trim()) return match;
-
-    let updated = content;
-
-    // Sentence / Phrase Highlighting (Cited Passage - Yellow highlight)
-    for (const phrase of phrases) {
-      if (!phrase || phrase.length < 6 || totalMatches >= 30) continue;
-      const safePhrase = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-      try {
-        const pRegex = new RegExp(`(${safePhrase})`, 'gi');
-        if (pRegex.test(updated)) {
-          updated = updated.replace(pRegex, '<mark class="cited-mark">$1</mark>');
-          totalMatches++;
-        }
-      } catch (e) {}
-    }
-
-    return `>${updated}<`;
-  });
-
-  return highlighted;
-}
-
-
-function renderCitationHTML(data, theme = 'dark', highlightQuery = '', userQuery = '') {
-  const root = (data && data.results) ? data.results : (data || {});
-  const child = root.child || root.commentary || root.procedure || {};
-  const parent = root.parent || root.act || {};
-
-  const title = escapeHTML(parent.Title || parent.law_title || parent.Subject || child.Title || root.title || data.title || 'Untitled Document');
-  const sourceTable = escapeHTML(root.source_table || data.source_table || '');
-  const recordId = escapeHTML(root.record_id || data.record_id || '');
-
-  const fileName = escapeHTML(child.FileName || parent.FileName || 'N/A');
-  const category = escapeHTML(child.Category || parent.Category || (sourceTable === 'CLA Books' ? 'Book / PDF (Pinecone)' : 'N/A'));
-  const subject = escapeHTML(child.Subject || parent.Subject || 'N/A');
-  const sections = escapeHTML(child.Sections || parent.Sections || 'N/A');
-  const author = escapeHTML(parent.Author || 'N/A');
-  const issueYear = escapeHTML(parent.IssueYear || '');
-  const issueMonth = escapeHTML(parent.IssueMonth || '');
-  const docDate = escapeHTML(parent.DocDate || child.DocDate || '');
-
-  let formattedDate = 'N/A';
-  if (docDate) {
-    try {
-      formattedDate = new Date(docDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-    } catch (e) {
-      formattedDate = docDate;
-    }
-  } else if (issueMonth || issueYear) {
-    formattedDate = `${issueMonth} ${issueYear}`.trim();
-  }
-
-  let rawText = root.html || data.html || child.Article_Text || child.Data || child.Filetext || child.Text || child.chunk_text || parent.Article_Text || root.text || '';
-  
-  // If database lookup didn't return text (e.g. Pinecone vector fetch issue), fallback to the highlighted passage excerpt
-  if (!rawText || rawText.trim() === `<p>${escapeHTML(title)}</p>` || rawText.trim() === `<p>${title}</p>`) {
-    if (highlightQuery && highlightQuery.trim()) {
-      rawText = highlightQuery.trim();
-    }
-  }
-
-  if (!rawText) {
-    rawText = `<p>${escapeHTML(parent.Title || child.Title || title)}</p>`;
-  }
-
-  const docContent = highlightRelevantExcerpt(formatDocumentContent(rawText), highlightQuery, userQuery);
-  const highlightPreview = normalizeWhitespace(highlightQuery);
-  const highlightBanner = highlightPreview
-    ? `<div class="highlight-banner" id="highlight-banner">Highlighted passage cited in the answer: <strong>${escapeHTML(highlightPreview.length > 160 ? `${highlightPreview.slice(0, 160)}…` : highlightPreview)}</strong></div>`
-    : '';
-
-  const isDarkTheme = theme === 'dark';
-  const bodyThemeClass = isDarkTheme ? 'dark-theme' : 'light-theme';
-  const themeToggleIcon = isDarkTheme ? '☀' : '☾';
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title} | CLA Online Citation</title>
-  <link rel="icon" href="/assets/Images/logo.png" type="image/png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-  <style>
-    /* ============================================================================
-       CITATION PAGE THEME SYSTEM - COMPLETELY INDEPENDENT
-       Uses class-based theming: body.light-theme or body.dark-theme
-       Storage key: citation-theme (independent from chat page)
-       ========================================================================== */
-
-    /* ============================================================================
-       LIGHT THEME VARIABLES
-       ========================================================================== */
-    body.light-theme {
-      --bg: #f7f7f7;
-      --surface: #ffffff;
-      --text: #111111;
-      --muted: #6e6e6e;
-      --border: rgba(0,0,0,0.08);
-      --primary: #0C8742;
-      --primary-light: rgba(12, 135, 66, 0.08);
-      --font-sans: 'Inter', sans-serif;
-      --font-serif: 'Lora', Georgia, serif;
-    }
-
-    /* ============================================================================
-       DARK THEME VARIABLES
-       ========================================================================== */
-    body.dark-theme {
-      --bg: #111111;
-      --surface: #151515;
-      --text: #fdfdfd;
-      --muted: #A3A3A3;
-      --border: rgba(255,255,255,0.06);
-      --primary: #0C8742;
-      --primary-light: rgba(12, 135, 66, 0.06);
-      --font-sans: 'Inter', sans-serif;
-      --font-serif: 'Lora', Georgia, serif;
-    }
-
-    /* ============================================================================
-       RESET & BASE STYLES
-       ========================================================================== */
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      font-family: var(--font-sans);
-      line-height: 1.6;
-      padding: 0;
-      margin: 0;
-      position: relative;
-      min-height: 100vh;
-      transition: background-color 0.3s ease, color 0.3s ease;
-    }
-
-    /* ============================================================================
-       BACKGROUND IMAGE & OVERLAY - REACTIVE TO THEME
-       ========================================================================== */
-    .chat-background-image {
-      position: fixed;
-      inset: 0;
-      background-image: url("/assets/Images/chatbackground_image.png");
-      background-repeat: no-repeat;
-      background-position: center;
-      background-size: cover;
-      pointer-events: none;
-      z-index: 0;
-      transition: opacity 0.3s ease;
-    }
-
-    body.light-theme .chat-background-image {
-      opacity: 0.4;
-    }
-
-    body.dark-theme .chat-background-image {
-      opacity: 0.12;
-    }
-
-    .chat-background-tint {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 1;
-      transition: background 0.3s ease;
-    }
-
-    body.light-theme .chat-background-tint {
-      background: transparent;
-    }
-
-    body.dark-theme .chat-background-tint {
-      background: rgba(0, 0, 0, 0.72);
-    }
-
-    /* Premium Top Header */
-    .top-nav {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: 60px;
-      padding: 0 40px;
-      background-color: var(--surface);
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 100;
-    }
-    
-    .nav-brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-weight: 700;
-      color: var(--primary);
-      font-size: 1.1rem;
-      letter-spacing: 0.04em;
-    }
-
-    .nav-brand img {
-      height: 28px;
-      width: auto;
-      object-fit: contain;
-    }
-
-    .main-container {
-      position: relative;
-      z-index: 2;
-      max-width: 1000px;
-      margin: 40px auto;
-      padding: 0 20px;
-    }
-
-    .document-card {
-      background-color: var(--surface);
-      border: 1px solid var(--border);
-      border-top: 4px solid var(--primary);
-      border-radius: 16px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
-      overflow: hidden;
-    }
-
-    .header-bar {
-      padding: 40px;
-      border-bottom: 1px solid var(--border);
-      background: linear-gradient(to bottom right, var(--surface), var(--bg));
-    }
-
-    .highlight-banner {
-      margin-bottom: 18px;
-      padding: 10px 14px;
-      border-radius: 10px;
-      border: 1px solid rgba(12, 135, 66, 0.22);
-      background: rgba(12, 135, 66, 0.08);
-      color: var(--primary);
-      font-size: 0.92rem;
-      font-weight: 600;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      transition: all 0.25s ease;
-    }
-
-    .highlight-banner.is-active {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 18px rgba(12, 135, 66, 0.12);
-    }
-
-    .highlight-banner mark {
-      background: rgba(12, 135, 66, 0.18);
-      color: inherit;
-      padding: 0 2px;
-      border-radius: 4px;
-    }
-
-    .badge-row {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-    }
-
-    .badge {
-      font-size: 0.72rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      padding: 4px 10px;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      color: var(--muted);
-      background-color: var(--surface);
-    }
-
-    .badge.primary-badge {
-      background-color: var(--primary-light);
-      color: var(--primary);
-      border-color: rgba(12, 135, 66, 0.15);
-    }
-
-    .document-title {
-      font-size: 2rem;
-      font-weight: 800;
-      line-height: 1.3;
-      color: var(--text);
-    }
-
-    .meta-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 20px;
-      padding: 30px 40px;
-      background-color: var(--surface);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .meta-item {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .meta-label {
-      font-size: 0.72rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-    }
-
-    .meta-value {
-      font-size: 0.92rem;
-      font-weight: 600;
-      color: var(--text);
-    }
-
-    .content-body {
-      padding: 40px 50px;
-      background-color: var(--surface);
-      font-family: var(--font-serif) !important;
-      font-size: 1.15rem !important;
-      line-height: 1.8 !important;
-      color: var(--text) !important;
-    }
-
-    .content-body p, .content-body P {
-      font-family: var(--font-serif) !important;
-      margin-bottom: 1.6em !important;
-      color: var(--text) !important;
-      font-size: 1.15rem !important;
-      line-height: 1.8 !important;
-    }
-
-    .content-body h1, .content-body h2, .content-body h3, .content-body h4,
-    .content-body H1, .content-body H2, .content-body H3, .content-body H4 {
-      font-family: var(--font-sans) !important;
-      color: var(--text) !important;
-      font-weight: 700 !important;
-      margin-top: 1.8em !important;
-      margin-bottom: 0.8em !important;
-      line-height: 1.3 !important;
-      display: block !important;
-    }
-
-    .content-body h1, .content-body H1 { font-size: 1.8rem !important; border-bottom: 1px solid var(--border) !important; padding-bottom: 8px !important; }
-    .content-body h2, .content-body H2 { font-size: 1.5rem !important; }
-    .content-body h3, .content-body H3 { font-size: 1.25rem !important; }
-    .content-body h4, .content-body H4 { font-size: 1.1rem !important; }
-
-    .content-body ul, .content-body ol, .content-body UL, .content-body OL {
-      margin-bottom: 1.6em !important;
-      padding-left: 28px !important;
-    }
-
-    .content-body li, .content-body LI {
-      margin-bottom: 0.6em !important;
-      font-family: var(--font-serif) !important;
-      font-size: 1.15rem !important;
-    }
-
-    .content-body table, .content-body TABLE {
-      width: 100% !important;
-      border-collapse: collapse !important;
-      margin: 2.5em 0 !important;
-      font-family: var(--font-sans) !important;
-      font-size: 0.95rem !important;
-    }
-
-    .content-body th, .content-body td, .content-body TH, .content-body TD {
-      border: 1px solid var(--border) !important;
-      padding: 12px 18px !important;
-      text-align: left !important;
-    }
-
-    .content-body th, .content-body TH {
-      background-color: var(--bg) !important;
-      font-weight: 700 !important;
-      color: var(--text) !important;
-    }
-
-    .content-body blockquote, .content-body BLOCKQUOTE {
-      border-left: 4px solid var(--primary) !important;
-      padding-left: 20px !important;
-      font-style: italic !important;
-      color: var(--muted) !important;
-      margin: 1.6em 0 !important;
-    }
-
-    .content-body a, .content-body A {
-      color: var(--primary) !important;
-      text-decoration: underline !important;
-    }
-
-    /* Clean Yellow Highlighting System */
-    .content-body mark.cited-mark, .content-body .cited-mark, .content-body mark {
-      background-color: #ebd038 !important;
-      color: #0f172a !important;
-      padding: 3px 6px !important;
-      border-radius: 4px !important;
-      font-weight: 600 !important;
-      border-bottom: 2px solid #ca8a04 !important;
-      box-shadow: 0 1px 3px rgba(202, 138, 4, 0.35);
-    }
-
-    body.dark-theme .content-body mark.cited-mark, body.dark-theme .content-body .cited-mark, body.dark-theme .content-body mark {
-      background-color: rgba(234, 179, 8, 0.45) !important;
-      color: #fef9c3 !important;
-      padding: 3px 6px !important;
-      border-radius: 4px !important;
-      font-weight: 600 !important;
-      border-bottom: 2px solid #eab308 !important;
-      box-shadow: 0 1px 3px rgba(234, 179, 8, 0.35);
-    }
-
-    .content-body .key-term {
-      color: var(--primary) !important;
-      font-weight: 700 !important;
-    }
-
-    .content-body p[data-passage-id].persistent-highlight {
-      background: rgba(12, 135, 66, 0.1);
-      box-shadow: inset 3px 0 0 var(--primary);
-      border-radius: 6px;
-      padding: 12px 16px 12px 20px !important;
-      margin-left: -20px;
-      transition: background 1.4s ease;
-    }
-
-    .footer-actions {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 24px 40px;
-      background-color: var(--bg);
-      border-top: 1px solid var(--border);
-    }
-
-    /* Theme toggle button styling */
-    #themeToggleBtn, .navbar-theme-btn {
-      width: 40px;
-      height: 36px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--text);
-      cursor: pointer;
-      font-size: 1rem;
-      transition: all 0.2s ease;
-    }
-
-    #themeToggleBtn:hover, .navbar-theme-btn:hover {
-      border-color: rgba(12,135,66,0.16);
-      background: rgba(12,135,66,0.04);
-    }
-
-    #themeToggleBtn:active, .navbar-theme-btn:active {
-      transform: scale(0.95);
-    }
-
-    /* Citation page scrollbars - themed */
-    body::-webkit-scrollbar, .content-body::-webkit-scrollbar {
-      width: 12px;
-    }
-
-    body::-webkit-scrollbar-track, .content-body::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    body::-webkit-scrollbar-thumb, .content-body::-webkit-scrollbar-thumb {
-      background: rgba(12,135,66,0.28);
-      border-radius: 999px;
-    }
-
-    body::-webkit-scrollbar-thumb:hover, .content-body::-webkit-scrollbar-thumb:hover {
-      background: rgba(12,135,66,0.4);
-    }
-
-    body {
-      scrollbar-width: thin;
-      scrollbar-color: rgba(12,135,66,0.28) transparent;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 20px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      font-family: var(--font-sans);
-      border-radius: 8px;
-      cursor: pointer;
-      text-decoration: none;
-      transition: all 0.2s ease;
-      border: none;
-    }
-
-    .btn-secondary {
-      background-color: var(--surface);
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
-
-    .btn-secondary:hover {
-      background-color: var(--border);
-    }
-
-    .btn-primary {
-      background-color: var(--primary);
-      color: #ffffff;
-    }
-
-    .btn-primary:hover {
-      opacity: 0.9;
-    }
-
-    .footer-note {
-      font-size: 0.8rem;
-      color: var(--muted);
-    }
-
-    @media (max-width: 600px) {
-      .top-nav {
-        padding: 0 20px;
-      }
-      .main-container {
-        margin: 20px auto;
-      }
-      .header-bar {
-        padding: 24px;
-      }
-      .meta-grid {
-        padding: 24px;
-        grid-template-columns: 1fr;
-      }
-      .content-body {
-        padding: 24px;
-        font-size: 1.05rem;
-      }
-      .footer-actions {
-        padding: 24px;
-        flex-direction: column;
-        gap: 16px;
-        align-items: stretch;
-        text-align: center;
-      }
-    }
-
-    @media print {
-      body {
-        background-color: #ffffff;
-        color: #000000;
-        padding: 0;
-      }
-      .top-nav {
-        display: none;
-      }
-      .document-card {
-        border: none;
-        box-shadow: none;
-      }
-      .header-bar {
-        background: none;
-        color: #000000;
-        border-bottom: 2px solid #000000;
-        padding: 20px 0;
-      }
-      .badge {
-        color: #000000;
-        border: 1px solid #000000;
-      }
-      .meta-grid {
-        background: none;
-        padding: 20px 0;
-        border-bottom: 1px solid #000000;
-      }
-      .content-body {
-        padding: 20px 0;
-      }
-      .footer-actions {
-        display: none;
-      }
-    }
-  </style>
-</head>
-<body class="${bodyThemeClass}">
-  <div class="chat-background-image" aria-hidden="true"></div>
-  <div class="chat-background-tint" aria-hidden="true"></div>
-
-  <header class="top-nav">
-    <div class="nav-brand">
-      <img src="/assets/Images/logo.png" alt="CLA Corporate Law Adviser">
-      <span>CLA Online Legal Database</span>
-    </div>
-    <button class="navbar-theme-btn" id="themeToggleBtn" type="button">${themeToggleIcon}</button>
-  </header>
-
-  <div class="main-container">
-    <div class="document-card">
-      <div class="header-bar">
-        ${highlightBanner}
-        <div class="badge-row">
-          <span class="badge primary-badge">${sourceTable}</span>
-        </div>
-        <h1 class="document-title">${title}</h1>
-      </div>
-      
-      <div class="meta-grid">
-        <div class="meta-item">
-          <span class="meta-label">File Name</span>
-          <span class="meta-value">${fileName}</span>
-        </div>
-        <div class="meta-item">
-          <span class="meta-label">Category</span>
-          <span class="meta-value">${category}</span>
-        </div>
-        <div class="meta-item">
-          <span class="meta-label">Subject</span>
-          <span class="meta-value">${subject}</span>
-        </div>
-        <div class="meta-item">
-          <span class="meta-label">Sections</span>
-          <span class="meta-value">${sections}</span>
-        </div>
-        ${author !== 'Unknown' ? `
-        <div class="meta-item">
-          <span class="meta-label">Author</span>
-          <span class="meta-value">${author}</span>
-        </div>
-        ` : ''}
-        <div class="meta-item">
-          <span class="meta-label">Document Date</span>
-          <span class="meta-value">${formattedDate}</span>
-        </div>
-      </div>
-      
-      <div class="content-body">
-        ${docContent}
-      </div>
-      
-      <div class="footer-actions">
-        <div>
-          <button class="btn btn-secondary" onclick="closeCitationTab()">← Back to AI Chatbot</button>
-        </div>
-        <div class="footer-note">CLA Online - Verified Grounded Database Source</div>
-        <div></div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    // This page always opens in a new tab (target="_blank" / window.open), so
-    // it has no same-tab history to go "back" to — close the tab instead, and
-    // only fall back to redirecting if the browser refuses to close a tab it
-    // didn't script-open (e.g. the user opened this URL directly).
-    function closeCitationTab() {
-      window.close();
-      setTimeout(function () {
-        if (!window.closed) {
-          window.location.href = '/HTML/chatbot_interface.html';
-        }
-      }, 300);
-    }
-
-    /**
-     * =========================================================================
-     * CITATION PAGE THEME MANAGER - COMPLETELY INDEPENDENT
-     * =========================================================================
-     * This theme system is completely self-contained and independent.
-     * - Uses dedicated localStorage key: 'citation-theme'
-     * - Uses class-based theming: body.light-theme / body.dark-theme
-     * - NO dependency on chat page, parent, iframe, or shared state
-     * - Manages all theme initialization and toggling
-     * =========================================================================
-     */
-
-    class CitationThemeManager {
-      constructor() {
-        this.STORAGE_KEY = 'citation-theme';
-        this.LIGHT_THEME = 'light';
-        this.DARK_THEME = 'dark';
-        this.DEFAULT_THEME = this.LIGHT_THEME;
-        this.themeToggleBtn = document.getElementById('themeToggleBtn');
-        this.currentTheme = null;
-      }
-
-      /**
-       * Initialize theme on page load
-       */
-      init() {
-        // Read stored theme or use default
-        this.currentTheme = this.getSavedTheme();
-        
-        // Apply theme immediately (before page renders to avoid flash)
-        this.applyTheme(this.currentTheme);
-        
-        // Attach event listener to theme toggle button
-        if (this.themeToggleBtn) {
-          this.themeToggleBtn.addEventListener('click', () => this.handleToggleClick());
-        }
-
-        // Optional: Listen for changes from other tabs (independent theme only)
-        window.addEventListener('storage', (event) => {
-          if (event.key === this.STORAGE_KEY && event.newValue) {
-            this.currentTheme = event.newValue;
-            this.applyTheme(this.currentTheme);
-          }
-        });
-      }
-
-      /**
-       * Get saved theme from localStorage
-       * @returns {string} 'light' or 'dark'
-       */
-      getSavedTheme() {
-        const saved = localStorage.getItem(this.STORAGE_KEY);
-
-        // Return saved theme if valid
-        if (saved === this.LIGHT_THEME || saved === this.DARK_THEME) {
-          return saved;
-        }
-
-        // No stored preference yet: keep whatever theme the server already
-        // rendered (matched to the chat's theme at the time this link was
-        // opened) instead of snapping back to the default and flashing.
-        if (document.body.classList.contains('dark-theme')) {
-          return this.DARK_THEME;
-        }
-        if (document.body.classList.contains('light-theme')) {
-          return this.LIGHT_THEME;
-        }
-
-        return this.DEFAULT_THEME;
-      }
-
-      /**
-       * Apply theme to the page
-       * @param {string} theme - 'light' or 'dark'
-       */
-      applyTheme(theme) {
-        const isDark = theme === this.DARK_THEME;
-
-        // Update body class. The CSS keys off "light-theme"/"dark-theme",
-        // not the bare "light"/"dark" theme values used for localStorage.
-        document.body.classList.remove('light-theme', 'dark-theme');
-        document.body.classList.add(isDark ? 'dark-theme' : 'light-theme');
-
-        // Update button icon to show next theme (opposite of current)
-        if (this.themeToggleBtn) {
-          this.themeToggleBtn.textContent = isDark ? '☀' : '☾';
-          this.themeToggleBtn.setAttribute('aria-label', 
-            isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'
-          );
-        }
-
-        // Store the current theme
-        this.currentTheme = theme;
-        localStorage.setItem(this.STORAGE_KEY, theme);
-      }
-
-      /**
-       * Handle toggle button click
-       */
-      handleToggleClick() {
-        const nextTheme = this.currentTheme === this.DARK_THEME 
-          ? this.LIGHT_THEME 
-          : this.DARK_THEME;
-        
-        this.applyTheme(nextTheme);
-      }
-
-      /**
-       * Get current theme
-       * @returns {string}
-       */
-      getTheme() {
-        return this.currentTheme;
-      }
-
-      /**
-       * Check if dark mode is active
-       * @returns {boolean}
-       */
-      isDarkMode() {
-        return this.currentTheme === this.DARK_THEME;
-      }
-    }
-
-    // Initialize theme manager as soon as DOM is ready
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        const themeManager = new CitationThemeManager();
-        themeManager.init();
-        window.citationThemeManager = themeManager; // Expose for debugging
-      });
-    } else {
-      const themeManager = new CitationThemeManager();
-      themeManager.init();
-      window.citationThemeManager = themeManager;
-    }
-
-    // Handle highlight functionality (unrelated to theme, but preserve existing behavior)
-    window.addEventListener('load', function() {
-      const highlightBanner = document.getElementById('highlight-banner');
-      if (highlightBanner) {
-        highlightBanner.classList.add('is-active');
-      }
-
-      // Jump straight to the first cited-passage highlight in the body, if any,
-      // and pulse its containing paragraph so it's easy to spot at a glance.
-      const firstMark = document.querySelector('.content-body .cited-mark, .content-body mark');
-      const target = firstMark ? firstMark.closest('[data-passage-id]') : null;
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        target.classList.add('persistent-highlight');
-        const removeHighlight = () => {
-          target.classList.remove('persistent-highlight');
-          window.removeEventListener('click', removeHighlight);
-        };
-        setTimeout(() => window.addEventListener('click', removeHighlight), 200);
-      } else if (highlightBanner) {
-        highlightBanner.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    });
-  </script>
-</body>
-</html>`;
-}
 async function startServer() {
   try {
     const db = await connectDB();
@@ -2140,41 +1127,64 @@ async function startServer() {
         return;
       }
 
+      // Correct Act names for legislation files. Chats saved before the label fix hold some
+      // legislation sources under another Act's name; the chat page uses this to repair them.
+      if (path === '/api/legislation-titles' && req.method === 'GET') {
+        const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+        const files = (urlParsed.searchParams.get('files') || '').split(',').map(f => f.trim().toLowerCase()).filter(Boolean).slice(0, 100);
+        const labels = getLegislationLabels();
+        const titles = {};
+        for (const file of files) {
+          if (labels[file] && labels[file].title) titles[file] = labels[file].title;
+        }
+        setJsonHeaders(res, 200);
+        res.end(JSON.stringify({ titles }));
+        return;
+      }
+
       if (path === '/api/citation' && req.method === 'GET') {
         try {
           const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-          const sourceTable = urlParsed.searchParams.get('sourceTable');
-          const recordId = urlParsed.searchParams.get('recordId');
-          const parentId = urlParsed.searchParams.get('parentId');
-          const highlight = urlParsed.searchParams.get('highlight') || '';
-          const userQuery = urlParsed.searchParams.get('query') || '';
-          const theme = urlParsed.searchParams.get('theme') || 'light';
+          const params = urlParsed.searchParams;
+          const sourceTable = params.get('sourceTable');
+          const recordId = params.get('recordId');
+          const parentId = params.get('parentId') || params.get('page');
+          const fileName = params.get('file');
+          const highlight = params.get('highlight') || '';
+          const claim = params.get('claim') || '';
+          const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
+          // ids of the cited chunks, e.g. "Legislation|79|33,Legislation|79|120"
+          const citedIds = (params.get('ids') || '').split(',').map(id => id.trim()).filter(Boolean);
 
-          if (!sourceTable || !recordId) {
+          if (!sourceTable || (!recordId && !fileName)) {
             res.writeHead(400, { 'Content-Type': 'text/html' });
             res.end('<h1>400 Bad Request</h1><p>sourceTable and recordId parameters are required.</p>');
             return;
           }
 
-          let citationData = null;
+          let details = null;
           try {
-            citationData = await runPythonCitation(sourceTable, recordId, parentId);
+            details = await loadCitationSource(sourceTable, recordId, parentId, fileName, citedIds);
           } catch (pyErr) {
-            console.warn('[Citation Endpoint] Python lookup error, using fallback:', pyErr.message);
+            console.warn('[Citation Endpoint] Source lookup failed:', pyErr.message);
           }
 
-          if (!citationData || citationData.error) {
-            citationData = {
-              results: {
-                source_table: sourceTable,
-                record_id: recordId,
-                parent: { Title: 'CLA Books & Unstructured Documents', Category: sourceTable },
-                child: { Article_Text: highlight, Sections: parentId ? `Page ${parentId}` : '' }
+          let htmlResponse;
+          if (!details || !Array.isArray(details.chunks) || details.chunks.length === 0) {
+            htmlResponse = renderCitationNotFound({ theme, sourceTable, highlightText: highlight, title: params.get('title') || '' });
+          } else {
+            let pdfUrl = null;
+            if (details.document && details.document.is_book) {
+              const pdf = await checkBookPdf(details.document.file_name);
+              if (pdf.available) {
+                pdfUrl = `/api/view-pdf?file=${encodeURIComponent(details.document.file_name)}&page=${encodeURIComponent(details.document.page_number || 1)}`;
               }
-            };
+              // A book chunk is one source; its id is the record id itself.
+              if (!citedIds.length && recordId) citedIds.push(recordId);
+            }
+            htmlResponse = renderCitationPage(details, { theme, citedIds, highlightText: highlight, claim, pdfUrl });
           }
 
-          const htmlResponse = renderCitationHTML(citationData, theme, highlight, userQuery);
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(htmlResponse);
         } catch (error) {
@@ -2187,94 +1197,31 @@ async function startServer() {
 
       if ((path === '/api/view-pdf' || path === '/api/pdf') && req.method === 'GET') {
         try {
-          const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
-          const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-
           const urlParsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-          let rawFile = urlParsed.searchParams.get('file') || urlParsed.searchParams.get('fileName') || urlParsed.searchParams.get('file_name') || '';
-          let page = urlParsed.searchParams.get('page') || urlParsed.searchParams.get('page_number') || '1';
-          let highlightText = urlParsed.searchParams.get('highlight') || urlParsed.searchParams.get('text') || urlParsed.searchParams.get('excerpt') || '';
+          const params = urlParsed.searchParams;
+          const fileName = (params.get('file') || params.get('fileName') || params.get('file_name') || '').trim();
+          const page = String(parseInt(params.get('page') || params.get('page_number') || '1', 10) || 1);
+          const highlight = params.get('highlight') || params.get('text') || params.get('excerpt') || '';
 
-          let fileName = decodeURIComponent(rawFile).trim();
-
-          const s3BookFiles = [
-            "Basic Concepts of Company & It's Structure_PRINT.pdf",
-            "Basic_Concepts_of_Company_and_Its_Structure_PRINT.pdf",
-            "Company Finance, Investment & Audit_PRINT.pdf",
-            "Company_Finance_Investment_and_Audit_PRINT.pdf",
-            "Corporate Compliance & Law_PRINT.pdf",
-            "Corporate Dispute & Remedies_PRINT.pdf",
-            "Corporate_Compliance_and_Law_PRINT.pdf",
-            "Corporate_Dispute_and_Remedies_PRINT.pdf",
-            "Key Managerial Personnel_PRINT.pdf",
-            "Key_Managerial_Personnel_PRINT.pdf",
-            "Legal Doctrines & Principles_PRINT.pdf",
-            "Legal_Doctrines_and_Principles_PRINT.pdf",
-            "Meetings & Governance_PRINT.pdf",
-            "Meetings_and_Governance_PRINT.pdf",
-            "Share Capital & Securities Law_PRINT (1).pdf",
-            "Share_Capital_and_Securities_Law_PRINT.pdf",
-            "Share_Capital_and_Securities_Law_PRINT_1.pdf"
-          ];
-
-          let targetKey = null;
-          if (!fileName || fileName.toLowerCase() === 'unknown' || fileName.toLowerCase() === 'null') {
-            targetKey = `books/${s3BookFiles[0]}`;
-          } else {
-            if (!fileName.endsWith('.pdf')) fileName += '.pdf';
-            const normSearch = fileName.toLowerCase().replace(/[^a-z0-9]/g, '');
-            const match = s3BookFiles.find(b => b.toLowerCase().replace(/[^a-z0-9]/g, '') === normSearch) ||
-                          s3BookFiles.find(b => normSearch.length > 3 && b.toLowerCase().replace(/[^a-z0-9]/g, '').includes(normSearch)) ||
-                          s3BookFiles.find(b => normSearch.length > 3 && normSearch.includes(b.toLowerCase().replace(/[^a-z0-9]/g, ''))) ||
-                          s3BookFiles.find(b => b.toLowerCase().includes(fileName.toLowerCase().replace('.pdf', ''))) ||
-                          fileName;
-            targetKey = `books/${match.startsWith('books/') ? match.slice(6) : match}`;
+          const pdf = await checkBookPdf(fileName);
+          if (pdf.available) {
+            const presignedUrl = await presignBookPdf(pdf.key);
+            res.writeHead(302, { 'Location': `${presignedUrl}#page=${page}` });
+            res.end();
+            return;
           }
 
-          const s3Client = new S3Client({
-            region: process.env.AWS_REGION || 'us-east-1',
-            credentials: {
-              accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-              secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-            }
-          });
-
-          const command = new GetObjectCommand({
-            Bucket: process.env.AWS_BUCKET_NAME || 'james-fixer',
-            Key: targetKey
-          });
-
-          const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 7200 });
-
-          let pdfHash = `page=${page}`;
-          if (highlightText) {
-            let clean = decodeURIComponent(highlightText)
-              .replace(/<[^>]+>/g, ' ')
-              .replace(/[\*\_`==#"'()\[\]{},;:.!?-]+/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim();
-            const words = clean.split(' ').filter(w => w.length >= 2);
-            if (words.length > 0) {
-              if (words.length <= 8) {
-                const fullPhrase = words.join(' ');
-                const enc = encodeURIComponent(fullPhrase);
-                pdfHash += `&search=${enc}:~:text=${enc}`;
-              } else {
-                const startPhrase = words.slice(0, 5).join(' ');
-                const endPhrase = words.slice(-5).join(' ');
-                const encStart = encodeURIComponent(startPhrase);
-                const encEnd = encodeURIComponent(endPhrase);
-                pdfHash += `&search=${encStart}:~:text=${encStart},${encEnd}`;
-              }
-            }
-          }
-
-          const redirectUrl = `${presignedUrl}#${pdfHash}`;
-
-          res.writeHead(302, { 'Location': redirectUrl });
+          // The PDF cannot be served (missing file or S3 credentials): show the same book
+          // page as text instead of an S3 error.
+          console.warn(`[PDF Endpoint] PDF unavailable for "${fileName}" (${pdf.reason}). Falling back to the book page text view.`);
+          const fallbackParams = new URLSearchParams({ sourceTable: 'CLA Books', file: fileName, page });
+          const theme = params.get('theme');
+          if (theme) fallbackParams.set('theme', theme);
+          if (highlight) fallbackParams.set('highlight', highlight.slice(0, 1500));
+          res.writeHead(302, { 'Location': `/api/citation?${fallbackParams.toString()}` });
           res.end();
         } catch (pdfErr) {
-          console.error('[PDF Endpoint] Error generating presigned URL:', pdfErr.message);
+          console.error('[PDF Endpoint] Error:', pdfErr.message);
           res.writeHead(500, { 'Content-Type': 'text/html' });
           res.end(`<h1>500 Internal Server Error</h1><p>Unable to open requested PDF: ${escapeHTML(pdfErr.message)}</p>`);
         }
@@ -2782,17 +1729,9 @@ async function startServer() {
 
             console.log(`[RAG Endpoint] Found ${results.length} matching document chunks. Generating answer...`);
 
-            // Format search context
-            const contextBlock = results.map((r, idx) => {
-              const sourceIndex = idx + 1;
-              const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || r.subject || 'Untitled';
-              const fileName = r.file_name || r.file || r.filename || (r.original && r.original.child && r.original.child.FileName) || (r.original && r.original.parent && r.original.parent.FileName) || r.doc_title || r.subject || title || 'Unknown';
-              const category = r.category || 'Unknown';
-              const subject = r.subject || 'Unknown';
-              const sections = r.sections || 'Unknown';
-
-              return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
-            }).join('\n\n---\n\n');
+            // Numbered search context: "[Source N]" is results[N - 1], which is how the
+            // inline citation markers are mapped back to sources after generation.
+            const contextBlock = buildContextBlock(results);
 
             // Build Grounded LLM Prompt
             const attachmentPromptRules = attachmentContext
@@ -2805,19 +1744,26 @@ async function startServer() {
 
             const formattingRules = `
 
-CRITICAL READABILITY & FORMATTING RULES:
-1. NO META OPENING: NEVER start your answer with "Based solely on...", "Based on the retrieved...", "According to the database...", or any meta-disclaimer. Start IMMEDIATELY with a direct 2-3 sentence legal answer.
-2. MANDATORY ACCURATE INLINE CITATIONS: Every substantive point, case summary, holding, statutory rule, or paragraph drawn from the Search Context MUST conclude with its source reference in brackets: [Source N] or [Source N, M] (e.g. "...ordered CIRP [Source 8]." or "...treatment of government dues [Source 3, 4]."). Place this citation tag at the end of each substantive point, sentence, or paragraph so each point is clearly attributed to its exact source. Cite at most 1 to 2 specific source numbers per tag (e.g. [Source 1] or [Source 1, 2]). NEVER output long strings or ranges of citations like [Source 6, 7, 8, 9, 10, 11, 12...]. Do NOT omit citation tags; every single point or paragraph derived from the Search Context must attribute which exact retrieved source(s) it is based upon. Never fabricate source numbers.
-3. NO MANUAL SOURCES SECTION: Do NOT output a manual "**Sources:**" text section or bullet list at the end of your answer. The user interface automatically renders the interactive Source Citations panel below your message.
-4. HIGHLIGHT KEY TAKEAWAYS: Wrap 1 to 3 critical statutory rules, key holdings, or primary answers in double equal signs (e.g. ==Section 135 mandates 2% CSR expenditure for qualifying companies==) so they are visually highlighted for the reader.
-5. MANDATORY FOLLOW-UP QUESTIONS: At the very end of your response, ALWAYS append the exact tag '---SUGGESTIONS---' followed by 3 relevant follow-up questions the user might ask next, one per line.
+OUTPUT RULES FOR THIS CONVERSATION (these override anything above that conflicts with them):
+The user message holds the question and a Search Context of numbered passages, each starting with "[Source N]". Those passages are the only material you may answer from.
+
+1. CITATIONS. End every sentence or list item that states law, a holding, a procedural step or a fact taken from the Search Context with the number of the passage it came from, in square brackets, e.g. "...by special resolution [3]." Use the number N from that passage's "[Source N]" label. Cite only the passage that actually states the point; when two passages state it, write [3][7]. Never cite a passage only because it is on the same topic, never invent a number, and never write a range or a long run of numbers. A sentence that merely links or sums up points already cited needs no marker. Do not put a source's title or file name in place of the marker, and do not write a "Sources" or "Sources Used" list: the interface shows the numbered sources under your answer.
+2. STRUCTURE. Use exactly three main headings, each on its own line in exactly this form: "## Overview", "## Analysis", "## Conclusion". Every sub-heading inside the Analysis goes on its own line as "### Sub-heading text". Never use bold text as a heading and never add any other "##" heading.
+3. STANDALONE ANSWER. Write a finished piece of legal analysis for the reader. Never describe how it was produced: do not mention "the database", "the sources provided", "the retrieved material", "the context", source agents, or what was or was not found, and do not write about gaps, missing material or what "could not be confirmed". Where the passages do not support a point, leave that point out without comment and answer the rest fully. Only if the passages do not address the core of the question at all, reply with exactly this one sentence and nothing else: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."
+4. OPENING. Begin the Overview with the legal position itself. No preamble such as "Based on...".
+5. HIGHLIGHT. Wrap one to three key rules or holdings in double equal signs, e.g. ==Section 135 requires qualifying companies to spend 2% of average net profits on CSR==.
+6. CLOSING. End the answer with this line: "This is legal research, not legal advice. Please verify against the primary source."
+7. FOLLOW-UPS. After that line, add the exact tag '---SUGGESTIONS---' followed by 3 follow-up questions the user might ask next, one per line.
 Example:
 ---SUGGESTIONS---
 What are the requirements for board resolutions under Section 135?
 Are private companies exempt from these regulations?
 What is the penalty for violating this provision?`;
 
-            const systemPrompt = `${baseSummarizerPrompt}${attachmentPromptRules}${formattingRules}`;
+            // The summarizer prompt is written for the multi-agent flow; its shared-context
+            // placeholder has no content in this single-call flow, so it is removed.
+            const summarizerPromptForContext = baseSummarizerPrompt.replace(/\[SHARED LEGAL CONTEXT\]\s*/g, '').replace(/\[COMMON RULES\]\s*/g, '');
+            const systemPrompt = `${summarizerPromptForContext}${attachmentPromptRules}${formattingRules}`;
 
             // Answer synthesis: DeepSeek v4 Pro primary
             const llm = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
@@ -2891,13 +1837,13 @@ What is the penalty for violating this provision?`;
                   systemPrompt: systemPrompt,
                   userContent: userContent,
                   temperature: 0.1,
-                  maxTokens: 2048,
+                  maxTokens: 3500,
                   generate: async () => {
                     return await currentLlm.generate({
                       systemPrompt: systemPrompt,
                       messages: llmMessages,
                       temperature: 0.1,
-                      maxTokens: 2048
+                      maxTokens: 3500
                     });
                   },
                   requestContext: req.requestContext,
@@ -2969,11 +1915,16 @@ What is the penalty for violating this provision?`;
             const parsedResponse =
               parseAnswerAndSuggestions(answerText);
 
-            answerText = parsedResponse.answer;
             suggestions = parsedResponse.suggestions;
 
+            // Keep only the sources the answer cites, rank them by relevance, and renumber
+            // the inline markers to match: [1] in the text is source 1 in the list.
+            const finalized = finalizeAnswer(parsedResponse.answer, results);
+            answerText = finalized.answer;
+            const citedSources = finalized.sources;
+
             console.log(
-              `[RAG Endpoint] Extracted ${suggestions.length} suggestions.`
+              `[RAG Endpoint] Extracted ${suggestions.length} suggestions. Citations: ${JSON.stringify(finalized.stats)} from ${results.length} retrieved chunks.`
             );
 
             serverLogs.push({
@@ -3192,49 +2143,8 @@ What is the penalty for violating this provision?`;
                 });
               });
             }
-            // Build sources array for all retrieved chunks (preserves 1-to-1 mapping with text sources list)
-            const allSources = [];
-
-            if (Array.isArray(results)) {
-              results.forEach((r, idx) => {
-                const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || r.subject || 'Untitled';
-                const fileName = r.file_name || r.file || r.filename || (r.original && r.original.child && r.original.child.FileName) || (r.original && r.original.parent && r.original.parent.FileName) || r.doc_title || r.subject || title || 'Unknown';
-                const isBook = Boolean(r.is_book || r.source_table === 'CLA Books' || r.database_source === 'Pinecone' || (fileName && String(fileName).endsWith('.pdf')));
-                const pageNumber = r.page_number || r.parent_id || r.page_no || 1;
-                const s3Url = r.s3_url || (isBook && fileName !== 'Unknown' ? `/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNumber}#page=${pageNumber}` : null);
-
-                const getCategory = (res) => {
-                  const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
-                  if (cat && (String(cat).includes('text-embedding') || String(cat).includes('embedding-3'))) return null;
-                  return cat;
-                };
-
-                allSources.push({
-                  title,
-                  filename: fileName,
-                  file_name: fileName,
-                  is_book: isBook,
-                  s3_url: s3Url,
-                  source_table: r.source_table || (r.database_source === 'Pinecone' ? 'CLA Books' : 'Unknown'),
-                  record_id: r.record_id,
-                  parent_id: r.parent_id,
-                  page_number: pageNumber,
-                  page_no: pageNumber,
-                  database_source: r.database_source || (r.source_table === 'CLA Books' ? 'Pinecone' : 'PGVector'),
-                  law_title: r.law_title || null,
-                  excerpt: truncateExcerpt(r.chunk_text),
-                  author: (r.original && r.original.parent && r.original.parent.Author) || r.author || null,
-                  sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-                  category: getCategory(r) || (r.database_source === 'Pinecone' || r.source_table === 'CLA Books' ? 'Book / PDF (Pinecone)' : null),
-                  subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
-                  doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
-                  vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
-                  issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
-                  issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null,
-                  score: r.backend_relevance_score || r.score || null
-                });
-              });
-            }
+            // Only the sources the answer cites, already ranked and numbered by finalizeAnswer.
+            const allSources = citedSources;
 
             updateRequestProgress(progressRequestId, {
               stageIndex: 5,
@@ -3250,6 +2160,8 @@ What is the penalty for violating this provision?`;
               suggestions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
               follow_up_questions: normalizeFollowUpQuestions({ follow_up_questions: suggestions }),
               sources: allSources,
+              question: question.trim(),
+              citationFormat: 'numbered',
               searchResults: results.map(r => ({
                 embedding_id: r.embedding_id,
                 source_table: r.source_table,
@@ -3611,17 +2523,7 @@ What is the penalty for violating this provision?`;
               let suggestions = [];
 
               if (results && results.length > 0) {
-                const contextBlock = results.map((r, idx) => {
-                  const sourceIndex = idx + 1;
-                  const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || 'Untitled';
-                  const fileName = (r.original && r.original.child && r.original.child.FileName) ||
-                    (r.original && r.original.parent && r.original.parent.FileName) || 'Unknown';
-                  const category = r.category || 'Unknown';
-                  const subject = r.subject || 'Unknown';
-                  const sections = r.sections || 'Unknown';
-
-                  return `[Source ${sourceIndex}] Title: "${title}" | File: ${fileName} | Sections: ${sections} | Category: ${category} | Subject: ${subject}\nContent: ${r.chunk_text}`;
-                }).join('\n\n---\n\n');
+                const contextBlock = buildContextBlock(results);
 
                 const systemPrompt = `You are a professional legal research assistant for Indian corporate and commercial law.
 You must answer the user's question grounding your answer strictly and ONLY in the provided search context.
@@ -3632,7 +2534,9 @@ Style and Tone Requirements:
 - Present a clear, structured legal explanation.
 - Use Markdown formatting for structure: headings (e.g., "### Heading"), bullet points, numbered lists, tables (where data can be formatted in columns), and bold text for key legal terms or sections.
 - Avoid printing raw file names or titles inline in the text.
-- Use numerical citation tags like [1], [2], [3] to cite which source(s) the information came from. The citation number must correspond to the Source number provided in the context (e.g. use [1] for [Source 1], [2] for [Source 2]).
+- End every sentence that states law, a holding or a fact from the context with the number of the source it came from in square brackets, e.g. [3] for [Source 3]. Cite only the source that actually states the point; never cite a source only because it is on the same topic.
+- Use "## Overview", "## Analysis" and "## Conclusion" as the main headings and "### " for any sub-heading inside the Analysis.
+- Write a standalone answer: never mention the database, the context, the sources provided, or gaps in them, and do not add a Sources list.
 - Highlight 1 to 3 key statutory rules, holdings, or core answers using double equal signs (e.g., ==Section 135 mandates 2% CSR allocation==) for visual clarity.
 - Ensure the output is clean and complete.
 
@@ -3665,7 +2569,7 @@ What is the penalty for violating this provision?`;
                     systemPrompt: systemPrompt,
                     messages: sessionLLmMessages,
                     temperature: 0.1,
-                    maxTokens: 2048,
+                    maxTokens: 3500,
                     requestContext: req.requestContext,
                   });
                   answerText = llmResponse.content || '';
@@ -3680,51 +2584,11 @@ What is the penalty for violating this provision?`;
                 const parsedResponse =
                   parseAnswerAndSuggestions(answerText);
 
-                answerText = parsedResponse.answer;
                 suggestions = parsedResponse.suggestions;
-                // Format sources array for session message metadata
-                const allSources = [];
-                if (Array.isArray(results)) {
-                  results.forEach((r, idx) => {
-                    const title = r.doc_title || (r.original && r.original.parent && r.original.parent.Title) || r.subject || 'Untitled';
-                    const fileName = r.file_name || r.file || r.filename || (r.original && r.original.child && r.original.child.FileName) || (r.original && r.original.parent && r.original.parent.FileName) || r.doc_title || r.subject || title || 'Unknown';
-                    const isBook = Boolean(r.is_book || r.source_table === 'CLA Books' || r.database_source === 'Pinecone' || (fileName && String(fileName).endsWith('.pdf')));
-                    const pageNumber = r.page_number || r.parent_id || r.page_no || 1;
-                    const s3Url = r.s3_url || (isBook && fileName !== 'Unknown' ? `/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNumber}#page=${pageNumber}` : null);
-
-                    const getCategory = (res) => {
-                      const cat = res.category || (res.original && res.original.parent && res.original.parent.Category) || null;
-                      if (cat && (String(cat).includes('text-embedding') || String(cat).includes('embedding-3'))) return null;
-                      return cat;
-                    };
-
-                    allSources.push({
-                      title,
-                      filename: fileName,
-                      file_name: fileName,
-                      is_book: isBook,
-                      s3_url: s3Url,
-                      source_table: r.source_table || (r.database_source === 'Pinecone' ? 'CLA Books' : 'Unknown'),
-                      record_id: r.record_id,
-                      parent_id: r.parent_id,
-                      page_number: pageNumber,
-                      page_no: pageNumber,
-                      database_source: r.database_source || (r.source_table === 'CLA Books' ? 'Pinecone' : 'PGVector'),
-                      law_title: r.law_title || null,
-                      excerpt: truncateExcerpt(r.chunk_text),
-                      author: (r.original && r.original.parent && r.original.parent.Author) || r.author || null,
-                      sections: r.sections || (r.original && r.original.parent && r.original.parent.Sections) || null,
-                      category: getCategory(r) || (r.database_source === 'Pinecone' || r.source_table === 'CLA Books' ? 'Book / PDF (Pinecone)' : null),
-                      subject: r.subject || (r.original && r.original.parent && r.original.parent.Subject) || null,
-                      doc_date: r.doc_date || (r.original && r.original.parent && r.original.parent.DocDate) || null,
-                      vol: (r.original && r.original.parent && r.original.parent.Vol) || null,
-                      issue_month: (r.original && r.original.parent && r.original.parent.IssueMonth) || null,
-                      issue_year: (r.original && r.original.parent && r.original.parent.IssueYear) || null,
-                      score: r.backend_relevance_score || r.score || null
-                    });
-                  });
-                }
-                uniqueSources = allSources;
+                // Same citation step as /api/ask: cited sources only, ranked, numbered [1], [2] ...
+                const finalized = finalizeAnswer(parsedResponse.answer, results);
+                answerText = finalized.answer;
+                uniqueSources = finalized.sources;
               }
 
               assistantMsgDoc = {

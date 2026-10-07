@@ -94,7 +94,9 @@ function parseAnswerAndSuggestions(rawAnswer) {
 
   // Strip any trailing manual "Sources:" section from text response
   // (The UI frontend renders the interactive Source Citations panel automatically)
-  answer = answer.replace(/\n+\s*(?:###?\s*)?(?:\*\*|__)?\s*Sources:?\s*(?:\*\*|__)?[\s\S]*$/i, '').trim();
+  // Only a line that is just the heading ("Sources", "**Sources Used:**") starts that
+  // section; a sentence that merely begins with the word "Sources" is part of the answer.
+  answer = answer.replace(/\n+[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?[ \t]*Sources(?:[ \t]+Used)?[ \t]*:?[ \t]*(?:\*\*|__)?[ \t]*:?[ \t]*(?:\n[\s\S]*)?$/i, '').trim();
 
   return {
     answer,

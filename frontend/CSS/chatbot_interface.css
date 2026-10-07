@@ -1929,5 +1929,306 @@ html[data-theme="dark"] .popover-meta-chip {
   color: #a3a3a3;
 }
 
+/* ==========================================================================
+   ANSWER STRUCTURE: main headings vs. sub-headings
+   Main headings (Overview / Analysis / Conclusion) are green, upper-case labels
+   with a rule under them. Sub-headings inside the Analysis are plain dark text
+   with a green bar at the side, so the two levels can never be confused.
+   ========================================================================== */
 
+.assistant-msg h1.answer-heading,
+.assistant-msg h2.answer-heading {
+  font-size: 0.86rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--primary);
+  margin: 1.5em 0 0.7em;
+  padding-bottom: 6px;
+  border-bottom: 2px solid rgba(12, 135, 66, 0.28);
+  line-height: 1.3;
+}
 
+.assistant-text-content > .answer-heading:first-child {
+  margin-top: 0.2em;
+}
+
+.assistant-msg h3.answer-subheading,
+.assistant-msg h4.answer-subheading,
+.assistant-msg h5.answer-subheading,
+.assistant-msg h6.answer-subheading {
+  font-size: 1rem;
+  font-weight: 650;
+  font-style: normal;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+  margin: 1.15em 0 0.4em;
+  padding-left: 10px;
+  border-left: 3px solid rgba(12, 135, 66, 0.55);
+  line-height: 1.4;
+}
+
+html[data-theme="dark"] .assistant-msg h1.answer-heading,
+html[data-theme="dark"] .assistant-msg h2.answer-heading {
+  color: #34c27a;
+  border-bottom-color: rgba(52, 194, 122, 0.3);
+}
+
+html[data-theme="dark"] .assistant-msg .answer-subheading {
+  border-left-color: rgba(52, 194, 122, 0.55);
+}
+
+.assistant-msg mark.answer-highlight {
+  cursor: text;
+}
+
+/* ==========================================================================
+   NUMBERED CITATION MARKERS IN THE ANSWER TEXT
+   ========================================================================== */
+
+.cite-ref-group {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 3px;
+  vertical-align: 0.28em;
+  white-space: nowrap;
+}
+
+.cite-ref {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  font: 700 0.66rem/1 inherit;
+  font-family: inherit;
+  color: var(--primary);
+  background: rgba(12, 135, 66, 0.1);
+  border: 1px solid rgba(12, 135, 66, 0.3);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.cite-ref:hover,
+.cite-ref:focus-visible {
+  background: var(--primary);
+  color: #ffffff;
+  outline: none;
+}
+
+html[data-theme="dark"] .cite-ref {
+  color: #34c27a;
+  background: rgba(52, 194, 122, 0.12);
+  border-color: rgba(52, 194, 122, 0.35);
+}
+
+html[data-theme="dark"] .cite-ref:hover,
+html[data-theme="dark"] .cite-ref:focus-visible {
+  background: #34c27a;
+  color: #0b1f14;
+}
+
+/* ==========================================================================
+   NUMBERED SOURCE LIST UNDER THE ANSWER
+   ========================================================================== */
+
+.sources-panel {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sources-panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.sources-panel-header .citations-header-title {
+  margin-bottom: 0;
+}
+
+.sources-panel-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.sources-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assistant-msg .sources-list li.source-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.assistant-msg .sources-list li.source-row:hover {
+  border-color: rgba(12, 135, 66, 0.45);
+  background: var(--surface-soft);
+}
+
+.sources-panel.is-collapsed .source-row-extra {
+  display: none !important;
+}
+
+.source-number {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--primary);
+  border-radius: 6px;
+}
+
+.source-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.source-row-title {
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.source-row-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.source-type-chip {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--primary);
+  background: rgba(12, 135, 66, 0.08);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+html[data-theme="dark"] .source-type-chip {
+  color: #34c27a;
+  background: rgba(52, 194, 122, 0.12);
+}
+
+.source-detail-line {
+  font-size: 0.74rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.source-row-excerpt {
+  margin-top: 5px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.source-open-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 0.74rem;
+  font-weight: 650;
+  color: var(--primary);
+  background: rgba(12, 135, 66, 0.08);
+  border: 1px solid rgba(12, 135, 66, 0.25);
+  border-radius: 6px;
+  padding: 4px 10px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.source-open-btn:hover {
+  background: var(--primary);
+  color: #ffffff;
+}
+
+html[data-theme="dark"] .source-open-btn {
+  color: #34c27a;
+  background: rgba(52, 194, 122, 0.1);
+  border-color: rgba(52, 194, 122, 0.3);
+}
+
+html[data-theme="dark"] .source-open-btn:hover {
+  background: #34c27a;
+  color: #0b1f14;
+}
+
+.sources-toggle-btn {
+  margin-top: 8px;
+  font-size: 0.76rem;
+  font-weight: 650;
+  color: var(--primary);
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.sources-toggle-btn:hover {
+  text-decoration: underline;
+}
+
+/* Source card opened from a citation marker */
+.inline-source-popover .popover-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-source-popover .popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.inline-source-popover .popover-body .source-open-btn {
+  align-self: flex-start;
+  margin-top: 3px;
+  padding: 5px 12px;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 600px) {
+  .assistant-msg .sources-list li.source-row {
+    flex-wrap: wrap;
+  }
+  .source-open-btn {
+    margin-left: 32px;
+  }
+}

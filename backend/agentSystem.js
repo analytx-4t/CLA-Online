@@ -12,26 +12,44 @@ function loadAgentPrompts() {
     const content = fs.readFileSync(filePath, 'utf8');
 
     const sections = {};
-    const parts = content.split(/\r?\n##\s+/);
 
-    for (const part of parts) {
-      const lines = part.split(/\r?\n/);
-      if (lines.length === 0) continue;
-      const title = lines[0].trim();
-      if (!title || title.startsWith('#')) continue;
-
-      const body = lines.slice(1).join('\n');
-      const codeBlockRegex = /```\r?\n([\s\S]*?)\r?\n```/g;
-      let match;
-      const codeBlocks = [];
-      while ((match = codeBlockRegex.exec(body)) !== null) {
-        const blockText = match[1].trim();
-        if (blockText) {
-          codeBlocks.push(blockText);
-        }
+    // A section starts at a "## <Name>_Agent", "## SHARED LEGAL CONTEXT" or "## COMMON RULES"
+    // line; its prompt text is the content of the code blocks under it. Any other line that
+    // starts with "## " is prompt text (the answer format uses "## Overview" etc.), not a
+    // section title. A section title also closes a code block left open above it.
+    const sectionTitleRe = /^##\s+((?:SHARED LEGAL CONTEXT|COMMON RULES|[A-Za-z]+(?:_[A-Za-z]+)*_Agent)\b.*)$/;
+    const rawSections = [];
+    let current = null;
+    let inFence = false;
+    let block = null;
+    for (const line of content.split(/\r?\n/)) {
+      const sectionTitle = line.match(sectionTitleRe);
+      if (sectionTitle) {
+        current = { title: sectionTitle[1].trim(), codeBlocks: [] };
+        rawSections.push(current);
+        inFence = false;
+        block = null;
+        continue;
       }
+      if (/^```/.test(line.trim())) {
+        if (inFence) {
+          if (current && block !== null) current.codeBlocks.push(block.join('\n').trim());
+          block = null;
+        } else {
+          block = [];
+        }
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence) {
+        block.push(line);
+      }
+    }
 
-      const finalContent = codeBlocks.join('\n\n').trim();
+    for (const section of rawSections) {
+      const title = section.title;
+      if (!title) continue;
+      const finalContent = section.codeBlocks.filter(Boolean).join('\n\n').trim();
 
       let key;
       if (title.includes('SHARED LEGAL CONTEXT')) {

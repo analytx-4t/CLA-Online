@@ -407,3 +407,24 @@ Run state, history and logs live in `embedding/sync_state/` (not in git). Deleti
 | **`504 Gateway Time-out`** | Nginx default timeout (60s) reached during initial search/cache load | Ensure `proxy_read_timeout 300s;` is present in Nginx config. |
 | **`ERR_CONNECTION_REFUSED` in Admin Panel** | Hardcoded `http://127.0.0.1:3000` in frontend build | Ensure latest code is pulled and `npm run build` is run inside `admin-dashboard`. |
 | **Search returns slow or missing results** | Local embedding cache corrupted or incomplete | Delete `embedding/embeddings_cache.npz` and run `search_documents.py`. |
+
+---
+
+## Part 5: Citations, source pages and book PDFs
+
+Answers cite their sources with numbered markers (`[1]`, `[2]`), and the list under each answer holds only the cited sources, most relevant first. Opening a source shows its full text with the cited passage highlighted.
+
+Deploying a change in this area needs only the quick redeployment steps (pull, `pm2 restart`, hard refresh). No admin dashboard build is involved.
+
+### Correct Act names for legislation
+`embedding/legislation_labels.json` maps each legislation file to its correct title. It exists because many legislation vectors in Pinecone carry another Act's title (a fault in the original bulk load); the title is corrected from this file whenever a legislation passage is read. Rebuild it when the CLA Online API gains new legislation files, then commit it:
+```bash
+cd /var/www/cla-online
+./embedding/venv/bin/python embedding/build_legislation_labels.py
+```
+
+### Book PDFs
+The "Open the book PDF" button needs working S3 credentials in `.env` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_BUCKET_NAME`) with read access to the `books/` folder of the bucket. When S3 cannot be reached, book sources still open: the cited page is shown as text and the PDF button is hidden. The backend log says why:
+```bash
+pm2 logs cla-backend --lines 200 | grep "Book PDF"
+```

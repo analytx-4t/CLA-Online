@@ -445,13 +445,14 @@ function formatMarkdown(text) {
 
   html = processedLines.join('\n');
 
-  // Parse headings (from h6 down to h1)
-  html = html.replace(/^\s*###### (.*?)$/gm, '<h6>$1</h6>');
-  html = html.replace(/^\s*##### (.*?)$/gm, '<h5>$1</h5>');
-  html = html.replace(/^\s*#### (.*?)$/gm, '<h4>$1</h4>');
-  html = html.replace(/^\s*### (.*?)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^\s*## (.*?)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^\s*# (.*?)$/gm, '<h1>$1</h1>');
+  // Parse headings (from h6 down to h1). "##" is a main heading of the answer (Overview,
+  // Analysis, Conclusion); "###" and deeper are sub-headings and are styled differently.
+  html = html.replace(/^\s*###### (.*?)$/gm, '<h6 class="answer-subheading">$1</h6>');
+  html = html.replace(/^\s*##### (.*?)$/gm, '<h5 class="answer-subheading">$1</h5>');
+  html = html.replace(/^\s*#### (.*?)$/gm, '<h4 class="answer-subheading">$1</h4>');
+  html = html.replace(/^\s*### (.*?)$/gm, '<h3 class="answer-subheading">$1</h3>');
+  html = html.replace(/^\s*## (.*?)$/gm, '<h2 class="answer-heading">$1</h2>');
+  html = html.replace(/^\s*# (.*?)$/gm, '<h1 class="answer-heading">$1</h1>');
 
   // Parse lists (unordered)
   html = html.replace(/^\s*[\-\*]\s+(.*?)$/gm, '<li>$1</li>');
@@ -467,23 +468,23 @@ function formatMarkdown(text) {
   html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
   html = html.replace(/`(.*?)`/g, '<code>$1</code>');
-  html = html.replace(/==(.*?)==/g, '<mark class="answer-highlight clickable-phrase" title="Click to open source PDF / document">$1</mark>');
-  html = html.replace(/^\s*>\s*(.*?)$/gm, '<blockquote class="cited-quote-block" title="Click to open source PDF / document at this section">$1</blockquote>');
+  html = html.replace(/==(.*?)==/g, '<mark class="answer-highlight">$1</mark>');
+  html = html.replace(/^\s*>\s*(.*?)$/gm, '<blockquote class="cited-quote-block">$1</blockquote>');
 
-  // Parse citation tags: [Source 1], [Sources 1, 2], [Source 1, Source 2], [1, 2], [1] -> interactive green source(s) clickable button
-  // Note: We use \d{1,2} to strictly match source numbers and prevent accidentally matching legal case reporter years like [2021] or [2024].
-  const citationPattern = /(?:\[(?:Sources?\s*)?\d{1,2}(?:\s*,\s*(?:Sources?\s*)?\d{1,2})*\](?:\s*\[(?:Sources?\s*)?\d{1,2}(?:\s*,\s*(?:Sources?\s*)?\d{1,2})*\])*)/gi;
-  html = html.replace(citationPattern, (match) => {
-    const nums = match.match(/\d+/g);
-    if (!nums || !nums.length) return match;
-    const validNums = nums.map(n => parseInt(n, 10)).filter(n => !isNaN(n) && n > 0 && n < 100);
-    if (!validNums.length) return match;
-    const uniqueNums = [...new Set(validNums)].sort((a, b) => a - b);
-    const indicesStr = uniqueNums.join(',');
-    return `<button type="button" class="inline-source-btn" data-source-indices="${indicesStr}" title="Click to view referenced source(s)" aria-label="View source(s)">source(s)</button>`;
+  // Citation markers: [1], [1][2] -> numbered buttons, one per source. The number is the
+  // source's number in the list under the answer.
+  // One or two digits only, so law-report years such as [2021] are never read as a marker.
+  html = html.replace(/\s*((?:\[\d{1,2}\])+)/g, (match, run) => {
+    const numbers = [...new Set((run.match(/\d+/g) || []).map(n => parseInt(n, 10)).filter(n => n > 0))];
+    if (!numbers.length) return match;
+    const buttons = numbers
+      .map(n => `<button type="button" class="cite-ref" data-source-number="${n}" title="View source ${n}" aria-label="Source ${n}">${n}</button>`)
+      .join('');
+    return `<span class="cite-ref-group">${buttons}</span>`;
   });
 
   // Handle carriage returns
+  html = html.replace(/(<\/h[1-6]>)\n+/g, '$1');
   html = html.replace(/\n\n/g, '<p></p>');
   html = html.replace(/\n/g, '<br>');
 
@@ -491,20 +492,209 @@ function formatMarkdown(text) {
 }
 
 
+// ---------------------------------------------------------------------------
+// Citations: what the chat shows for a message
+// ---------------------------------------------------------------------------
+
+const SOURCE_TYPE_LABELS = [
+  [/legis/i, 'Legislation'],
+  [/case/i, 'Case law'],
+  [/notif/i, 'Notification'],
+  [/circ/i, 'Circular'],
+  [/comm/i, 'Commentary'],
+  [/proc/i, 'Procedure'],
+  [/art/i, 'Article'],
+  [/query/i, 'Expert query'],
+  [/book/i, 'Book']
+];
+
+function isBookSource(s) {
+  return Boolean(s && (s.is_book || s.source_table === 'CLA Books' || /^Pinecone(_Books)?$/.test(s.database_source || '')));
+}
+
+function sourceTypeLabel(s) {
+  if (s.type_label) return s.type_label;
+  if (isBookSource(s)) return 'Book';
+  const table = String(s.source_table || '');
+  const found = SOURCE_TYPE_LABELS.find(([pattern]) => pattern.test(table));
+  return found ? found[1] : (table || 'Source');
+}
+
+const MARKER_RUN_PATTERN = /\s*(?:\[\s*(?:Sources?\s*)?\d{1,2}(?:\s*,\s*(?:Sources?\s*)?\d{1,2})*\s*\]\s*)+/gi;
+const MAIN_ANSWER_HEADINGS = ['overview', 'analysis', 'conclusion'];
+const LEGACY_UNCITED_SOURCES = 5;
+
+// Headings of answers saved before the numbered format: bold lines -> "##" / "###".
+function normalizeLegacyHeadings(content) {
+  const out = [];
+  let skipping = false;
+  for (const line of String(content || '').replace(/\r\n?/g, '\n').split('\n')) {
+    const trimmed = line.trim();
+    const bare = trimmed.replace(/^#{1,6}\s*/, '').replace(/^(?:\*\*|__)(.*?)(?:\*\*|__)\s*:?$/, '$1').replace(/\s*:$/, '').trim();
+    const isHeadingLine = /^#{1,6}\s+\S/.test(trimmed) || (/^(?:\*\*|__)[^*_].*?(?:\*\*|__)\s*:?$/.test(trimmed) && trimmed.length <= 140 && !/[.;]$/.test(bare));
+    const isMain = MAIN_ANSWER_HEADINGS.includes(bare.toLowerCase()) && trimmed.length <= bare.length + 8;
+    if (/^sources?(?:\s+used)?$/i.test(bare) && trimmed.length <= bare.length + 8) {
+      skipping = true;
+      continue;
+    }
+    if (skipping) {
+      if (trimmed.includes('not legal advice')) {
+        skipping = false;
+        out.push(trimmed);
+      }
+      continue;
+    }
+    if (isMain) out.push(`## ${bare.charAt(0).toUpperCase()}${bare.slice(1).toLowerCase()}`);
+    else if (isHeadingLine) out.push(`### ${bare}`);
+    else out.push(line);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Source names in older chats were stored as indexed: book file names ("..._PRINT") and
+// case names without spaces around "v.". Show them the way new answers do.
+function cleanLegacyTitle(s) {
+  let title = String(s.title || s.law_title || s.filename || '').replace(/\s+/g, ' ').trim();
+  if (isBookSource(s)) {
+    return title.replace(/\.pdf$/i, '').replace(/_PRINT(?:\s*\(\d+\))?(?:_\d+)?$/i, '').replace(/_/g, ' ').trim();
+  }
+  if (/case/i.test(s.source_table || '') && !/\s(?:v|vs|versus)\.?\s/i.test(title)) {
+    title = title.replace(/([A-Za-z.)])\s*(v\.|V\.)\s*(?=[A-Z(])/, '$1 $2 ').replace(/\s+/g, ' ').trim();
+  }
+  return title;
+}
+
+// Answers saved before the numbered format list every retrieved chunk and cite them as
+// [Source N]. Show them the new way: only the cited sources, numbered to match the text.
+function convertLegacyCitations(content, rawSources) {
+  const sources = rawSources.filter(s => s && typeof s === 'object');
+  const text = normalizeLegacyHeadings(content);
+  const keyOf = (s) => (isBookSource(s)
+    ? `book|${s.file_name || s.filename || s.title}|${s.page_number || s.parent_id || ''}`
+    : `${s.source_table}|${s.record_id}`);
+
+  const citedIndexSet = new Set();
+  text.replace(MARKER_RUN_PATTERN, (run) => {
+    (run.match(/\d{1,2}/g) || []).forEach(n => {
+      const idx = Number(n) - 1;
+      if (idx >= 0 && idx < sources.length) citedIndexSet.add(idx);
+    });
+    return run;
+  });
+
+  const hadMarkers = citedIndexSet.size > 0;
+  const orderedIndices = hadMarkers
+    ? [...citedIndexSet].sort((a, b) => a - b)
+    : sources.map((_, idx) => idx);
+
+  const groups = [];
+  const groupByKey = new Map();
+  for (const idx of orderedIndices) {
+    const s = sources[idx];
+    const key = keyOf(s);
+    if (!groupByKey.has(key)) {
+      if (!hadMarkers && groups.length >= LEGACY_UNCITED_SOURCES) continue;
+      const group = { key, lead: s, passages: [] };
+      groupByKey.set(key, group);
+      groups.push(group);
+    }
+    // Old excerpts can start with the tail of the stored chunk header ("... | File: x.htm] ").
+    const excerpt = String(s.excerpt || s.chunk_text || s.content || s.text || '')
+      .replace(/^[^\]]{0,400}\|\s*(?:File|Sections?|Section|Court|Judge|Subject):[^\]]*\]\s*/, '');
+    if (excerpt) groupByKey.get(key).passages.push({ embedding_id: null, excerpt });
+  }
+
+  const numberByIndex = new Map();
+  groups.forEach((group, i) => {
+    sources.forEach((s, idx) => {
+      if (keyOf(s) === group.key) numberByIndex.set(idx, i + 1);
+    });
+  });
+
+  const rewritten = text.replace(MARKER_RUN_PATTERN, (run) => {
+    const numbers = [...new Set((run.match(/\d{1,2}/g) || [])
+      .map(n => numberByIndex.get(Number(n) - 1))
+      .filter(Boolean))].sort((a, b) => a - b);
+    const trailing = (run.match(/\s+$/) || [''])[0];
+    return numbers.length ? ` ${numbers.map(n => `[${n}]`).join('')}${trailing}` : trailing;
+  }).replace(/[ \t]+([.,;:])/g, '$1');
+
+  return {
+    content: rewritten,
+    sources: groups.map((group, i) => ({
+      ...group.lead,
+      number: i + 1,
+      title: cleanLegacyTitle(group.lead),
+      type_label: sourceTypeLabel(group.lead),
+      passages: group.passages,
+      excerpt: group.passages.length ? group.passages[0].excerpt : '',
+      is_legacy: true
+    }))
+  };
+}
+
+// The text and source list to render for an assistant message (computed once per message).
+function getDisplayData(message) {
+  const rawContent = message.content || '';
+  if (message._display && message._display.forContent === rawContent) return message._display;
+
+  const meta = message.metadata || {};
+  const rawSources = Array.isArray(meta.sources) ? meta.sources.filter(s => s && typeof s === 'object') : [];
+  const isNumbered = meta.citationFormat === 'numbered' || rawSources.some(s => Number.isFinite(s.number));
+
+  let display;
+  if (/could not find authority/i.test(rawContent) && rawContent.length < 400) {
+    display = { content: rawContent, sources: [] };
+  } else if (isNumbered || meta.isError || meta.isThinking) {
+    display = { content: rawContent, sources: rawSources };
+  } else {
+    display = convertLegacyCitations(rawContent, rawSources);
+  }
+  display.forContent = rawContent;
+  message._display = display;
+  return display;
+}
+
+// Markers that point at a source that is not in the list are dropped, never shown dead.
 function sanitizeCitations(text, maxIndex) {
   if (!text) return '';
-  // Clean citation markers [Source N] or [N] where N > maxIndex, while ignoring legal reporter years like [2021]
-  return text.replace(/\[(?:Sources?\s*)?(\d{1,2})(?:\s*,\s*(?:Sources?\s*)?(\d{1,2}))*\]/gi, (match) => {
-    const nums = match.match(/\d+/g);
-    if (!nums || !nums.length) return match;
-    if (nums.some(n => Number(n) >= 100)) return match;
-    const valid = nums.filter(n => {
-      const idx = Number(n);
-      return maxIndex && !isNaN(idx) && idx <= maxIndex;
-    });
-    if (!valid.length) return '';
-    return `[${valid.map(v => `Source ${v}`).join(', ')}]`;
+  return text.replace(/\s*\[(\d{1,2})\]/g, (match, n) => (maxIndex && Number(n) >= 1 && Number(n) <= maxIndex ? match : ''));
+}
+
+// Old chats hold legislation sources under a wrong Act name (an indexing fault since fixed
+// on the server). Their correct names are fetched once and applied to the source list.
+const legislationTitleCache = new Map();
+
+async function correctLegacyLegislationTitles(message) {
+  const display = message._display;
+  if (!display || display.titlesChecked) return false;
+  display.titlesChecked = true;
+  const targets = display.sources.filter(s => s.is_legacy && /legis/i.test(s.source_table || '') && (s.file_name || s.filename));
+  if (!targets.length) return false;
+
+  const missing = [...new Set(targets.map(s => String(s.file_name || s.filename).toLowerCase()))]
+    .filter(file => !legislationTitleCache.has(file));
+  if (missing.length) {
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/legislation-titles?files=${encodeURIComponent(missing.join(','))}`);
+      if (response.ok) {
+        const data = await response.json();
+        missing.forEach(file => legislationTitleCache.set(file, (data.titles && data.titles[file]) || null));
+      }
+    } catch (error) {
+      console.warn('[Citations] Could not load legislation titles:', error);
+    }
+  }
+
+  let changed = false;
+  targets.forEach(s => {
+    const title = legislationTitleCache.get(String(s.file_name || s.filename).toLowerCase());
+    if (title && title !== s.title) {
+      s.title = title;
+      changed = true;
+    }
   });
+  return changed;
 }
 
 function buildHTMLTable(rows) {
@@ -925,101 +1115,140 @@ function updateWelcomeCard() {
   }
 }
 
-function setCitationCardsExpanded(citationsContainer, expanded) {
-  if (!citationsContainer) return;
-  const toggleBtn = citationsContainer.querySelector('.citation-toggle-btn');
+const CLAIM_STOP_WORDS = new Set('the a an and or of to for in on at by with from as is are was were be been this that these those it its which who what when where how not no but if then than so such can may must shall will would should could has have had do does did under over into upon within without also any all each every other only same'.split(' '));
 
-  if (!toggleBtn) {
-    citationsContainer.dataset.expanded = 'true';
-    return;
-  }
-
-  if (expanded) {
-    const existingExtra = citationsContainer.querySelectorAll('.citation-card');
-    if (existingExtra.length === 1 && Array.isArray(citationsContainer._remainingSources)) {
-      citationsContainer._remainingSources.forEach((source, offset) => {
-        const idx = offset + 1;
-        const card = citationsContainer._renderCitationCard(source, idx);
-        citationsContainer.insertBefore(card, toggleBtn);
-      });
-    }
-  } else {
-    const remainingCards = Array.from(citationsContainer.querySelectorAll('.citation-card'))
-      .filter(card => Number(card.dataset.citationIndex) > 0);
-    remainingCards.forEach(card => card.remove());
-  }
-
-  const remaining = citationsContainer._remainingSources ? citationsContainer._remainingSources.length : 0;
-  toggleBtn.textContent = expanded ? 'Hide Sources' : `Show ${remaining} More Sources`;
-  toggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-  citationsContainer.dataset.expanded = expanded ? 'true' : 'false';
-  
-  // Scroll to show expanded citations
-  requestAnimationFrame(() => {
-    scrollToBottom();
-  });
+function claimTokens(text) {
+  return new Set(String(text || '').toLowerCase().replace(/[^a-z0-9()\-\s]/g, ' ').split(/\s+/)
+    .map(t => t.replace(/^[()\-]+|[()\-]+$/g, ''))
+    .filter(t => t && (/\d/.test(t) || (t.length > 3 && !CLAIM_STOP_WORDS.has(t)))));
 }
 
-function ensureCitationVisible(citationsContainer, cardEl) {
-  if (!citationsContainer || !cardEl) return;
-
-  const groupBox = cardEl.closest('.citation-group-box');
-  if (groupBox && groupBox.classList.contains('collapsed')) {
-    groupBox.classList.remove('collapsed');
-    const groupHeader = groupBox.querySelector('.citation-group-header');
-    if (groupHeader) {
-      groupHeader.setAttribute('aria-expanded', 'true');
-      const hintEl = groupHeader.querySelector('.expand-hint-text');
-      if (hintEl) hintEl.textContent = 'Collapse';
+// Of a source's cited passages, the one closest to the sentence the reader clicked from.
+function bestPassageFor(source, claim) {
+  const passages = Array.isArray(source.passages) && source.passages.length
+    ? source.passages
+    : [{ embedding_id: source.embedding_id || null, excerpt: source.excerpt || source.chunk_text || source.content || source.text || '' }];
+  if (!claim || passages.length === 1) return passages[0];
+  const wanted = claimTokens(claim);
+  let best = passages[0];
+  let bestScore = -1;
+  passages.forEach(passage => {
+    const score = claimOverlap(wanted, passage.text || passage.excerpt);
+    if (score > bestScore) {
+      best = passage;
+      bestScore = score;
     }
-  }
-
-  requestAnimationFrame(() => {
-    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    cardEl.classList.remove('highlight');
-    void cardEl.offsetWidth;
-    cardEl.classList.add('highlight');
   });
+  return best;
 }
 
-function getSourceViewerUrl(s, userQuery = '') {
+function claimOverlap(wantedTokens, text) {
+  const have = claimTokens(text);
+  let score = 0;
+  wantedTokens.forEach(token => { if (have.has(token)) score += /\d/.test(token) ? 2 : 1; });
+  return score;
+}
+
+// The part of a cited passage that supports the sentence the reader clicked from: the
+// best-matching sentence and the one after it. Falls back to the start of the passage.
+function focusedExcerpt(passage, claim, maxLength = 340) {
+  const fallback = passage.excerpt || '';
+  const text = passage.text || '';
+  if (!claim || !text) return fallback;
+  const wanted = claimTokens(claim);
+  if (wanted.size < 3) return fallback;
+  const sentences = text.split(/(?<=[.;?!])\s+(?=[A-Z(“"\d])/).filter(s => s.trim().length > 0);
+  let bestIndex = -1;
+  let bestScore = 0;
+  sentences.forEach((sentence, i) => {
+    const score = claimOverlap(wanted, sentence);
+    if (score > bestScore) {
+      bestIndex = i;
+      bestScore = score;
+    }
+  });
+  if (bestIndex <= 0 || bestScore < 3) return fallback;
+  let snippet = sentences[bestIndex];
+  if (snippet.length < maxLength * 0.6 && sentences[bestIndex + 1]) snippet += ` ${sentences[bestIndex + 1]}`;
+  snippet = snippet.length > maxLength ? `${snippet.slice(0, maxLength).trim()}…` : snippet;
+  return `…${snippet}`;
+}
+
+// The sentence a citation marker closes: what the reader wants to see supported.
+function claimTextBefore(markerEl) {
+  const group = markerEl.closest('.cite-ref-group') || markerEl;
+  const BLOCK_TAGS = /^(BR|P|UL|OL|LI|H1|H2|H3|H4|H5|H6|DIV|TABLE|BLOCKQUOTE)$/;
+  let text = '';
+  let node = group.previousSibling;
+  while (node && text.length < 600) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      if (BLOCK_TAGS.test(node.tagName)) break;
+      if (node.classList && node.classList.contains('cite-ref-group')) {
+        if (text.trim()) break;
+      } else {
+        text = node.textContent + text;
+      }
+    } else if (node.nodeType === Node.TEXT_NODE) {
+      text = node.textContent + text;
+    }
+    node = node.previousSibling;
+  }
+  text = text.replace(/\s+/g, ' ').trim();
+  const sentences = text.split(/(?<=[.?!])\s+(?=[A-Z(])/);
+  return (sentences[sentences.length - 1] || text).slice(-320).trim();
+}
+
+// Link to the page that shows a source in full with the cited passage highlighted.
+function getSourceViewerUrl(s, claim = '') {
   if (!s || typeof s !== 'object') return null;
-  const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
-  const isBook = Boolean(s.is_book || s.database_source === 'Pinecone' || s.source_table === 'CLA Books' || (s.filename && String(s.filename).endsWith('.pdf')));
-  const excerptText = s.excerpt || s.chunk_text || s.content || s.text || '';
-  
-  if (isBook) {
-    let fileName = s.file_name || s.filename || s.file || s.title || s.subject || 'CLA Books PDF';
-    if (fileName === 'Unknown' || fileName === 'null') {
-      fileName = s.title || s.subject || 'CLA Books PDF';
-    }
-    const pageNo = s.page_number || s.parent_id || s.page_no || 1;
-    let s3Url = s.s3_url;
-    if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null') || !s3Url.includes('highlight=')) {
-      s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}&highlight=${encodeURIComponent(excerptText)}#page=${pageNo}`;
-    }
-    return s3Url;
+  const params = new URLSearchParams();
+  const theme = document.documentElement.getAttribute('data-theme') || 'light';
+  const passages = Array.isArray(s.passages) ? s.passages : [];
+  const passageIds = passages.map(p => p.embedding_id).filter(Boolean);
+  const excerptText = (bestPassageFor(s, claim).excerpt || '').slice(0, 600);
+
+  if (isBookSource(s)) {
+    const fileName = s.file_name || s.filename || s.file || '';
+    const recordId = passageIds[0] || s.embedding_id || s.record_id || '';
+    if (!recordId && !fileName) return null;
+    params.set('sourceTable', 'CLA Books');
+    if (recordId) params.set('recordId', recordId);
+    if (fileName && fileName !== 'Unknown') params.set('file', fileName);
+    params.set('page', s.page_number || s.page_no || s.parent_id || 1);
+  } else {
+    if (!s.source_table || s.record_id === undefined || s.record_id === null) return null;
+    params.set('sourceTable', s.source_table);
+    params.set('recordId', s.record_id);
   }
 
-  const recId = s.record_id || s.embedding_id;
-  const sourceTable = s.source_table || 'Legislation';
-  if (sourceTable && recId) {
-    const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
-    const queryParam = userQuery ? `&query=${encodeURIComponent(userQuery)}` : '';
-    const highlightParam = excerptText ? `&highlight=${encodeURIComponent(excerptText)}` : '';
-    return `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(sourceTable)}&recordId=${encodeURIComponent(recId)}${parentParam}&theme=${activeTheme}${highlightParam}${queryParam}`;
-  }
-
-  return null;
+  if (passageIds.length) params.set('ids', passageIds.join(','));
+  if (excerptText) params.set('highlight', excerptText);
+  if (claim) params.set('claim', claim.slice(0, 320));
+  if (s.title) params.set('title', String(s.title).slice(0, 200));
+  params.set('theme', theme);
+  return `${getApiBaseUrl()}/api/citation?${params.toString()}`;
 }
 
-function openSourceViewer(s, userQuery = '') {
-  const url = getSourceViewerUrl(s, userQuery);
+function openSourceViewer(s, claim = '') {
+  const url = getSourceViewerUrl(s, claim);
   if (url) {
     window.open(url, '_blank');
     return true;
   }
   return false;
+}
+
+// One line of context under a source's name: where in the source, which court, what date.
+function sourceDetailLine(s) {
+  const parts = [];
+  if (isBookSource(s) && (s.page_number || s.page_no)) parts.push(`Page ${s.page_number || s.page_no}`);
+  if (s.sections && !/^(general|\d+)$/i.test(String(s.sections).trim())) parts.push(String(s.sections));
+  if (s.court) parts.push(String(s.court).replace(/[()]/g, ''));
+  if (s.doc_date && !/legis/i.test(s.source_table || '') && !isBookSource(s)) {
+    const date = new Date(s.doc_date);
+    if (!Number.isNaN(date.getTime())) parts.push(date.toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' }));
+  }
+  return parts.join(' · ');
 }
 
 let activeInlineSourcePopover = null;
@@ -1037,7 +1266,7 @@ function closeInlineSourceModal() {
 
 function handleOutsidePopoverClick(e) {
   if (!activeInlineSourcePopover) return;
-  if (!activeInlineSourcePopover.contains(e.target) && !e.target.closest('.inline-source-btn')) {
+  if (!activeInlineSourcePopover.contains(e.target) && !e.target.closest('.cite-ref')) {
     closeInlineSourceModal();
   }
 }
@@ -1049,7 +1278,7 @@ function handlePopoverKeydown(e) {
 }
 
 function handleChatWindowScroll(e) {
-  if (activeInlineSourcePopover) {
+  if (activeInlineSourcePopover && !(e && activeInlineSourcePopover.contains(e.target))) {
     closeInlineSourceModal();
   }
 }
@@ -1058,7 +1287,7 @@ function updatePopoverPosition() {
   if (!activeInlineSourcePopover || !activeInlineSourcePopover._anchorEl) return;
   const anchorEl = activeInlineSourcePopover._anchorEl;
   const popover = activeInlineSourcePopover;
-  
+
   const rect = anchorEl.getBoundingClientRect();
   const popoverWidth = Math.min(460, window.innerWidth - 32);
   popover.style.width = `${popoverWidth}px`;
@@ -1071,7 +1300,7 @@ function updatePopoverPosition() {
     left = window.innerWidth - margin - popoverWidth;
   }
 
-  const popoverHeight = popover.offsetHeight || 260;
+  const popoverHeight = popover.offsetHeight || 220;
   // Position above the anchor button
   let top = rect.top - popoverHeight - 12;
   let isAbove = true;
@@ -1093,93 +1322,46 @@ function updatePopoverPosition() {
   }
 }
 
-function openInlineSourceModal(anchorEl, referencedSources, message) {
+// Small card shown when a citation marker is clicked: the source's number and name, the
+// passage relied on, and a button that opens the source at that passage.
+function openInlineSourceModal(anchorEl, source, claim) {
   if (activeInlineSourcePopover && activeInlineSourcePopover._anchorEl === anchorEl) {
     closeInlineSourceModal();
     return;
   }
   closeInlineSourceModal();
+  if (!source) return;
 
-  if (!referencedSources || !referencedSources.length) return;
-
-  const userQueryVal = message.query || (message.metadata && message.metadata.query) || '';
-  const isMultiple = referencedSources.length > 1;
-  const titleText = isMultiple ? `Referenced Sources (${referencedSources.length})` : 'Referenced Source';
+  const passage = bestPassageFor(source, claim);
+  const preview = focusedExcerpt(passage, claim);
+  const detail = sourceDetailLine(source);
+  const sourceUrl = getSourceViewerUrl(source, claim);
 
   const popover = document.createElement('div');
   popover.id = 'inlineSourceModalPopover';
   popover.className = 'inline-source-popover';
   popover._anchorEl = anchorEl;
-
-  let sourceCardsHtml = '';
-  referencedSources.forEach(({ source: s, originalIndex: idx }) => {
-    const sourceNum = idx + 1;
-    const isBook = Boolean(s.is_book || s.database_source === 'Pinecone' || s.source_table === 'CLA Books' || (s.filename && String(s.filename).endsWith('.pdf')));
-    const docTitle = s.title || s.law_title || s.filename || `Source #${sourceNum}`;
-    const rawExcerpt = s.excerpt || s.chunk_text || s.content || s.text || '';
-    const preview = rawExcerpt ? (rawExcerpt.length > 200 ? `${rawExcerpt.slice(0, 200).trim()}…` : rawExcerpt) : '';
-
-    const badgeText = isBook ? 'Book Reference' : (s.source_table || 'Legal Record');
-    const badgeClass = isBook ? 'badge-book' : 'badge-record';
-    const actionLabel = isBook ? '📖 Open PDF' : 'Open Full Content';
-
-    const sourceUrl = getSourceViewerUrl(s, userQueryVal);
-
-    sourceCardsHtml += `
-      <div class="popover-source-item" data-source-index="${idx}" tabindex="0" role="button" title="Click to open source in new tab">
-        <div class="popover-item-header">
-          <div class="popover-badges">
-            <span class="citation-badge">Source ${sourceNum}</span>
-            <span class="db-source-tag ${badgeClass}">${escapeHTML(badgeText)}</span>
-            ${s.sections ? `<span class="citation-sec-tag">${escapeHTML(s.sections)}</span>` : ''}
-          </div>
-          ${sourceUrl ? `
-            <a href="${sourceUrl}" target="_blank" class="popover-open-btn" title="Open full source content in new tab">
-              ${escapeHTML(actionLabel)}
-              <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="vertical-align: middle; margin-left: 3px;">
-                <path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
-              </svg>
-            </a>
-          ` : ''}
-        </div>
-        <div class="popover-item-title">${escapeHTML(docTitle)}</div>
-        ${preview ? `<div class="popover-item-excerpt">"${escapeHTML(preview)}"</div>` : ''}
-        ${s.author || s.doc_date || s.subject ? `
-          <div class="popover-item-meta">
-            ${s.author ? `<span class="popover-meta-chip"><strong>Authority:</strong> ${escapeHTML(s.author)}</span>` : ''}
-            ${s.doc_date ? `<span class="popover-meta-chip"><strong>Date:</strong> ${escapeHTML(s.doc_date)}</span>` : ''}
-          </div>
-        ` : ''}
-      </div>
-    `;
-  });
-
   popover.innerHTML = `
     <div class="popover-arrow"></div>
     <div class="popover-header">
       <div class="popover-header-title">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary, #0c8742);">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-          <polyline points="14 2 14 8 20 8"></polyline>
-          <line x1="16" y1="13" x2="8" y2="13"></line>
-          <line x1="16" y1="17" x2="8" y2="17"></line>
-          <polyline points="10 9 9 9 8 9"></polyline>
-        </svg>
-        <span>${escapeHTML(titleText)}</span>
+        <span class="source-number">${escapeHTML(source.number)}</span>
+        <span class="source-type-chip">${escapeHTML(sourceTypeLabel(source))}</span>
       </div>
-      <button type="button" class="popover-close-btn" aria-label="Close modal">&times;</button>
+      <button type="button" class="popover-close-btn" aria-label="Close">&times;</button>
     </div>
     <div class="popover-body">
-      ${sourceCardsHtml}
+      <div class="popover-item-title">${escapeHTML(source.title || `Source ${source.number}`)}</div>
+      ${detail ? `<div class="source-detail-line">${escapeHTML(detail)}</div>` : ''}
+      ${preview ? `<div class="popover-item-excerpt">“${escapeHTML(preview)}”</div>` : ''}
+      ${sourceUrl ? `<a href="${escapeHTML(sourceUrl)}" target="_blank" rel="noopener" class="popover-open-btn source-open-btn">Open source at this passage</a>` : ''}
     </div>
   `;
 
   document.body.appendChild(popover);
   activeInlineSourcePopover = popover;
-
   updatePopoverPosition();
 
-  // Close button click
   const closeBtn = popover.querySelector('.popover-close-btn');
   if (closeBtn) {
     closeBtn.addEventListener('click', (e) => {
@@ -1188,126 +1370,12 @@ function openInlineSourceModal(anchorEl, referencedSources, message) {
     });
   }
 
-  // Card item clicks: open source in new tab
-  popover.querySelectorAll('.popover-source-item').forEach(item => {
-    item.addEventListener('click', (e) => {
-      if (e.target.closest('a')) return;
-      const idx = parseInt(item.getAttribute('data-source-index'), 10);
-      const match = referencedSources.find(r => r.originalIndex === idx);
-      if (match && match.source) {
-        openSourceViewer(match.source, userQueryVal);
-      }
-    });
-
-    item.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        const idx = parseInt(item.getAttribute('data-source-index'), 10);
-        const match = referencedSources.find(r => r.originalIndex === idx);
-        if (match && match.source) {
-          openSourceViewer(match.source, userQueryVal);
-        }
-      }
-    });
-  });
-
-  // Event listeners for closing
   setTimeout(() => {
     document.addEventListener('click', handleOutsidePopoverClick);
     document.addEventListener('keydown', handlePopoverKeydown);
     window.addEventListener('resize', updatePopoverPosition);
     window.addEventListener('scroll', handleChatWindowScroll, true);
   }, 10);
-}
-
-function openChunkDetailModal(s, idx) {
-  const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
-  const isBook = Boolean(s.is_book || s.database_source === 'Pinecone' || s.source_table === 'CLA Books' || (s.filename && String(s.filename).endsWith('.pdf')));
-  
-  if (isBook) {
-    let fileName = s.file_name || s.filename || s.file || s.title || s.subject || 'CLA Books PDF';
-    if (fileName === 'Unknown' || fileName === 'null') {
-      fileName = s.title || s.subject || 'CLA Books PDF';
-    }
-    const pageNo = s.page_number || s.parent_id || 1;
-    const excerptText = s.excerpt || s.chunk_text || s.content || s.text || '';
-    let s3Url = s.s3_url;
-    if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null') || !s3Url.includes('highlight=')) {
-      s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}&highlight=${encodeURIComponent(excerptText)}#page=${pageNo}`;
-    }
-    window.open(s3Url, '_blank');
-    return;
-  }
-
-  let modalOverlay = document.getElementById('chunkDetailModalOverlay');
-  if (!modalOverlay) {
-    modalOverlay = document.createElement('div');
-    modalOverlay.id = 'chunkDetailModalOverlay';
-    modalOverlay.className = 'dialog-overlay citation-modal-overlay';
-    document.body.appendChild(modalOverlay);
-  }
-
-  const sourceNum = idx + 1;
-  const badgeText = 'Legal Record';
-  const badgeClass = 'badge-record';
-
-  const excerptText = s.excerpt || s.chunk_text || s.content || s.text || '';
-  const docTitle = s.title || s.law_title || s.filename || 'Untitled Reference';
-
-  let openLinkUrl = '#';
-  const recId = s.record_id || s.embedding_id;
-  if (s.source_table && recId) {
-    const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
-    const highlightParam = excerptText ? `&highlight=${encodeURIComponent(excerptText)}` : '';
-    openLinkUrl = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(recId)}${parentParam}&theme=${activeTheme}${highlightParam}`;
-  }
-
-
-  modalOverlay.innerHTML = `
-    <div class="dialog-card citation-modal-card">
-      <div class="citation-modal-header">
-        <div class="citation-modal-title-wrap">
-          <span class="citation-badge">Source ${sourceNum}</span>
-          <span class="db-source-tag ${badgeClass}">${badgeText}</span>
-        </div>
-        <button type="button" class="citation-modal-close" id="closeChunkModalBtn">&times;</button>
-      </div>
-      <h3 class="citation-modal-doc-title">${escapeHTML(docTitle)}</h3>
-      ${s.sections ? `<div class="citation-modal-section"><strong>Section / Chapter:</strong> ${escapeHTML(s.sections)}</div>` : ''}
-      
-      <div class="citation-modal-excerpt-box">
-        <div class="citation-modal-excerpt-label">Retrieved Section Content:</div>
-        <p class="citation-modal-excerpt-text">${escapeHTML(excerptText || 'No excerpt text available.')}</p>
-      </div>
-
-      <div class="citation-modal-meta-grid">
-        <div class="meta-item"><span class="meta-lbl">Source Reference</span><span class="meta-val">${escapeHTML(s.source_table || 'N/A')}</span></div>
-        <div class="meta-item"><span class="meta-lbl">Category</span><span class="meta-val">${escapeHTML(s.category || 'N/A')}</span></div>
-        <div class="meta-item"><span class="meta-lbl">Subject</span><span class="meta-val">${escapeHTML(s.subject || 'N/A')}</span></div>
-        <div class="meta-item"><span class="meta-lbl">Author / Court</span><span class="meta-val">${escapeHTML(s.author || 'N/A')}</span></div>
-        <div class="meta-item"><span class="meta-lbl">Reference ID</span><span class="meta-val">${escapeHTML(String(recId || s.parent_id || 'N/A'))}</span></div>
-        <div class="meta-item"><span class="meta-lbl">Status</span><span class="meta-val">Verified Source</span></div>
-      </div>
-
-      <div class="citation-modal-actions">
-        <button type="button" class="dialog-btn secondary" id="modalDismissBtn">Close</button>
-        ${s.source_table && recId ? `<a href="${openLinkUrl}" target="_blank" class="dialog-btn primary-action open-full-content-btn"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Full Content</a>` : ''}
-      </div>
-    </div>
-  `;
-
-  modalOverlay.removeAttribute('hidden');
-  modalOverlay.style.display = 'flex';
-
-  const closeBtn = modalOverlay.querySelector('#closeChunkModalBtn');
-  const dismissBtn = modalOverlay.querySelector('#modalDismissBtn');
-  const hideModal = () => {
-    modalOverlay.style.display = 'none';
-    modalOverlay.setAttribute('hidden', 'true');
-  };
-
-  if (closeBtn) closeBtn.onclick = hideModal;
-  if (dismissBtn) dismissBtn.onclick = hideModal;
 }
 
 function openUserFeedbackModal(message) {
@@ -1443,192 +1511,91 @@ function openUserFeedbackModal(message) {
   };
 }
 
+const SOURCES_SHOWN_COLLAPSED = 5;
+
+// Numbered source list under an answer: only the sources the answer cites, most relevant
+// first. Source n here is the [n] marker in the text.
 function renderSourceCitations(container, message) {
-  if (container.querySelector('.citations-container')) {
-    return;
-  }
+  const existing = container.querySelector('.citations-container');
+  if (existing) existing.remove();
 
-  // Don't show citations when the assistant found no answer
-  if (/could not find authority/i.test(message.content || '')) {
-    return;
-  }
+  const { sources } = getDisplayData(message);
+  if (!sources.length) return;
 
-  const sources =message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
-  if (sources.length === 0) {
-    return;
-  }
+  const panel = document.createElement('div');
+  panel.className = 'citations-container sources-panel';
+  panel.innerHTML = `
+    <div class="sources-panel-header">
+      <span class="citations-header-title">Sources (${sources.length})</span>
+      <span class="sources-panel-hint">Ranked by relevance</span>
+    </div>
+    <ol class="sources-list"></ol>
+  `;
+  const list = panel.querySelector('.sources-list');
 
-  const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
-  const citationsContainer = document.createElement('div');
-  citationsContainer.className = 'citations-container';
-  citationsContainer.innerHTML = `<div class="citations-header-title">Source Citations (${sources.length})</div>`;
-
-  // Group sources by Book or Table
-  const groupsMap = new Map();
   sources.forEach((s, idx) => {
-    if (!s || typeof s !== 'object') return;
-    const isBook = s.database_source === 'Pinecone' || s.source_table === 'CLA Books' || (s.source_table && s.source_table.toLowerCase().includes('pinecone'));
-    let groupKey, groupName, groupIcon, typeBadge;
-    if (isBook) {
-      groupName = s.title || s.law_title || s.filename || 'Legal Reference Books & Publications';
-      groupKey = `book:${groupName}`;
-      groupIcon = '📖';
-      typeBadge = 'Book Reference';
-    } else {
-      const tableName = s.source_table || 'Legislation';
-      groupName = `${tableName} Repository`;
-      groupKey = `table:${tableName}`;
-      groupIcon = '📜';
-      typeBadge = 'Legal Record';
-    }
+    const number = s.number || idx + 1;
+    const excerpt = s.excerpt || '';
+    const preview = excerpt.length > 190 ? `${excerpt.slice(0, 190).trim()}…` : excerpt;
+    const detail = sourceDetailLine(s);
+    const url = getSourceViewerUrl(s);
 
-    if (!groupsMap.has(groupKey)) {
-      groupsMap.set(groupKey, {
-        name: groupName,
-        icon: groupIcon,
-        badge: typeBadge,
-        isBook: isBook,
-        items: []
-      });
-    }
-    groupsMap.get(groupKey).items.push({ source: s, originalIndex: idx });
-  });
-
-  // Render each grouped box (Collapsed by default)
-  groupsMap.forEach((group) => {
-    const groupCard = document.createElement('div');
-    groupCard.className = `citation-group-box ${group.isBook ? 'book-group' : 'record-group'} collapsed`;
-    
-    const countBadge = `${group.items.length} Citation${group.items.length > 1 ? 's' : ''}`;
-    groupCard.innerHTML = `
-      <div class="citation-group-header" role="button" aria-expanded="false" tabindex="0" title="Click to ${group.items.length > 1 ? 'expand/collapse citations' : 'view citation'}">
-        <div class="citation-group-title">
-          <span class="group-icon">${group.icon}</span>
-          <span class="group-name-text">${escapeHTML(group.name)}</span>
-          <span class="group-count-tag">${countBadge}</span>
+    const item = document.createElement('li');
+    item.className = 'source-row';
+    item.id = `source-row-${message.message_id}-${number}`;
+    item.dataset.sourceNumber = String(number);
+    if (idx >= SOURCES_SHOWN_COLLAPSED) item.classList.add('source-row-extra');
+    item.innerHTML = `
+      <span class="source-number">${escapeHTML(number)}</span>
+      <div class="source-row-main">
+        <div class="source-row-title">${escapeHTML(s.title || `Source ${number}`)}</div>
+        <div class="source-row-meta">
+          <span class="source-type-chip">${escapeHTML(sourceTypeLabel(s))}</span>
+          ${detail ? `<span class="source-detail-line">${escapeHTML(detail)}</span>` : ''}
         </div>
-        <div class="group-header-right">
-          <span class="db-source-tag ${group.isBook ? 'badge-book' : 'badge-record'}">${group.badge}</span>
-          <span class="expand-hint-text">Expand</span>
-          <svg class="group-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-        </div>
+        ${preview ? `<div class="source-row-excerpt">${escapeHTML(preview)}</div>` : ''}
       </div>
-      <div class="citation-group-body"></div>
+      ${url ? `<a class="source-open-btn" href="${escapeHTML(url)}" target="_blank" rel="noopener" title="Open this source with the cited passage highlighted">Open</a>` : ''}
     `;
-
-    const groupHeader = groupCard.querySelector('.citation-group-header');
-    if (groupHeader) {
-      const toggleGroup = (e) => {
-        if (e.target.closest('.view-chunk-modal-btn') || e.target.closest('.open-citation-btn')) return;
-        const isNowCollapsed = groupCard.classList.toggle('collapsed');
-        groupHeader.setAttribute('aria-expanded', !isNowCollapsed);
-        const hintEl = groupHeader.querySelector('.expand-hint-text');
-        if (hintEl) {
-          hintEl.textContent = isNowCollapsed ? 'Expand' : 'Collapse';
-        }
-      };
-      groupHeader.addEventListener('click', toggleGroup);
-      groupHeader.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggleGroup(e);
-        }
+    if (url) {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('a')) return;
+        window.open(url, '_blank');
       });
     }
-
-    const groupBody = groupCard.querySelector('.citation-group-body');
-
-    group.items.forEach(({ source: s, originalIndex: idx }) => {
-      const sourceNum = idx + 1;
-      const card = document.createElement('div');
-      card.className = 'citation-card';
-      card.id = `citation-card-${message.message_id}-${idx}`;
-      card.dataset.citationIndex = String(idx);
-
-      const docTitle = s.title || s.law_title || s.filename || `Source #${sourceNum}`;
-
-      const rawExcerpt = s.excerpt || s.chunk_text || s.content || s.text || '';
-      const cardRecId = s.record_id || s.embedding_id;
-      const userQueryVal = message.query || (message.metadata && message.metadata.query) || '';
-      const isBook = Boolean(s.is_book || s.database_source === 'Pinecone' || s.source_table === 'CLA Books' || (s.filename && String(s.filename).endsWith('.pdf')));
-      let fileName = s.file_name || s.filename || s.file || s.title || s.subject || 'Book PDF';
-      if (fileName === 'Unknown' || fileName === 'null') {
-        fileName = s.title || s.subject || 'Book PDF';
-      }
-      const pageNo = s.page_number || s.parent_id || 1;
-      let s3Url = s.s3_url;
-      if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null') || !s3Url.includes('highlight=')) {
-        s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}&highlight=${encodeURIComponent(rawExcerpt)}#page=${pageNo}`;
-      }
-
-      let openLinkHtml = '';
-      if (isBook) {
-        openLinkHtml = `<a href="${s3Url}" target="_blank" class="open-citation-btn book-pdf-btn" title="Open full S3 PDF document at page ${pageNo}"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>📖 Open Full PDF (Page ${pageNo})</a>`;
-      } else if (s.source_table && cardRecId) {
-        const parentParam = s.parent_id ? `&parentId=${encodeURIComponent(s.parent_id)}` : '';
-        const highlightParam = rawExcerpt ? `&highlight=${encodeURIComponent(rawExcerpt)}` : '';
-        const queryParam = userQueryVal ? `&query=${encodeURIComponent(userQueryVal)}` : '';
-        openLinkHtml = `<a href="${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(s.source_table)}&recordId=${encodeURIComponent(cardRecId)}${parentParam}&theme=${activeTheme}${highlightParam}${queryParam}" target="_blank" class="open-citation-btn" title="Open full source content directly with text highlighting"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="vertical-align: middle; margin-right: 3px;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Open Full Content</a>`;
-      }
-
-      const viewChunkBtnHtml = isBook
-        ? `<a href="${s3Url}" target="_blank" class="view-chunk-modal-btn book-view-btn" title="Open full PDF at page ${pageNo}">📖 Open PDF</a>`
-        : `<button type="button" class="view-chunk-modal-btn"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 3px;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>View</button>`;
-
-
-      let excerptHtml = '';
-      if (rawExcerpt) {
-        const preview = rawExcerpt.length > 180 ? `${rawExcerpt.slice(0, 180).trim()}…` : rawExcerpt;
-        excerptHtml = `<p class="citation-excerpt">${escapeHTML(preview)}</p>`;
-      }
-
-      let detailsHtml = '';
-      const addDetail = (label, value) => {
-        if (!value) return;
-        detailsHtml += `<span class="citation-detail-item"><strong class="citation-detail-label">${label}</strong><span class="citation-detail-value">${escapeHTML(String(value))}</span></span>`;
-      };
-
-      if (s.sections) addDetail('Section', s.sections);
-      if (s.subject) addDetail('Subject', s.subject);
-      if (s.author) addDetail('Author / Court', s.author);
-      if (s.category) addDetail('Category', s.category);
-      if (s.doc_date) addDetail('Date', s.doc_date);
-      if (s.filename && s.filename !== 'Unknown' && s.filename !== docTitle) addDetail('File', s.filename);
-
-      card.innerHTML = `
-        <div class="citation-card-top-row">
-          <div class="citation-card-badge-row">
-            <span class="citation-badge">Source ${sourceNum}</span>
-            ${s.sections ? `<span class="citation-sec-tag">${escapeHTML(s.sections)}</span>` : ''}
-          </div>
-          <div class="citation-card-actions">
-            ${viewChunkBtnHtml}
-            ${openLinkHtml}
-          </div>
-        </div>
-        <div class="citation-title" title="${escapeHTML(docTitle)}">${escapeHTML(docTitle)}</div>
-        ${excerptHtml}
-        ${detailsHtml ? `<div class="citation-details">${detailsHtml}</div>` : ''}
-      `;
-
-      const viewChunkBtn = card.querySelector('.view-chunk-modal-btn');
-      if (viewChunkBtn) {
-        viewChunkBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          openChunkDetailModal(s, idx);
-        });
-      }
-
-      groupBody.appendChild(card);
-    });
-
-    citationsContainer.appendChild(groupCard);
+    list.appendChild(item);
   });
 
-  container.appendChild(citationsContainer);
+  if (sources.length > SOURCES_SHOWN_COLLAPSED) {
+    panel.classList.add('is-collapsed');
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'sources-toggle-btn';
+    const setLabel = () => {
+      toggle.textContent = panel.classList.contains('is-collapsed')
+        ? `Show all ${sources.length} sources`
+        : 'Show fewer sources';
+    };
+    setLabel();
+    toggle.addEventListener('click', () => {
+      panel.classList.toggle('is-collapsed');
+      setLabel();
+    });
+    panel.appendChild(toggle);
+  }
+
+  // The source list sits directly under the answer text, above follow-ups and actions.
+  const textContent = container.querySelector('.assistant-text-content');
+  if (textContent && textContent.nextSibling) {
+    container.insertBefore(panel, textContent.nextSibling);
+  } else {
+    container.appendChild(panel);
+  }
+
+  // Chats saved before the fix can carry a wrong Act name; correct it once it is known.
+  correctLegacyLegislationTitles(message).then(changed => {
+    if (changed && container.isConnected) renderSourceCitations(container, message);
+  });
 }
 
 
@@ -1651,7 +1618,7 @@ function renderMessageActions(container, message) {
     </svg>
   `;
   copyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(message.content || '').then(() => {
+    navigator.clipboard.writeText(getDisplayData(message).content || '').then(() => {
       copyBtn.setAttribute('data-tooltip', 'Copied!');
       copyBtn.classList.add('active');
       setTimeout(() => {
@@ -1745,94 +1712,16 @@ function renderMessageActions(container, message) {
 
   container.appendChild(actionsRow);
 
-  // Setup click listeners for quoted text/phrases and blockquotes in the answer
-  container.querySelectorAll('.cited-quote-block, .clickable-phrase, blockquote').forEach(quoteEl => {
-    quoteEl.style.cursor = 'pointer';
-    quoteEl.title = 'Click to open source PDF / document at this section';
-    quoteEl.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const quoteText = quoteEl.innerText.trim();
-      const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
-      
-      let matchedSource = sources.find(s => {
-        const txt = s.excerpt || s.chunk_text || s.content || s.text || '';
-        return txt && quoteText && (txt.includes(quoteText.slice(0, 25)) || quoteText.includes(txt.slice(0, 25)));
-      }) || sources[0];
-
-      if (matchedSource) {
-        const isBook = Boolean(matchedSource.is_book || matchedSource.database_source === 'Pinecone' || matchedSource.source_table === 'CLA Books' || (matchedSource.filename && String(matchedSource.filename).endsWith('.pdf')));
-        const excerptText = matchedSource.excerpt || matchedSource.chunk_text || matchedSource.content || matchedSource.text || '';
-        if (isBook) {
-          let fileName = matchedSource.file_name || matchedSource.filename || matchedSource.file || matchedSource.title || matchedSource.subject || 'Book PDF';
-          if (fileName === 'Unknown' || fileName === 'null') {
-            fileName = matchedSource.title || matchedSource.subject || 'Book PDF';
-          }
-          const pageNo = matchedSource.page_number || matchedSource.parent_id || 1;
-          let s3Url = matchedSource.s3_url;
-          if (!s3Url || s3Url.includes('file=Unknown') || s3Url.includes('file=null') || !s3Url.includes('highlight=')) {
-            s3Url = `${getApiBaseUrl()}/api/view-pdf?file=${encodeURIComponent(fileName)}&page=${pageNo}&highlight=${encodeURIComponent(excerptText)}#page=${pageNo}`;
-          }
-          window.open(s3Url, '_blank');
-          return;
-        }
-        const recId = matchedSource.record_id || matchedSource.embedding_id;
-        const sourceTable = matchedSource.source_table || 'Legislation';
-        if (sourceTable && recId) {
-          const parentParam = matchedSource.parent_id ? `&parentId=${encodeURIComponent(matchedSource.parent_id)}` : '';
-          const activeTheme = document.documentElement.getAttribute('data-theme') || 'light';
-          const userQueryVal = message.query || (message.metadata && message.metadata.query) || '';
-          const queryParam = userQueryVal ? `&query=${encodeURIComponent(userQueryVal)}` : '';
-          const highlightParam = excerptText ? `&highlight=${encodeURIComponent(excerptText)}` : '';
-          const url = `${getApiBaseUrl()}/api/citation?sourceTable=${encodeURIComponent(sourceTable)}&recordId=${encodeURIComponent(recId)}${parentParam}&theme=${activeTheme}${highlightParam}${queryParam}`;
-          window.open(url, '_blank');
-          return;
-        }
-      }
-      
-      const citationsContainer = container.querySelector('.citations-container');
-      if (citationsContainer) {
-        citationsContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-    });
-  });
-
-  // Setup click listeners for inline green source(s) buttons in the text
-  container.querySelectorAll('.inline-source-btn').forEach(btn => {
+  // Citation markers in the answer text: open a card for that numbered source.
+  container.querySelectorAll('.cite-ref').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const indicesAttr = btn.getAttribute('data-source-indices') || '';
-      const indices = indicesAttr.split(',').map(s => parseInt(s.trim(), 10) - 1).filter(i => !isNaN(i) && i >= 0);
-      const sources = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
-      const referencedSources = indices.map(idx => ({ source: sources[idx], originalIndex: idx })).filter(item => item.source);
-
-      if (referencedSources.length > 0) {
-        openInlineSourceModal(btn, referencedSources, message);
-      } else {
-        const citationsContainer = container.querySelector('.citations-container');
-        if (citationsContainer) {
-          citationsContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-      }
-    });
-  });
-
-  // Setup click listeners for inline superscript citation links in the text (backward compatibility)
-  container.querySelectorAll('.citation-ref-link').forEach(link => {
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const index = parseInt(link.getAttribute('data-citation-index'), 10) - 1;
-      const sources = message.metadata && message.metadata.sources ? message.metadata.sources : [];
-      const src = sources[index];
-      if (src) {
-        openInlineSourceModal(link, [{ source: src, originalIndex: index }], message);
-      } else {
-        const citationsContainer = container.querySelector('.citations-container');
-        if (citationsContainer) {
-          citationsContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
+      const number = parseInt(btn.getAttribute('data-source-number'), 10);
+      const { sources } = getDisplayData(message);
+      const source = sources.find((s, idx) => (s.number || idx + 1) === number);
+      if (source) {
+        openInlineSourceModal(btn, source, claimTextBefore(btn));
       }
     });
   });
@@ -1881,17 +1770,16 @@ function renderMessages() {
         messagesToAnimate.delete(message.message_id); // prevent re-animation
         contentDiv.classList.add('streaming-cursor');
 
-        const rawText = message.content || '';
+        // Text and sources as displayed: citation markers numbered to match the source list.
+        const display = getDisplayData(message);
+        const rawText = sanitizeCitations(display.content, display.sources.length);
         let currentLen = 0;
         const typingSpeed = 15; // ms per char
 
         const interval = setInterval(() => {
           currentLen += 3; // type 3 chars at a time for responsive speed
           if (currentLen >= rawText.length) {
-            // Sanitize citations based on available sources for this message
-            const sourcesForMessage = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
-            const sanitized = sanitizeCitations(rawText, sourcesForMessage.length);
-            contentDiv.innerHTML = formatMarkdown(sanitized);
+            contentDiv.innerHTML = formatMarkdown(rawText);
             contentDiv.classList.remove('streaming-cursor');
             clearInterval(interval);
 
@@ -1901,9 +1789,7 @@ function renderMessages() {
             renderMessageActions(div, message);
             scrollToBottom();
           } else {
-            const sourcesForMessage = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
-            const sanitizedPartial = sanitizeCitations(rawText.slice(0, currentLen), sourcesForMessage.length);
-            contentDiv.innerHTML = formatMarkdown(sanitizedPartial);
+            contentDiv.innerHTML = formatMarkdown(rawText.slice(0, currentLen));
             scrollToBottom();
           }
         }, typingSpeed);
@@ -1911,9 +1797,8 @@ function renderMessages() {
         activeTypingIntervals.push(interval);
       } else {
         // Display immediately
-        const sourcesForMessage = message.metadata && Array.isArray(message.metadata.sources) ? message.metadata.sources : [];
-        const sanitizedContent = sanitizeCitations(message.content || '', sourcesForMessage.length);
-        contentDiv.innerHTML = formatMarkdown(sanitizedContent);
+        const display = getDisplayData(message);
+        contentDiv.innerHTML = formatMarkdown(sanitizeCitations(display.content, display.sources.length));
         // Render in order: Citations, Follow-up Questions, Message Actions
         renderSourceCitations(div, message);
         renderSuggestedFollowUps(div, message);
@@ -2247,6 +2132,8 @@ async function handleUserSend() {
         metadata: {
           follow_up_questions: Array.isArray(followUps) ? followUps : [],
           sources: Array.isArray(sources) ? sources : [],
+          citationFormat: data.citationFormat || null,
+          query: text || '',
           evaluation,
           route,
           searchResults: Array.isArray(searchResults) ? searchResults : []
