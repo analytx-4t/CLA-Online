@@ -89,6 +89,7 @@ const CURRENCY = {
   SUPERSEDED: 'superseded',
   PREDATES: 'predates_current_law',
   UNDATED: 'undated',
+  INCORPORATED: 'incorporated_in_current_text',
 };
 
 // Kinds of source that are dropped outright when they are not current. Case law decided under
@@ -173,7 +174,22 @@ function mentionPattern(title) {
  * @param {Array}  manual   entries of supersededInstruments.json (replacements under a new name)
  * @param {number} currentYear
  */
-function buildSupersededCatalogue(labels = {}, manual = [], currentYear = new Date().getFullYear()) {
+/**
+ * title key -> latest amendment date recorded in the consolidated text of that instrument,
+ * from embedding/legislation_catalogue.json. An Act stored as several files (one per chapter)
+ * takes the latest date of any of them.
+ */
+function buildConsolidatedDates(legislationCatalogue = {}) {
+  const dates = new Map();
+  for (const entry of Object.values(legislationCatalogue)) {
+    if (!entry || !entry.title || !entry.last_amended) continue;
+    const key = titleKey(entry.title);
+    if (!dates.has(key) || dates.get(key) < entry.last_amended) dates.set(key, entry.last_amended);
+  }
+  return dates;
+}
+
+function buildSupersededCatalogue(labels = {}, manual = [], currentYear = new Date().getFullYear(), legislationCatalogue = {}) {
   const groups = new Map();
   for (const entry of Object.values(labels)) {
     const title = entry && entry.title;
@@ -208,7 +224,7 @@ function buildSupersededCatalogue(labels = {}, manual = [], currentYear = new Da
       unless: entry.unless ? new RegExp(entry.unless, 'i') : null,
     });
   }
-  return { byTitleKey, mentions, versionsByBase };
+  return { byTitleKey, mentions, versionsByBase, consolidatedDates: buildConsolidatedDates(legislationCatalogue) };
 }
 
 const AMENDMENT_TITLE_WORDS = new Set(('amendment first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth ' +
@@ -245,7 +261,8 @@ function getSupersededCatalogue() {
   if (!catalogueCache) {
     const labels = readJson(path.resolve(__dirname, '../embedding/legislation_labels.json'), {});
     const manual = readJson(path.resolve(__dirname, 'supersededInstruments.json'), { instruments: [] }).instruments || [];
-    catalogueCache = buildSupersededCatalogue(labels, manual);
+    const legislation = readJson(path.resolve(__dirname, '../embedding/legislation_catalogue.json'), {});
+    catalogueCache = buildSupersededCatalogue(labels, manual, new Date().getFullYear(), legislation);
   }
   return catalogueCache;
 }
@@ -303,6 +320,25 @@ function currencyOf(chunk, ctx = {}) {
         status: CURRENCY.SUPERSEDED,
         note: `Amends ${replaced.title}, since replaced by ${replaced.successor}. Not current law.`,
         drop: true,
+      };
+    }
+    // The consolidated text of the instrument already carries every amendment up to the
+    // date recorded in it. An amendment notice from on or before that date is already in the
+    // text, and showing it separately invites the old wording it quotes back into the answer.
+    const consolidatedTo = amended && catalogue.consolidatedDates && catalogue.consolidatedDates.get(titleKey(amended.title));
+    const issued = String(chunk.doc_date || '').slice(0, 10);
+    if (consolidatedTo && /^\d{4}-\d{2}-\d{2}$/.test(issued)) {
+      if (issued <= consolidatedTo) {
+        return {
+          status: CURRENCY.INCORPORATED,
+          note: `Already reflected in the current text of ${amended.title} (amended up to ${consolidatedTo}).`,
+          drop: true,
+        };
+      }
+      return {
+        status: CURRENCY.CURRENT,
+        note: `Amendment of ${issued}, newer than the current text of ${amended.title} (amended up to ${consolidatedTo}). Where it changes a provision, its wording is the law now and the older text is not.`,
+        newerThanText: true,
       };
     }
   }
@@ -385,7 +421,7 @@ function rankByAuthority(chunks, ctx = {}) {
     const tier = TIERS[tierKey];
     const currency = currencyOf(chunk, { ...ctx, catalogue, request });
     const relevance = rawRelevanceOf(chunk);
-    const stale = currency.status === CURRENCY.SUPERSEDED || currency.status === CURRENCY.PREDATES;
+    const stale = currency.status === CURRENCY.SUPERSEDED || currency.status === CURRENCY.PREDATES || currency.status === CURRENCY.INCORPORATED;
 
     let score = chunk.pinned ? PINNED_DEFINITION_SCORE - (chunk.definition_depth || 0) * 0.01 : relevance + tier.bonus;
     if (stale && !request.historical) score -= SOFT_CURRENCY_PENALTY;
@@ -401,6 +437,7 @@ function rankByAuthority(chunks, ctx = {}) {
     if (chunk.named_provision) score += NAMED_PROVISION_BONUS;
 
     let currencyNote = currency.note;
+    if (currency.newerThanText) score += AMENDMENT_BONUS;
     if (!currencyNote && AGED_TIERS.has(tierKey) && age !== null && age > OLD_INSTRUMENT_YEARS) {
       currencyNote = tier.binding
         ? `Dated ${year}. Later amendments, regulations or directions may have changed this; where a newer primary passage differs, the newer one is the law.`
@@ -428,6 +465,8 @@ function rankByAuthority(chunks, ctx = {}) {
       excluded_as_stale: stale && !request.historical && (DROPPED_WHEN_STALE.has(tierKey) || currency.drop === true),
       age_years: age,
       excluded_as_unverified: tierKey === 'legislation' && chunk.title_verified === false,
+      // Footnote text recording a law's superseded wording: never offered as law.
+      excluded_as_history: Boolean(chunk.amendment_history),
     };
   });
 }
@@ -456,6 +495,7 @@ function selectContext(ranked, options = {}) {
     pinnedDefinitions: pinned.length,
     droppedStale: ranked.filter((c) => c.pinned && c.excluded_as_stale).length,
     droppedUnverifiedLegislation: 0,
+    droppedAmendmentHistory: 0,
     droppedInaccessibleBooks: 0,
     droppedLowRelevance: 0,
     topRelevance: searched.reduce((max, c) => Math.max(max, c.relevance), 0),
@@ -465,6 +505,7 @@ function selectContext(ranked, options = {}) {
   const eligible = searched.filter((c) => {
     if (c.excluded_as_stale) { stats.droppedStale += 1; return false; }
     if (c.excluded_as_unverified) { stats.droppedUnverifiedLegislation += 1; return false; }
+    if (c.excluded_as_history) { stats.droppedAmendmentHistory += 1; return false; }
     if (c.authority_tier === 'book' && usableBooks && !usableBooks.has(String(c.file_name || ''))) {
       stats.droppedInaccessibleBooks += 1;
       return false;

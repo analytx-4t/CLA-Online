@@ -205,3 +205,17 @@ test('a rule is cited to the law, not to an article or paper beside it; a bare n
   assert.match(answer, /decides the question \[Source 1\]\./);
   assert.strictEqual(stats.removedSentences[0].verdict, 'NOT_AUTHORITY');
 });
+
+test('wording a passage says was replaced does not support a figure', () => {
+  const { currentWordingOf } = require('../answerVerifier');
+  assert.ok(!/fifteen/.test(currentWordingOf('in regulation 9, for the words "fifteen months", the words "nine months" shall be substituted')));
+  assert.ok(/nine months/.test(currentWordingOf('in regulation 9, for the words "fifteen months", the words "nine months" shall be substituted')));
+  const results = [{ source_table: 'Notifications', authority_tier: 'notification', doc_title: 'Export (First Amendment) Regulations, 2026',
+    chunk_body: 'In regulation 9, for the words "fifteen months", the words "nine months" shall be substituted.' }];
+  const draft = '## Overview\nExport proceeds must be realised within fifteen months [Source 1].\n\n## Analysis\nThe period was amended in 2026 [Source 1].\n\n## Conclusion\nThe period is nine months [Source 1].';
+  const { claims } = planVerification(draft, results);
+  const verdicts = parseVerdicts(JSON.stringify({ claims: claims.map((c) => ({ id: c.id, verdict: 'SUPPORTED', sources: [1] })) }), claims, 1);
+  const guarded = require('../answerVerifier').guardFigures(verdicts, results, 'exporter unpaid');
+  assert.strictEqual(guarded[0].verdict, 'UNSUPPORTED', 'fifteen months is only the replaced wording');
+  assert.strictEqual(guarded[2].verdict, 'SUPPORTED');
+});

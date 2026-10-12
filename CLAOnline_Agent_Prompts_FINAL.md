@@ -376,6 +376,7 @@ DEFINITION AND STATUS QUESTIONS ("Who is an insider?", "What is UPSI?", "Is X a 
 CURRENCY (answer as of today unless the question names another date)
 - State the current law only. Do not add how the law used to read, or a comparison with a repealed Act or earlier regulations, unless the question asks what changed.
 - Where passages conflict, the newer effective primary text wins: a later amendment notification over older text, the current instrument over the one it replaced, primary law over any article or book.
+- State each provision in one version only, the one in force now. Where an amendment changes the current text, give the amended wording: never the old and the new together, and never wording a passage says was substituted or omitted ("for the words X ...", "prior to substitution it read as").
 - Never state as current law anything taken from a passage whose Currency line marks it as replaced or pre-dating the governing instrument. If the question itself asks about the earlier law, label it "Under the earlier ...".
 - Numbers, thresholds, percentages and time limits come from primary passages only.
 

@@ -35,6 +35,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
+import search_documents
+from amendment_history import count_prior_wording, locate_history
 from search_documents import describe_db_chunk, get_legislation_labels, get_pinecone_db_index
 
 CATALOGUE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "legislation_catalogue.json")
@@ -79,15 +81,18 @@ def amendment_dates(text, today=None):
 
 
 def build_catalogue(chunks, labels, today=None):
-    """@param chunks  iterable of described legislation chunks ({"file_name", "chunk_body", ...})"""
+    """@param chunks  iterable of described legislation chunks ({"file_name", "record_id",
+    "chunk_index", "chunk_body", ...}) with their full, untrimmed text."""
     by_file = {}
     for chunk in chunks:
         key = str(chunk.get("file_name") or "").strip().lower()
         if not key:
             continue
-        entry = by_file.setdefault(key, {"chunks": 0, "dates": []})
+        entry = by_file.setdefault(key, {"chunks": 0, "dates": [], "records": {}})
         entry["chunks"] += 1
         entry["dates"].extend(amendment_dates(chunk.get("chunk_body"), today))
+        entry["records"].setdefault(str(chunk.get("record_id")), []).append(
+            {"chunk_index": int(chunk.get("chunk_index") or 0), "chunk_body": chunk.get("chunk_body") or ""})
 
     catalogue = {}
     for key, entry in sorted(by_file.items()):
@@ -97,6 +102,25 @@ def build_catalogue(chunks, labels, today=None):
         record = {"title": title, "type": label.get("type"), "year": int(years[-1]) if years else None,
                   "chunks": entry["chunks"], "amendments_recorded": len(entry["dates"]),
                   "last_amended": max(entry["dates"]).isoformat() if entry["dates"] else None}
+        # Where the amendment history (footnotes with superseded wording) starts, per record.
+        history = {}
+        operative_prior_wording = 0
+        for record_id, record_chunks in entry["records"].items():
+            located = locate_history(record_chunks)
+            if located:
+                history[record_id] = {"chunk": located[0], "offset": located[1]}
+            for chunk in record_chunks:
+                body = chunk["chunk_body"]
+                if located and chunk["chunk_index"] > located[0]:
+                    continue
+                if located and chunk["chunk_index"] == located[0]:
+                    body = body[:located[1]]
+                operative_prior_wording += count_prior_wording(body)
+        if history:
+            record["history"] = history
+        # Superseded wording that sits in the operative text itself, outside any footnote block.
+        if operative_prior_wording:
+            record["operative_prior_wording"] = operative_prior_wording
         catalogue[key] = record
     return catalogue
 
@@ -126,6 +150,8 @@ def _fetch(index, ids):
 
 
 def main():
+    # Read the text as stored: the existing catalogue must not trim the chunks being catalogued.
+    search_documents._LEGISLATION_CATALOGUE = {}
     index = get_pinecone_db_index()
     if index is None:
         raise RuntimeError("The Pinecone structured index could not be opened.")
@@ -150,8 +176,11 @@ def main():
     os.replace(tmp_path, CATALOGUE_PATH)
     dated = sum(1 for record in catalogue.values() if record["last_amended"])
     unlabelled = sum(1 for record in catalogue.values() if not record["title"])
+    with_history = sum(1 for record in catalogue.values() if record.get("history"))
+    inline = sum(1 for record in catalogue.values() if record.get("operative_prior_wording"))
     print(f"Wrote {len(catalogue)} legislation files to {CATALOGUE_PATH} "
-          f"({dated} with a recorded amendment date, {unlabelled} with no verified title).")
+          f"({dated} with a recorded amendment date, {unlabelled} with no verified title, "
+          f"{with_history} with an amendment-history block, {inline} with superseded wording outside one).")
 
 
 if __name__ == "__main__":

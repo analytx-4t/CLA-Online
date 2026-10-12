@@ -55,6 +55,7 @@ Rules:
 3. A claim about what a provision or definition says should cite the primary-law passage (type Legislation, Notification or Circular) when one states it: put that passage first in "sources", and leave out an article, book or paper that merely repeats it.
 4. A claim that a class of persons is a "category", "type" or "sub-set" of a statutorily defined term is UNSUPPORTED unless the statutory definition itself lists that class. The opposite claim (that such a class is a compliance category and falls within the definition only if a limb is met) is reasoning and is SUPPORTED when the definition does not list the class.
 5. Where two passages give different figures for the same thing and one is a later amendment or newer primary text, a claim using the older figure as the current position is NOT_CURRENT.
+5B. Wording a passage itself says was replaced is not support: the quoted words in "for the words 'X', the words 'Y' shall be substituted", and anything after "prior to substitution it read as". A claim that states X, or the earlier wording, as the law now is NOT_CURRENT. A claim may combine the current text of the instrument with a later amendment only by applying the amendment to that text (the amended words replace the old ones), never by stating both versions as if both applied.
 5A. A claim marked "(cites none)" was written without a citation. If it is a statement of source and a passage states it, give WRONG_SOURCE with that passage in "sources" (primary law first). If it is a statement of source that no passage states, give UNSUPPORTED. If it is reasoning consistent with the passages, give SUPPORTED with "sources": [].
 6. Judge the same proposition the same way wherever it appears: a point that is SUPPORTED in one claim is SUPPORTED when the Overview or the Conclusion repeats it.
 7. Use only passage numbers that exist.
@@ -181,8 +182,17 @@ function reconcileRepeats(verdicts) {
  * if no passage states it, the sentence has no basis and is removed. Figures the user gave
  * in the question ("holds 18%", "16 months ago") are facts of the question, not law.
  */
+// "for the words 'fifteen months', the words 'nine months' shall be substituted": the first
+// quotation is the superseded wording. It is removed before a passage is read as support.
+const REPLACED_WORDING_RE = /\bfor the (?:words?|figures?|expressions?|letters?|brackets?)(?:\s*(?:,|and)\s*(?:words?|figures?|letters?))*\s*,?\s*["\u201c\u2018'][^"\u201d\u2019']{1,300}["\u201d\u2019']/gi;
+const PRIOR_WORDING_RE = /(?:prior to (?:its |the )?(?:substitution|omission|amendment)|before (?:its )?substitution)[^.]{0,40}?(?:read|stood) as(?: under)?\s*[:\-]?\s*["\u201c][^"\u201d]{1,2000}["\u201d]/gi;
+
+function currentWordingOf(text) {
+  return String(text || '').replace(REPLACED_WORDING_RE, ' ').replace(PRIOR_WORDING_RE, ' ');
+}
+
 function guardFigures(verdicts, results, question = '') {
-  const passages = (results || []).map((r) => digitsIn(`${r.provision_ref || ''} ${chunkBody(r)}`));
+  const passages = (results || []).map((r) => digitsIn(currentWordingOf(`${r.provision_ref || ''} ${chunkBody(r)}`)));
   if (!passages.length) return verdicts;
   const given = new Set(figuresIn(question).map((f) => `${f.number} ${f.unit}`));
   const isBinding = (n) => BINDING_TIERS.has(((results || [])[n - 1] || {}).authority_tier);
@@ -348,6 +358,7 @@ module.exports = {
   VERIFIER_SYSTEM_PROMPT,
   planVerification,
   guardFigures,
+  currentWordingOf,
   locateUncitedStatements,
   parseVerdicts,
   applyVerification,

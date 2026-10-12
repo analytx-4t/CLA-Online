@@ -208,3 +208,28 @@ test('a definition read from a replaced instrument is not pinned into a current-
   assert.deepStrictEqual(context.map((c) => c.embedding_id), ['new']);
   assert.strictEqual(stats.droppedStale, 1);
 });
+
+test('an amendment already in the current text is dropped; a newer one is kept and flagged', () => {
+  const withDates = buildSupersededCatalogue(LABELS, MANUAL, 2026, {
+    'export_2015.htm': { title: 'Foreign Exchange Management (Export of Goods and Services) Regulations, 2015', last_amended: '2025-11-15' },
+  });
+  const fema = { ...ctx, catalogue: withDates, primaryAct: 'Foreign Exchange Management Act, 1999' };
+  const older = currencyOf({ source_table: 'Notifications', doc_title: 'Foreign Exchange Management (Export of Goods and Services) (Amendment) Regulations, 2021', doc_date: '2021-01-14' }, fema);
+  assert.strictEqual(older.status, CURRENCY.INCORPORATED);
+  assert.strictEqual(older.drop, true);
+  const newer = currencyOf({ source_table: 'Notifications', doc_title: 'Foreign Exchange Management (Export of Goods and Services) (First Amendment) Regulations, 2026', doc_date: '2026-06-06' }, fema);
+  assert.strictEqual(newer.status, CURRENCY.CURRENT);
+  assert.strictEqual(newer.newerThanText, true);
+  const ranked = rankByAuthority([{ source_table: 'Notifications', doc_title: 'Foreign Exchange Management (Export of Goods and Services) (Amendment) Regulations, 2021', doc_date: '2021-01-14', chunk_body: '', cohere_relevance_score: 0.8 }], fema);
+  assert.strictEqual(ranked[0].excluded_as_stale, true);
+});
+
+test('footnote text of superseded wording never reaches the answer', () => {
+  const ranked = rankByAuthority([
+    chunk({ embedding_id: 'law', source_table: 'Legislation', doc_title: PIT_2015, record_id: 60, cohere_relevance_score: 0.8 }),
+    chunk({ embedding_id: 'note', source_table: 'Legislation', doc_title: PIT_2015, record_id: 60, amendment_history: true, cohere_relevance_score: 0.9 }),
+  ], ctx);
+  const { context, stats } = selectContext(ranked, {});
+  assert.deepStrictEqual(context.map((c) => c.embedding_id), ['law']);
+  assert.strictEqual(stats.droppedAmendmentHistory, 1);
+});

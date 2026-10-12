@@ -26,6 +26,12 @@
 "2812.html": {
 "amendments_recorded": 109,
 "chunks": 87,
+"history": {
+"2812": {
+"chunk": 73,
+"offset": 197
+}
+},
 "last_amended": "2024-05-10",
 "title": null,
 "type": null,
@@ -42,6 +48,12 @@
 "3_50.htm": {
 "amendments_recorded": 3,
 "chunks": 27,
+"history": {
+"343": {
+"chunk": 25,
+"offset": 468
+}
+},
 "last_amended": "2009-12-31",
 "title": "Scheme for Filing of Statutory Documents and Other Transactions by Companies in Electronic Mode",
 "type": "Regulations",
@@ -74,6 +86,12 @@
 "77_01.htm": {
 "amendments_recorded": 4,
 "chunks": 34,
+"history": {
+"122": {
+"chunk": 33,
+"offset": 684
+}
+},
 "last_amended": "2020-11-10",
 "title": "Company Secretaries (Procedure of Investigations of Professional and Other Misconduct and Conduct of Cases) Rules, 2007",
 "type": "Rules",
@@ -82,6 +100,12 @@
 "83_1.htm": {
 "amendments_recorded": 8,
 "chunks": 4,
+"history": {
+"145": {
+"chunk": 2,
+"offset": 460
+}
+},
 "last_amended": "2018-09-06",
 "title": "Competition Commission of India (Term of the Selection Committee and the Manner of Selection of Panel of Names) Rules, 2008",
 "type": "Rules",
@@ -90,6 +114,12 @@
 "84_03.htm": {
 "amendments_recorded": 16,
 "chunks": 96,
+"history": {
+"147": {
+"chunk": 92,
+"offset": 117
+}
+},
 "last_amended": "2023-08-16",
 "title": "SEBI (Public Offer and Listing of Securitised Debt Instruments) Regulations, 2008",
 "type": "Regulations",
@@ -98,6 +128,12 @@
 "84_04.htm": {
 "amendments_recorded": 56,
 "chunks": 98,
+"history": {
+"152": {
+"chunk": 82,
+"offset": 1200
+}
+},
 "last_amended": "2026-04-15",
 "title": "SEBI (Intermediaries) Regulations, 2008",
 "type": "Regulations",
@@ -106,6 +142,12 @@
 "84_2.htm": {
 "amendments_recorded": 4,
 "chunks": 3,
+"history": {
+"156": {
+"chunk": 1,
+"offset": 1300
+}
+},
 "last_amended": "2014-10-15",
 "title": "Competition Appellate Tribunal (Term of the Selection Committee and the Manner of Selection of Panel of Names) Rules, 2008",
 "type": "Rules",
@@ -130,6 +172,12 @@
 "87_01.htm": {
 "amendments_recorded": 2,
 "chunks": 4,
+"history": {
+"162": {
+"chunk": 3,
+"offset": 387
+}
+},
 "last_amended": "2010-05-24",
 "title": "Competition Commission of India (Return on Measures For the Promotion of Competition Advocacy, Awareness and Training on Competition Issues) Rules, 2008",
 "type": "Rules",
@@ -138,6 +186,12 @@
 "87_02.htm": {
 "amendments_recorded": 0,
 "chunks": 15,
+"history": {
+"1078": {
+"chunk": 13,
+"offset": 1226
+}
+},
 "last_amended": null,
 "title": "Competition Commission of India (Form and Time of Preparation of Annual Report) Rules, 2008",
 "type": "Rules",
@@ -146,6 +200,12 @@
 "88_01.htm": {
 "amendments_recorded": 68,
 "chunks": 132,
+"history": {
+"54": {
+"chunk": 119,
+"offset": 389
+}
+},
 "last_amended": "2022-04-01",
 "title": "Limited Liability Partnership Act, 2008",
 "type": "Act",
@@ -155,6 +215,7 @@
 "amendments_recorded": 20,
 "chunks": 19,
 "last_amended": "2011-05-24",
+"operative_prior_wording": 4,
 "title": "Competition Appellate Tribunal (Salaries and Allowances and Other Terms and Conditions of Service of the Chairperson and Other Members) Rules, 2009",
 "type": "Rules",
 "year": 2009
@@ -162,6 +223,12 @@
 "90_01.htm": {
 "amendments_recorded": 75,
 "chunks": 100,
+"history": {
+"50": {
+"chunk": 86,
+"offset": 758
+}
+},
 "last_amended": "2024-08-27",
 "title": "Limited Liability Partnership Rules, 2009",
 "type": "Rules",
@@ -171,6 +238,7 @@
 "amendments_recorded": 8,
 "chunks": 25,
 "last_amended": "2023-10-10",
+"operative_prior_wording": 4,
 "title": "Competition Commission of India (Number of Additional, Joint, Deputy or Assistant Director General Other Officers and Employees, Their Manner of Appointment, Qualification, Salary, Allowances and Other Terms and Conditions of Service) Rules, 2009",
 "type": "Rules",
 "year": 2009
@@ -178,6 +246,12 @@
 "90_03.htm": {
 "amendments_recorded": 22,
 "chunks": 20,
+"history": {
+"172": {
+"chunk": 14,
+"offset": 1357
+}
+},
 "last_amended": "2025-09-01",
 "title": "SEBI (Investor Protection and Education Fund) Regulations, 2009",
 "type": "Regulations",
@@ -186,6 +260,12 @@
 "90_04.htm": {
 "amendments_recorded": 165,
 "chunks": 71,
+"history": {
+"174": {
+"chunk": 48,
+"offset": 1057
+}
+},
 "last_amended": "2020-04-17",
 "title": "SEBI (Delisting of Equity Shares) Regulations, 2009",
 "type": "Regulations",
@@ -210,6 +290,12 @@
 "91_01.htm": {
 "amendments_recorded": 109,
 "chunks": 87,
+"history": {
+"292": {
+"chunk": 73,
+"offset": 197
+}
+},
 "last_amended": "2024-05-10",
 "title": "Competition Commission of India (General) Regulations, 2009",
 "type": "Regulations",
@@ -218,6 +304,12 @@
 "91_02.htm": {
 "amendments_recorded": 23,
 "chunks": 22,
+"history": {
+"181": {
+"chunk": 16,
+"offset": 1180
+}
+},
 "last_amended": "2022-09-12",
 "title": "Competition Commission of India (Procedure For Engagement of Experts and Professionals) Regulations, 2009",
 "type": "Regulations",
@@ -234,6 +326,12 @@
 "92_03.htm": {
 "amendments_recorded": 18,
 "chunks": 18,
+"history": {
+"210": {
+"chunk": 13,
+"offset": 1071
+}
+},
 "last_amended": "2017-08-08",
 "title": "Competition Commission of India (Lesser Penalty) Regulations, 2009",
 "type": "Regulations",
@@ -250,6 +348,12 @@
 "92_05.htm": {
 "amendments_recorded": 368,
 "chunks": 614,
+"history": {
+"322": {
+"chunk": 546,
+"offset": 138
+}
+},
 "last_amended": "2018-05-31",
 "title": "SEBI (Issue of Capital and Disclosure Requirements) Regulations, 2009",
 "type": "Regulations",
@@ -258,6 +362,12 @@
 "92_06.htm": {
 "amendments_recorded": 4,
 "chunks": 11,
+"history": {
+"215": {
+"chunk": 9,
+"offset": 1011
+}
+},
 "last_amended": "2023-07-18",
 "title": "Competition Commission of India (Director General) Recruitment Rules, 2009",
 "type": "Rules",
@@ -306,6 +416,12 @@
 "96_02.htm": {
 "amendments_recorded": 11,
 "chunks": 36,
+"history": {
+"229": {
+"chunk": 33,
+"offset": 895
+}
+},
 "last_amended": "2010-04-21",
 "title": "Securitisation Companies and Reconstruction Companies (Reserve Bank) Guidelines and Directions, 2003",
 "type": "Guidelines",
@@ -346,6 +462,12 @@
 "99_01.htm": {
 "amendments_recorded": 10,
 "chunks": 70,
+"history": {
+"459": {
+"chunk": 67,
+"offset": 254
+}
+},
 "last_amended": "2020-09-29",
 "title": "FOREIGN CONTRIBUTION (REGULATION) ACT, 2010",
 "type": "Act",
@@ -370,6 +492,12 @@
 "aapr_2013.htm": {
 "amendments_recorded": 10,
 "chunks": 29,
+"history": {
+"682": {
+"chunk": 26,
+"offset": 672
+}
+},
 "last_amended": "2017-05-24",
 "title": "Adjudicating Authority (Procedure) Regulations, 2013 - Supersession of Adjudicating Authority Regulations, 2006",
 "type": "Regulations",
@@ -418,6 +546,12 @@
 "acach10_1996.htm": {
 "amendments_recorded": 8,
 "chunks": 16,
+"history": {
+"245": {
+"chunk": 14,
+"offset": 473
+}
+},
 "last_amended": "2023-10-12",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -426,6 +560,12 @@
 "acach1_1996.htm": {
 "amendments_recorded": 5,
 "chunks": 9,
+"history": {
+"246": {
+"chunk": 7,
+"offset": 942
+}
+},
 "last_amended": "2019-08-09",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -434,6 +574,12 @@
 "acach1_2_1996.htm": {
 "amendments_recorded": 6,
 "chunks": 9,
+"history": {
+"247": {
+"chunk": 7,
+"offset": 100
+}
+},
 "last_amended": "2019-08-30",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -442,6 +588,12 @@
 "acach2_1996.htm": {
 "amendments_recorded": 3,
 "chunks": 6,
+"history": {
+"248": {
+"chunk": 5,
+"offset": 558
+}
+},
 "last_amended": "2015-12-31",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -450,6 +602,12 @@
 "acach2_2_1996.htm": {
 "amendments_recorded": 2,
 "chunks": 7,
+"history": {
+"249": {
+"chunk": 5,
+"offset": 1348
+}
+},
 "last_amended": "2015-12-31",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -458,6 +616,12 @@
 "acach3_1996.htm": {
 "amendments_recorded": 18,
 "chunks": 18,
+"history": {
+"250": {
+"chunk": 10,
+"offset": 1226
+}
+},
 "last_amended": "2019-08-09",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -466,6 +630,12 @@
 "acach4_1996.htm": {
 "amendments_recorded": 3,
 "chunks": 4,
+"history": {
+"251": {
+"chunk": 3,
+"offset": 326
+}
+},
 "last_amended": "2019-08-30",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -474,6 +644,12 @@
 "acach5_1996.htm": {
 "amendments_recorded": 3,
 "chunks": 7,
+"history": {
+"252": {
+"chunk": 6,
+"offset": 918
+}
+},
 "last_amended": "2019-08-30",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -482,6 +658,12 @@
 "acach6_1996.htm": {
 "amendments_recorded": 7,
 "chunks": 14,
+"history": {
+"253": {
+"chunk": 11,
+"offset": 855
+}
+},
 "last_amended": "2019-08-30",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -490,6 +672,12 @@
 "acach7_1996.htm": {
 "amendments_recorded": 4,
 "chunks": 7,
+"history": {
+"254": {
+"chunk": 5,
+"offset": 884
+}
+},
 "last_amended": "2019-08-30",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -498,6 +686,12 @@
 "acach8_1996.htm": {
 "amendments_recorded": 3,
 "chunks": 4,
+"history": {
+"255": {
+"chunk": 3,
+"offset": 716
+}
+},
 "last_amended": "2021-03-11",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -506,6 +700,12 @@
 "acach9_1996.htm": {
 "amendments_recorded": 3,
 "chunks": 2,
+"history": {
+"257": {
+"chunk": 0,
+"offset": 1043
+}
+},
 "last_amended": "2019-08-30",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -523,6 +723,7 @@
 "amendments_recorded": 1,
 "chunks": 10,
 "last_amended": "2023-09-14",
+"operative_prior_wording": 2,
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
 "year": 1996
@@ -530,6 +731,12 @@
 "acap4_1996.htm": {
 "amendments_recorded": 6,
 "chunks": 53,
+"history": {
+"260": {
+"chunk": 46,
+"offset": 1018
+}
+},
 "last_amended": "2021-03-11",
 "title": "Arbitration and Conciliation Act 1996",
 "type": "Act",
@@ -578,6 +785,12 @@
 "apcpach1_1981.htm": {
 "amendments_recorded": 3,
 "chunks": 6,
+"history": {
+"268": {
+"chunk": 5,
+"offset": 0
+}
+},
 "last_amended": "1988-04-01",
 "title": "Air (Prevention and Control of Pollution) Act 1981",
 "type": "Act",
@@ -586,6 +799,12 @@
 "apcpach2_1981.htm": {
 "amendments_recorded": 3,
 "chunks": 13,
+"history": {
+"269": {
+"chunk": 3,
+"offset": 1302
+}
+},
 "last_amended": "1988-04-01",
 "title": "Air (Prevention and Control of Pollution) Act 1981",
 "type": "Act",
@@ -602,6 +821,12 @@
 "apcpach4_1981.htm": {
 "amendments_recorded": 7,
 "chunks": 23,
+"history": {
+"271": {
+"chunk": 9,
+"offset": 854
+}
+},
 "last_amended": "1989-04-01",
 "title": "Air (Prevention and Control of Pollution) Act 1981",
 "type": "Act",
@@ -626,6 +851,12 @@
 "apcpach7_1981.htm": {
 "amendments_recorded": 8,
 "chunks": 15,
+"history": {
+"274": {
+"chunk": 5,
+"offset": 486
+}
+},
 "last_amended": "1988-04-01",
 "title": "Air (Prevention and Control of Pollution) Act 1981",
 "type": "Act",
@@ -634,6 +865,12 @@
 "bbech_1891.htm": {
 "amendments_recorded": 4,
 "chunks": 11,
+"history": {
+"278": {
+"chunk": 3,
+"offset": 832
+}
+},
 "last_amended": "1984-02-15",
 "title": "Bankers` Books Evidence Act 1891",
 "type": "Act",
@@ -763,6 +1000,7 @@
 "amendments_recorded": 8,
 "chunks": 15,
 "last_amended": "2013-02-07",
+"operative_prior_wording": 6,
 "title": "Insurance Regulatory and Development Authority (Appointed Actuary) Regulations, 2000",
 "type": "Regulations",
 "year": 2000
@@ -778,6 +1016,12 @@
 "bls2001_1_03.htm": {
 "amendments_recorded": 2,
 "chunks": 8,
+"history": {
+"375": {
+"chunk": 7,
+"offset": 402
+}
+},
 "last_amended": "2013-10-21",
 "title": "Insurance Regulatory and Development Authority (Meetings) Regulations, 2000",
 "type": "Regulations",
@@ -787,6 +1031,7 @@
 "amendments_recorded": 6,
 "chunks": 8,
 "last_amended": "2013-10-21",
+"operative_prior_wording": 4,
 "title": "Insurance Advisory Committee (Meetings) Regulations, 2000",
 "type": "Regulations",
 "year": 2000
@@ -802,6 +1047,12 @@
 "bls2001_1_07.htm": {
 "amendments_recorded": 6,
 "chunks": 15,
+"history": {
+"381": {
+"chunk": 12,
+"offset": 1072
+}
+},
 "last_amended": "2015-11-04",
 "title": "Insurance Regulatory and Development Authority (Insurance Advertisements and Disclosure) Regulations, 2000",
 "type": "Regulations",
@@ -826,6 +1077,12 @@
 "bls22_1.htm": {
 "amendments_recorded": 7,
 "chunks": 48,
+"history": {
+"387": {
+"chunk": 46,
+"offset": 855
+}
+},
 "last_amended": "2016-11-15",
 "title": "Payment and Settlement Systems Act, 2007",
 "type": "Act",
@@ -914,6 +1171,12 @@
 "bppgcd_2019.htm": {
 "amendments_recorded": 20,
 "chunks": 42,
+"history": {
+"2670": {
+"chunk": 35,
+"offset": 917
+}
+},
 "last_amended": "2026-06-01",
 "title": "INSOLVENCY AND BANKRUPTCY BOARD OF INDIA (BANKRUPTCY PROCESS FOR PERSONAL GUARANTORS TO CORPORATE DEBTORS) REGULATIONS, 2019",
 "type": "Regulations",
@@ -923,6 +1186,7 @@
 "amendments_recorded": 32,
 "chunks": 15,
 "last_amended": "2025-08-01",
+"operative_prior_wording": 2,
 "title": "Banking Regulation Act 1949",
 "type": "Act",
 "year": 1949
@@ -930,6 +1194,12 @@
 "brp2_1949.htm": {
 "amendments_recorded": 175,
 "chunks": 118,
+"history": {
+"412": {
+"chunk": 5,
+"offset": 109
+}
+},
 "last_amended": "2025-12-15",
 "title": "Banking Regulation Act 1949",
 "type": "Act",
@@ -938,6 +1208,12 @@
 "brp2a_1949.htm": {
 "amendments_recorded": 12,
 "chunks": 10,
+"history": {
+"409": {
+"chunk": 5,
+"offset": 1247
+}
+},
 "last_amended": "2013-01-07",
 "title": "Banking Regulation Act 1949",
 "type": "Act",
@@ -970,6 +1246,12 @@
 "brp3a_1949.htm": {
 "amendments_recorded": 25,
 "chunks": 31,
+"history": {
+"413": {
+"chunk": 0,
+"offset": 788
+}
+},
 "last_amended": "1984-02-15",
 "title": "Banking Regulation Act 1949",
 "type": "Act",
@@ -979,6 +1261,7 @@
 "amendments_recorded": 10,
 "chunks": 12,
 "last_amended": "2025-11-01",
+"operative_prior_wording": 2,
 "title": "Banking Regulation Act 1949",
 "type": "Act",
 "year": 1949
@@ -986,6 +1269,12 @@
 "brp4_1949.htm": {
 "amendments_recorded": 40,
 "chunks": 22,
+"history": {
+"416": {
+"chunk": 4,
+"offset": 757
+}
+},
 "last_amended": "2017-08-25",
 "title": "Banking Regulation Act 1949",
 "type": "Act",
@@ -995,6 +1284,7 @@
 "amendments_recorded": 71,
 "chunks": 87,
 "last_amended": "2025-12-15",
+"operative_prior_wording": 39,
 "title": "Banking Regulation Act 1949",
 "type": "Act",
 "year": 1949
@@ -1026,6 +1316,12 @@
 "ca68_1956.htm": {
 "amendments_recorded": 2,
 "chunks": 9,
+"history": {
+"1243": {
+"chunk": 4,
+"offset": 0
+}
+},
 "last_amended": "2000-12-13",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1034,6 +1330,12 @@
 "ca69_1956.htm": {
 "amendments_recorded": 8,
 "chunks": 27,
+"history": {
+"1244": {
+"chunk": 11,
+"offset": 913
+}
+},
 "last_amended": "2009-02-03",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1042,6 +1344,12 @@
 "ca70_1956.htm": {
 "amendments_recorded": 5,
 "chunks": 17,
+"history": {
+"1245": {
+"chunk": 4,
+"offset": 749
+}
+},
 "last_amended": "2006-09-16",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1050,6 +1358,12 @@
 "ca71_1956.htm": {
 "amendments_recorded": 27,
 "chunks": 60,
+"history": {
+"1246": {
+"chunk": 12,
+"offset": 1062
+}
+},
 "last_amended": "2002-12-13",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1058,6 +1372,12 @@
 "ca72_1956.htm": {
 "amendments_recorded": 45,
 "chunks": 95,
+"history": {
+"1247": {
+"chunk": 1,
+"offset": 376
+}
+},
 "last_amended": "2000-12-13",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1066,6 +1386,12 @@
 "ca74_1956.htm": {
 "amendments_recorded": 36,
 "chunks": 70,
+"history": {
+"1063": {
+"chunk": 16,
+"offset": 0
+}
+},
 "last_amended": "2003-04-01",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1074,7 +1400,14 @@
 "ca75_1956.htm": {
 "amendments_recorded": 26,
 "chunks": 87,
+"history": {
+"1248": {
+"chunk": 9,
+"offset": 600
+}
+},
 "last_amended": "2000-12-13",
+"operative_prior_wording": 2,
 "title": "Companies Act 1956",
 "type": "Act",
 "year": 1956
@@ -1082,6 +1415,12 @@
 "ca76_1956.htm": {
 "amendments_recorded": 11,
 "chunks": 23,
+"history": {
+"1249": {
+"chunk": 7,
+"offset": 1351
+}
+},
 "last_amended": "2000-12-13",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1090,6 +1429,12 @@
 "ca77_1956.htm": {
 "amendments_recorded": 47,
 "chunks": 79,
+"history": {
+"482": {
+"chunk": 5,
+"offset": 1148
+}
+},
 "last_amended": "2000-12-13",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1099,6 +1444,7 @@
 "amendments_recorded": 71,
 "chunks": 99,
 "last_amended": "2009-02-03",
+"operative_prior_wording": 4,
 "title": "Companies Act 1956",
 "type": "Act",
 "year": 1956
@@ -1114,6 +1460,12 @@
 "ca80_1956.htm": {
 "amendments_recorded": 46,
 "chunks": 91,
+"history": {
+"1251": {
+"chunk": 8,
+"offset": 520
+}
+},
 "last_amended": "2009-02-03",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1123,6 +1475,7 @@
 "amendments_recorded": 26,
 "chunks": 66,
 "last_amended": "2001-03-01",
+"operative_prior_wording": 4,
 "title": "Companies Act 1956",
 "type": "Act",
 "year": 1956
@@ -1130,6 +1483,12 @@
 "ca82_1956.htm": {
 "amendments_recorded": 109,
 "chunks": 137,
+"history": {
+"1253": {
+"chunk": 8,
+"offset": 869
+}
+},
 "last_amended": "2000-12-13",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1138,6 +1497,12 @@
 "ca83_1956.htm": {
 "amendments_recorded": 31,
 "chunks": 185,
+"history": {
+"1254": {
+"chunk": 1,
+"offset": 321
+}
+},
 "last_amended": "2000-12-13",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1147,6 +1512,7 @@
 "amendments_recorded": 124,
 "chunks": 265,
 "last_amended": "2024-09-19",
+"operative_prior_wording": 78,
 "title": "Competition Act, 2002",
 "type": "Act",
 "year": 2002
@@ -1162,6 +1528,12 @@
 "caar_2014.htm": {
 "amendments_recorded": 30,
 "chunks": 25,
+"history": {
+"1336": {
+"chunk": 19,
+"offset": 958
+}
+},
 "last_amended": "2025-07-14",
 "title": "Companies (Audit and Auditors) Rules, 2014",
 "type": "Rules",
@@ -1170,6 +1542,12 @@
 "cach10_1957.htm": {
 "amendments_recorded": 4,
 "chunks": 5,
+"history": {
+"421": {
+"chunk": 4,
+"offset": 904
+}
+},
 "last_amended": "2021-08-13",
 "title": "Copyright Act 1957",
 "type": "Act",
@@ -1178,6 +1556,12 @@
 "cach11_1957.htm": {
 "amendments_recorded": 25,
 "chunks": 23,
+"history": {
+"422": {
+"chunk": 17,
+"offset": 417
+}
+},
 "last_amended": "2021-08-13",
 "title": "Copyright Act 1957",
 "type": "Act",
@@ -1194,6 +1578,12 @@
 "cach13_1957.htm": {
 "amendments_recorded": 14,
 "chunks": 11,
+"history": {
+"424": {
+"chunk": 0,
+"offset": 1085
+}
+},
 "last_amended": "2021-08-13",
 "title": "Copyright Act 1957",
 "type": "Act",
@@ -1203,6 +1593,7 @@
 "amendments_recorded": 6,
 "chunks": 10,
 "last_amended": "2021-08-13",
+"operative_prior_wording": 1,
 "title": "Copyright Act 1957",
 "type": "Act",
 "year": 1957
@@ -1210,6 +1601,12 @@
 "cach1_1949.htm": {
 "amendments_recorded": 3,
 "chunks": 5,
+"history": {
+"428": {
+"chunk": 0,
+"offset": 395
+}
+},
 "last_amended": "1959-07-01",
 "title": "Chartered Accountants Act 1949",
 "type": "Act",
@@ -1218,7 +1615,14 @@
 "cach1_1957.htm": {
 "amendments_recorded": 31,
 "chunks": 14,
+"history": {
+"429": {
+"chunk": 12,
+"offset": 1332
+}
+},
 "last_amended": "2021-08-13",
+"operative_prior_wording": 2,
 "title": "Copyright Act 1957",
 "type": "Act",
 "year": 1957
@@ -1226,6 +1630,12 @@
 "cach2_1949.htm": {
 "amendments_recorded": 0,
 "chunks": 9,
+"history": {
+"430": {
+"chunk": 4,
+"offset": 702
+}
+},
 "last_amended": null,
 "title": "Chartered Accountants Act 1949",
 "type": "Act",
@@ -1234,6 +1644,12 @@
 "cach2_1957.htm": {
 "amendments_recorded": 11,
 "chunks": 5,
+"history": {
+"431": {
+"chunk": 1,
+"offset": 979
+}
+},
 "last_amended": "2021-08-13",
 "title": "Copyright Act 1957",
 "type": "Act",
@@ -1242,6 +1658,12 @@
 "cach3_1949.htm": {
 "amendments_recorded": 0,
 "chunks": 13,
+"history": {
+"432": {
+"chunk": 1,
+"offset": 662
+}
+},
 "last_amended": null,
 "title": "Chartered Accountants Act 1949",
 "type": "Act",
@@ -1250,6 +1672,12 @@
 "cach3_1957.htm": {
 "amendments_recorded": 6,
 "chunks": 8,
+"history": {
+"433": {
+"chunk": 2,
+"offset": 731
+}
+},
 "last_amended": "2000-01-15",
 "title": "Copyright Act 1957",
 "type": "Act",
@@ -1258,6 +1686,12 @@
 "cach4_1949.htm": {
 "amendments_recorded": 0,
 "chunks": 3,
+"history": {
+"434": {
+"chunk": 1,
+"offset": 1000
+}
+},
 "last_amended": null,
 "title": "Chartered Accountants Act 1949",
 "type": "Act",
@@ -1266,6 +1700,12 @@
 "cach4_1957.htm": {
 "amendments_recorded": 6,
 "chunks": 10,
+"history": {
+"435": {
+"chunk": 5,
+"offset": 0
+}
+},
 "last_amended": "2017-05-26",
 "title": "Copyright Act 1957",
 "type": "Act",
@@ -1282,6 +1722,12 @@
 "cach5_1957.htm": {
 "amendments_recorded": 6,
 "chunks": 6,
+"history": {
+"437": {
+"chunk": 3,
+"offset": 378
+}
+},
 "last_amended": "2017-05-26",
 "title": "Copyright Act 1957",
 "type": "Act",
@@ -1306,6 +1752,12 @@
 "cach7_1949.htm": {
 "amendments_recorded": 0,
 "chunks": 5,
+"history": {
+"440": {
+"chunk": 2,
+"offset": 520
+}
+},
 "last_amended": null,
 "title": "Chartered Accountants Act 1949",
 "type": "Act",
@@ -1330,6 +1782,12 @@
 "cach8_1957.htm": {
 "amendments_recorded": 5,
 "chunks": 6,
+"history": {
+"443": {
+"chunk": 2,
+"offset": 910
+}
+},
 "last_amended": "2000-01-15",
 "title": "Copyright Act 1957",
 "type": "Act",
@@ -1354,6 +1812,12 @@
 "cadr_2014.htm": {
 "amendments_recorded": 74,
 "chunks": 57,
+"history": {
+"1326": {
+"chunk": 46,
+"offset": 805
+}
+},
 "last_amended": "2022-08-29",
 "title": "Companies (Acceptance of Deposits) Rules, 2014",
 "type": "Rules",
@@ -1363,6 +1827,7 @@
 "amendments_recorded": 8,
 "chunks": 15,
 "last_amended": "2024-10-09",
+"operative_prior_wording": 4,
 "title": "Companies (Adjudication of Penalties) Rules, 2014",
 "type": "Rules",
 "year": 2014
@@ -1378,6 +1843,12 @@
 "caqdr_2014.htm": {
 "amendments_recorded": 94,
 "chunks": 46,
+"history": {
+"1298": {
+"chunk": 32,
+"offset": 634
+}
+},
 "last_amended": "2026-03-31",
 "title": "Companies (Appointment and Qualification of Directors) Rules, 2014",
 "type": "Rules",
@@ -1386,6 +1857,12 @@
 "car_2014.htm": {
 "amendments_recorded": 64,
 "chunks": 38,
+"history": {
+"884": {
+"chunk": 32,
+"offset": 1143
+}
+},
 "last_amended": "2025-07-14",
 "title": "Companies (Accounts) Rules, 2014",
 "type": "Rules",
@@ -1394,6 +1871,12 @@
 "carei_2011.htm": {
 "amendments_recorded": 6,
 "chunks": 43,
+"history": {
+"325": {
+"chunk": 41,
+"offset": 912
+}
+},
 "last_amended": "2012-12-02",
 "title": "Cost Accounting Records (Electricity Industry) Rules, 2011",
 "type": "Rules",
@@ -1403,6 +1886,7 @@
 "amendments_recorded": 8,
 "chunks": 26,
 "last_amended": "2012-12-02",
+"operative_prior_wording": 6,
 "title": "Cost Accounting Records (Fertilizer Industry) Rules, 2011",
 "type": "Rules",
 "year": 2011
@@ -1410,6 +1894,12 @@
 "carmpr_2014.htm": {
 "amendments_recorded": 16,
 "chunks": 15,
+"history": {
+"1293": {
+"chunk": 11,
+"offset": 1104
+}
+},
 "last_amended": "2023-01-23",
 "title": "Companies (Appointment and Remuneration of Managerial Personnel) Rules, 2014",
 "type": "Rules",
@@ -1418,6 +1908,12 @@
 "carphrmair_2011.htm": {
 "amendments_recorded": 8,
 "chunks": 11,
+"history": {
+"1317": {
+"chunk": 9,
+"offset": 740
+}
+},
 "last_amended": "2012-12-02",
 "title": "Cost Accounting Records (Pharmaceutical Industry) Rules, 2011",
 "type": "Rules",
@@ -1426,6 +1922,12 @@
 "carpir_2011.htm": {
 "amendments_recorded": 8,
 "chunks": 11,
+"history": {
+"1315": {
+"chunk": 9,
+"offset": 808
+}
+},
 "last_amended": "2012-12-02",
 "title": "Cost Accounting Records (Petroleum Industry) Rules, 2011",
 "type": "Rules",
@@ -1434,6 +1936,12 @@
 "carr_2014.htm": {
 "amendments_recorded": 30,
 "chunks": 26,
+"history": {
+"1296": {
+"chunk": 15,
+"offset": 893
+}
+},
 "last_amended": "2023-01-23",
 "title": "Companies (Authorised to Registered) Rules, 2014",
 "type": "Rules",
@@ -1442,6 +1950,12 @@
 "carsir_2011.htm": {
 "amendments_recorded": 8,
 "chunks": 11,
+"history": {
+"1319": {
+"chunk": 9,
+"offset": 749
+}
+},
 "last_amended": "2012-12-02",
 "title": "Cost Accounting Records (Sugar Industry) Rules, 2011",
 "type": "Rules",
@@ -1450,6 +1964,12 @@
 "cartir_2011.htm": {
 "amendments_recorded": 8,
 "chunks": 31,
+"history": {
+"1079": {
+"chunk": 28,
+"offset": 1214
+}
+},
 "last_amended": "2012-12-02",
 "title": "Cost Accounting Records (Telecommunication Industry) Rules, 2011",
 "type": "Rules",
@@ -1482,6 +2002,12 @@
 "casch13_1956.htm": {
 "amendments_recorded": 13,
 "chunks": 22,
+"history": {
+"51": {
+"chunk": 4,
+"offset": 906
+}
+},
 "last_amended": "2011-07-14",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1498,6 +2024,12 @@
 "casch15_1956.htm": {
 "amendments_recorded": 2,
 "chunks": 1,
+"history": {
+"446": {
+"chunk": 0,
+"offset": 353
+}
+},
 "last_amended": "2001-09-21",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1530,6 +2062,12 @@
 "casch2_1956.htm": {
 "amendments_recorded": 3,
 "chunks": 20,
+"history": {
+"448": {
+"chunk": 1,
+"offset": 1336
+}
+},
 "last_amended": "2002-09-17",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1562,6 +2100,12 @@
 "casch6_1956.htm": {
 "amendments_recorded": 8,
 "chunks": 34,
+"history": {
+"453": {
+"chunk": 10,
+"offset": 1113
+}
+},
 "last_amended": "2009-03-31",
 "title": "Companies Act 1956",
 "type": "Act",
@@ -1618,6 +2162,12 @@
 "ccaaar_2016.htm": {
 "amendments_recorded": 32,
 "chunks": 86,
+"history": {
+"1500": {
+"chunk": 73,
+"offset": 906
+}
+},
 "last_amended": "2025-09-04",
 "title": "Companies (Compromises, Arrangements and Amalgamations) Rules, 2016",
 "type": "Rules",
@@ -1627,6 +2177,7 @@
 "amendments_recorded": 8,
 "chunks": 22,
 "last_amended": "2012-12-02",
+"operative_prior_wording": 6,
 "title": "The Companies (Cost Audit Report) Rules, 2011",
 "type": "Rules",
 "year": 2011
@@ -1634,6 +2185,12 @@
 "cccdacadhca_2015.htm": {
 "amendments_recorded": 19,
 "chunks": 71,
+"history": {
+"1395": {
+"chunk": 65,
+"offset": 205
+}
+},
 "last_amended": "2018-08-20",
 "title": "Commercial Courts, Commercial Division and Commercial Appellate Division of High Courts Act, 2015",
 "type": "Act",
@@ -1650,6 +2207,12 @@
 "cci5.htm": {
 "amendments_recorded": 4,
 "chunks": 24,
+"history": {
+"662": {
+"chunk": 23,
+"offset": 171
+}
+},
 "last_amended": "2021-02-16",
 "title": "CCI (Manner of Recovery of Monetary Penalty) Regulations, 2011",
 "type": "Regulations",
@@ -1658,6 +2221,12 @@
 "cci_2011.htm": {
 "amendments_recorded": 123,
 "chunks": 99,
+"history": {
+"114": {
+"chunk": 70,
+"offset": 404
+}
+},
 "last_amended": "2022-05-01",
 "title": "Competition Commission of India (Procedure in regard to the transaction of business relating to combinations) Regulations, 2011",
 "type": "Regulations",
@@ -1746,6 +2315,12 @@
 "ccraar_2014.htm": {
 "amendments_recorded": 81,
 "chunks": 140,
+"history": {
+"502": {
+"chunk": 119,
+"offset": 1062
+}
+},
 "last_amended": "2019-10-15",
 "title": "Companies (cost records and audit) Rules, 2014",
 "type": "Rules",
@@ -1754,6 +2329,12 @@
 "ccsrpr_2014.htm": {
 "amendments_recorded": 62,
 "chunks": 36,
+"history": {
+"1321": {
+"chunk": 20,
+"offset": 1184
+}
+},
 "last_amended": "2026-05-27",
 "title": "Companies (Corporate Social Responsibility Policy) Rules, 2014",
 "type": "Rules",
@@ -1762,6 +2343,12 @@
 "cdpdr_2014.htm": {
 "amendments_recorded": 2,
 "chunks": 3,
+"history": {
+"882": {
+"chunk": 1,
+"offset": 1064
+}
+},
 "last_amended": "2015-05-29",
 "title": "Companies (Declaration and Payment of Dividend) Rules, 2014",
 "type": "Rules",
@@ -1770,6 +2357,12 @@
 "cfer_2011.htm": {
 "amendments_recorded": 8,
 "chunks": 7,
+"history": {
+"1074": {
+"chunk": 5,
+"offset": 463
+}
+},
 "last_amended": "2012-12-02",
 "title": "Companies (Filing of documents and forms in Extensible Business Reporting Language) Rules, 2011.",
 "type": "Rules",
@@ -1778,6 +2371,12 @@
 "cfodafiebrlr_2015.htm": {
 "amendments_recorded": 18,
 "chunks": 6,
+"history": {
+"1355": {
+"chunk": 3,
+"offset": 984
+}
+},
 "last_amended": "2025-07-14",
 "title": "Companies (Filing of Documents and Forms in Extensible Business Reporting Language) Rules, 2015",
 "type": "Rules",
@@ -1795,6 +2394,7 @@
 "amendments_recorded": 73,
 "chunks": 101,
 "last_amended": "2022-05-10",
+"operative_prior_wording": 32,
 "title": "Chartered Accountants Act 1949",
 "type": "Act",
 "year": 1949
@@ -1802,6 +2402,12 @@
 "ciasr_2014.htm": {
 "amendments_recorded": 12,
 "chunks": 65,
+"history": {
+"35": {
+"chunk": 62,
+"offset": 931
+}
+},
 "last_amended": "2024-09-28",
 "title": "Companies (Indian Accounting Standards) Rules, 2015",
 "type": "Rules",
@@ -1834,6 +2440,12 @@
 "cigdrr_2014.htm": {
 "amendments_recorded": 10,
 "chunks": 6,
+"history": {
+"1323": {
+"chunk": 4,
+"offset": 1387
+}
+},
 "last_amended": "2020-02-13",
 "title": "Companies (Issue of Global Depository Receipts) Rules, 2014",
 "type": "Rules",
@@ -1850,6 +2462,12 @@
 "cir_2014.htm": {
 "amendments_recorded": 255,
 "chunks": 162,
+"history": {
+"79": {
+"chunk": 107,
+"offset": 971
+}
+},
 "last_amended": "2025-09-15",
 "title": "Companies (Incorporation) Rules, 2014",
 "type": "Rules",
@@ -1874,6 +2492,12 @@
 "clespjr_2024.htm": {
 "amendments_recorded": 2,
 "chunks": 5,
+"history": {
+"2790": {
+"chunk": 4,
+"offset": 276
+}
+},
 "last_amended": "2025-07-03",
 "title": "COMPANIES (LISTING OF EQUITY SHARES IN PERMISSIBLE JURISDICTIONS) RULES, 2024",
 "type": "Rules",
@@ -1890,6 +2514,12 @@
 "cmar_2014.htm": {
 "amendments_recorded": 64,
 "chunks": 69,
+"history": {
+"636": {
+"chunk": 53,
+"offset": 488
+}
+},
 "last_amended": "2024-07-15",
 "title": "Companies (Management and Administration) Rules, 2014",
 "type": "Rules",
@@ -1898,6 +2528,12 @@
 "cmbpr_2014.htm": {
 "amendments_recorded": 60,
 "chunks": 39,
+"history": {
+"1299": {
+"chunk": 26,
+"offset": 411
+}
+},
 "last_amended": "2025-11-03",
 "title": "Companies (Meetings of Board and its Powers) Rules, 2014",
 "type": "Rules",
@@ -1906,6 +2542,12 @@
 "cmdid_2019.htm": {
 "amendments_recorded": 4,
 "chunks": 8,
+"history": {
+"2654": {
+"chunk": 7,
+"offset": 71
+}
+},
 "last_amended": "2021-08-19",
 "title": "COMPANIES (CREATION AND MAINTENANCE OF DATABANK OF INDEPENDENT DIRECTORS) RULES, 2019",
 "type": "Rules",
@@ -1914,6 +2556,12 @@
 "cmr_2014.htm": {
 "amendments_recorded": 8,
 "chunks": 9,
+"history": {
+"501": {
+"chunk": 8,
+"offset": 425
+}
+},
 "last_amended": "2023-07-20",
 "title": "Companies (Miscellaneous) Rules, 2014",
 "type": "Rules",
@@ -1938,6 +2586,12 @@
 "companies_act_chapter_1.htm": {
 "amendments_recorded": 44,
 "chunks": 36,
+"history": {
+"123": {
+"chunk": 31,
+"offset": 73
+}
+},
 "last_amended": "2021-01-22",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -1946,6 +2600,12 @@
 "companies_act_chapter_10.htm": {
 "amendments_recorded": 37,
 "chunks": 41,
+"history": {
+"124": {
+"chunk": 36,
+"offset": 1097
+}
+},
 "last_amended": "2020-12-21",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -1954,6 +2614,12 @@
 "companies_act_chapter_11.htm": {
 "amendments_recorded": 41,
 "chunks": 45,
+"history": {
+"125": {
+"chunk": 39,
+"offset": 527
+}
+},
 "last_amended": "2021-03-18",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -1962,6 +2628,12 @@
 "companies_act_chapter_12.htm": {
 "amendments_recorded": 50,
 "chunks": 63,
+"history": {
+"126": {
+"chunk": 51,
+"offset": 302
+}
+},
 "last_amended": "2020-12-21",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -1970,6 +2642,12 @@
 "companies_act_chapter_13.htm": {
 "amendments_recorded": 29,
 "chunks": 29,
+"history": {
+"127": {
+"chunk": 24,
+"offset": 1225
+}
+},
 "last_amended": "2021-03-18",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -1978,6 +2656,12 @@
 "companies_act_chapter_14.htm": {
 "amendments_recorded": 27,
 "chunks": 46,
+"history": {
+"128": {
+"chunk": 43,
+"offset": 819
+}
+},
 "last_amended": "2019-08-15",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -1986,6 +2670,12 @@
 "companies_act_chapter_15.htm": {
 "amendments_recorded": 7,
 "chunks": 40,
+"history": {
+"129": {
+"chunk": 37,
+"offset": 1261
+}
+},
 "last_amended": "2020-12-21",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -1994,6 +2684,12 @@
 "companies_act_chapter_16.htm": {
 "amendments_recorded": 14,
 "chunks": 19,
+"history": {
+"130": {
+"chunk": 17,
+"offset": 1386
+}
+},
 "last_amended": "2020-12-21",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2002,6 +2698,12 @@
 "companies_act_chapter_17_18.htm": {
 "amendments_recorded": 14,
 "chunks": 11,
+"history": {
+"131": {
+"chunk": 8,
+"offset": 1251
+}
+},
 "last_amended": "2021-03-24",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2010,6 +2712,12 @@
 "companies_act_chapter_19.htm": {
 "amendments_recorded": 1,
 "chunks": 23,
+"history": {
+"132": {
+"chunk": 0,
+"offset": 101
+}
+},
 "last_amended": "2016-11-15",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2018,6 +2726,12 @@
 "companies_act_chapter_2.htm": {
 "amendments_recorded": 42,
 "chunks": 45,
+"history": {
+"133": {
+"chunk": 39,
+"offset": 1235
+}
+},
 "last_amended": "2021-09-01",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2027,6 +2741,7 @@
 "amendments_recorded": 40,
 "chunks": 140,
 "last_amended": "2020-12-21",
+"operative_prior_wording": 56,
 "title": "Companies Act 2013",
 "type": "Act",
 "year": 2013
@@ -2034,6 +2749,12 @@
 "companies_act_chapter_21.htm": {
 "amendments_recorded": 9,
 "chunks": 88,
+"history": {
+"135": {
+"chunk": 86,
+"offset": 778
+}
+},
 "last_amended": "2021-02-11",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2042,6 +2763,12 @@
 "companies_act_chapter_22.htm": {
 "amendments_recorded": 14,
 "chunks": 17,
+"history": {
+"175": {
+"chunk": 14,
+"offset": 1118
+}
+},
 "last_amended": "2021-01-22",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2050,6 +2777,12 @@
 "companies_act_chapter_23.htm": {
 "amendments_recorded": 0,
 "chunks": 2,
+"history": {
+"1279": {
+"chunk": 1,
+"offset": 798
+}
+},
 "last_amended": null,
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2058,6 +2791,12 @@
 "companies_act_chapter_24.htm": {
 "amendments_recorded": 9,
 "chunks": 13,
+"history": {
+"182": {
+"chunk": 10,
+"offset": 328
+}
+},
 "last_amended": "2022-07-01",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2066,6 +2805,12 @@
 "companies_act_chapter_25_26.htm": {
 "amendments_recorded": 4,
 "chunks": 5,
+"history": {
+"1280": {
+"chunk": 2,
+"offset": 876
+}
+},
 "last_amended": "2020-12-21",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2074,6 +2819,12 @@
 "companies_act_chapter_27.htm": {
 "amendments_recorded": 33,
 "chunks": 37,
+"history": {
+"183": {
+"chunk": 28,
+"offset": 691
+}
+},
 "last_amended": "2021-08-13",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2082,6 +2833,12 @@
 "companies_act_chapter_28.htm": {
 "amendments_recorded": 32,
 "chunks": 21,
+"history": {
+"184": {
+"chunk": 15,
+"offset": 412
+}
+},
 "last_amended": "2023-09-14",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2090,6 +2847,12 @@
 "companies_act_chapter_29.htm": {
 "amendments_recorded": 22,
 "chunks": 38,
+"history": {
+"185": {
+"chunk": 33,
+"offset": 126
+}
+},
 "last_amended": "2021-02-11",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2098,6 +2861,12 @@
 "companies_act_chapter_3.htm": {
 "amendments_recorded": 23,
 "chunks": 42,
+"history": {
+"186": {
+"chunk": 30,
+"offset": 399
+}
+},
 "last_amended": "2023-10-30",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2106,6 +2875,12 @@
 "companies_act_chapter_4.htm": {
 "amendments_recorded": 40,
 "chunks": 57,
+"history": {
+"187": {
+"chunk": 50,
+"offset": 968
+}
+},
 "last_amended": "2021-01-22",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2114,6 +2889,12 @@
 "companies_act_chapter_5.htm": {
 "amendments_recorded": 18,
 "chunks": 11,
+"history": {
+"188": {
+"chunk": 8,
+"offset": 1387
+}
+},
 "last_amended": "2018-08-15",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2122,6 +2903,12 @@
 "companies_act_chapter_6.htm": {
 "amendments_recorded": 15,
 "chunks": 15,
+"history": {
+"189": {
+"chunk": 10,
+"offset": 941
+}
+},
 "last_amended": "2020-12-21",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2130,6 +2917,12 @@
 "companies_act_chapter_7.htm": {
 "amendments_recorded": 89,
 "chunks": 65,
+"history": {
+"190": {
+"chunk": 52,
+"offset": 1384
+}
+},
 "last_amended": "2021-03-05",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2138,6 +2931,12 @@
 "companies_act_chapter_8.htm": {
 "amendments_recorded": 15,
 "chunks": 17,
+"history": {
+"191": {
+"chunk": 14,
+"offset": 1375
+}
+},
 "last_amended": "2021-03-24",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2146,6 +2945,12 @@
 "companies_act_chapter_9.htm": {
 "amendments_recorded": 72,
 "chunks": 54,
+"history": {
+"192": {
+"chunk": 45,
+"offset": 157
+}
+},
 "last_amended": "2021-01-22",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2154,6 +2959,12 @@
 "companies_act_schedule_1.htm": {
 "amendments_recorded": 2,
 "chunks": 56,
+"history": {
+"193": {
+"chunk": 54,
+"offset": 953
+}
+},
 "last_amended": "2018-04-10",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2162,6 +2973,12 @@
 "companies_act_schedule_2.htm": {
 "amendments_recorded": 11,
 "chunks": 15,
+"history": {
+"194": {
+"chunk": 11,
+"offset": 1206
+}
+},
 "last_amended": "2016-11-17",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2170,6 +2987,12 @@
 "companies_act_schedule_3.htm": {
 "amendments_recorded": 81,
 "chunks": 154,
+"history": {
+"195": {
+"chunk": 146,
+"offset": 1142
+}
+},
 "last_amended": "2021-04-01",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2178,6 +3001,12 @@
 "companies_act_schedule_4.htm": {
 "amendments_recorded": 7,
 "chunks": 10,
+"history": {
+"196": {
+"chunk": 8,
+"offset": 912
+}
+},
 "last_amended": "2017-07-05",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2186,6 +3015,12 @@
 "companies_act_schedule_5.htm": {
 "amendments_recorded": 16,
 "chunks": 25,
+"history": {
+"197": {
+"chunk": 17,
+"offset": 1109
+}
+},
 "last_amended": "2021-03-18",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2194,6 +3029,12 @@
 "companies_act_schedule_6.htm": {
 "amendments_recorded": 0,
 "chunks": 3,
+"history": {
+"198": {
+"chunk": 2,
+"offset": 1055
+}
+},
 "last_amended": null,
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2202,6 +3043,12 @@
 "companies_act_schedule_7.htm": {
 "amendments_recorded": 18,
 "chunks": 6,
+"history": {
+"1281": {
+"chunk": 3,
+"offset": 422
+}
+},
 "last_amended": "2026-05-27",
 "title": "Companies Act 2013",
 "type": "Act",
@@ -2210,6 +3057,12 @@
 "copyright_2013.htm": {
 "amendments_recorded": 58,
 "chunks": 90,
+"history": {
+"10": {
+"chunk": 80,
+"offset": 143
+}
+},
 "last_amended": "2021-03-30",
 "title": "Copyright Rules, 2013",
 "type": "Rules",
@@ -2218,6 +3071,12 @@
 "cp_1986.htm": {
 "amendments_recorded": 2,
 "chunks": 70,
+"history": {
+"474": {
+"chunk": 69,
+"offset": 946
+}
+},
 "last_amended": "2017-05-26",
 "title": "Consumer Protection Act, 1986",
 "type": "Act",
@@ -2226,6 +3085,12 @@
 "cpasr_2014.htm": {
 "amendments_recorded": 30,
 "chunks": 57,
+"history": {
+"1325": {
+"chunk": 31,
+"offset": 1130
+}
+},
 "last_amended": "2025-02-12",
 "title": "Companies (Prospectus and Allotment of Securities) Rules, 2014",
 "type": "Rules",
@@ -2234,6 +3099,12 @@
 "cpeip_2019.htm": {
 "amendments_recorded": 4,
 "chunks": 15,
+"history": {
+"2634": {
+"chunk": 12,
+"offset": 0
+}
+},
 "last_amended": "2025-08-13",
 "title": "INSOLVENCY AND BANKRUPTCY BOARD OF INDIA (CONTINUING PROFESSIONAL EDUCATION FOR INSOLVENCY PROFESSIONALS) GUIDELINES, 2019",
 "type": "Guidelines",
@@ -2258,6 +3129,12 @@
 "cr1_9.htm": {
 "amendments_recorded": 13,
 "chunks": 51,
+"history": {
+"84": {
+"chunk": 46,
+"offset": 770
+}
+},
 "last_amended": "2014-11-17",
 "title": "Companies (Central Government`s) General Rules and Forms, 1956",
 "type": "Rules",
@@ -2274,6 +3151,12 @@
 "cr3_10.htm": {
 "amendments_recorded": 1,
 "chunks": 10,
+"history": {
+"476": {
+"chunk": 9,
+"offset": 396
+}
+},
 "last_amended": "2006-03-03",
 "title": "Companies (Declaration of Dividend Out of Reserves) Rules, 1975",
 "type": "Rules",
@@ -2283,6 +3166,7 @@
 "amendments_recorded": 30,
 "chunks": 50,
 "last_amended": "2013-03-15",
+"operative_prior_wording": 15,
 "title": "Companies (Director Identification Number) Rules, 2006",
 "type": "Rules",
 "year": 2006
@@ -2298,6 +3182,12 @@
 "cr3_13.htm": {
 "amendments_recorded": 0,
 "chunks": 15,
+"history": {
+"480": {
+"chunk": 14,
+"offset": 621
+}
+},
 "last_amended": null,
 "title": "Companies (Disqualification of Directors Under Section 274(1)(G) of the Companies Act, 1956) Rules, 2003",
 "type": "Rules",
@@ -2347,6 +3237,7 @@
 "amendments_recorded": 4,
 "chunks": 78,
 "last_amended": "2013-03-21",
+"operative_prior_wording": 4,
 "title": "Companies (Acceptance of Deposits) Rules, 1975",
 "type": "Rules",
 "year": 1975
@@ -2386,6 +3277,12 @@
 "cr3_24.htm": {
 "amendments_recorded": 28,
 "chunks": 47,
+"history": {
+"327": {
+"chunk": 36,
+"offset": 518
+}
+},
 "last_amended": "2012-10-15",
 "title": "Companies Regulations, 1956",
 "type": "Regulations",
@@ -2402,6 +3299,12 @@
 "cr3_27.htm": {
 "amendments_recorded": 73,
 "chunks": 72,
+"history": {
+"89": {
+"chunk": 61,
+"offset": 570
+}
+},
 "last_amended": "2016-05-02",
 "title": "Company Law Board Regulations, 1991",
 "type": "Regulations",
@@ -2442,6 +3345,12 @@
 "cr3_33.htm": {
 "amendments_recorded": 14,
 "chunks": 8,
+"history": {
+"293": {
+"chunk": 3,
+"offset": 1127
+}
+},
 "last_amended": "2024-09-02",
 "title": "Competition Commission of India (Salary, Allowances and Other Terms and Conditions of Service of Chairperson and Other Members) Rules, 2003",
 "type": "Rules",
@@ -2450,6 +3359,12 @@
 "cr3_34.htm": {
 "amendments_recorded": 2,
 "chunks": 45,
+"history": {
+"520": {
+"chunk": 44,
+"offset": 459
+}
+},
 "last_amended": "2006-03-08",
 "title": "Cost Audit Report Rules, 2001",
 "type": "Rules",
@@ -2459,6 +3374,7 @@
 "amendments_recorded": 2,
 "chunks": 4,
 "last_amended": "2011-04-06",
+"operative_prior_wording": 2,
 "title": "Director`s Relatives (Office or Place of Profit) Rules, 2003",
 "type": "Rules",
 "year": 2003
@@ -2474,6 +3390,12 @@
 "cr3_37.htm": {
 "amendments_recorded": 1,
 "chunks": 21,
+"history": {
+"527": {
+"chunk": 19,
+"offset": 1116
+}
+},
 "last_amended": "2006-03-03",
 "title": "Investor Education and Protection Fund (Awareness and Protection of Investors) Rules, 2001",
 "type": "Rules",
@@ -2491,6 +3413,7 @@
 "amendments_recorded": 8,
 "chunks": 6,
 "last_amended": "2009-03-15",
+"operative_prior_wording": 2,
 "title": "Companies (Appointment & Qualifications of Secretary) Rules, 1988",
 "type": "Rules",
 "year": 1988
@@ -2498,6 +3421,12 @@
 "cr3_41.htm": {
 "amendments_recorded": 0,
 "chunks": 2,
+"history": {
+"532": {
+"chunk": 1,
+"offset": 832
+}
+},
 "last_amended": null,
 "title": "Producer Companies (General Reserves) Rules, 2003",
 "type": "Rules",
@@ -2514,6 +3443,12 @@
 "cr3_43.htm": {
 "amendments_recorded": 79,
 "chunks": 100,
+"history": {
+"536": {
+"chunk": 80,
+"offset": 588
+}
+},
 "last_amended": "2026-03-13",
 "title": "Securities Contracts (Regulation) Rules, 1957",
 "type": "Rules",
@@ -2538,6 +3473,12 @@
 "cr3_6.htm": {
 "amendments_recorded": 1,
 "chunks": 47,
+"history": {
+"544": {
+"chunk": 45,
+"offset": 1032
+}
+},
 "last_amended": "2006-03-08",
 "title": "Companies (Appointment of Sole Agents) Rules, 1975",
 "type": "Rules",
@@ -2578,6 +3519,12 @@
 "crcr_2014.htm": {
 "amendments_recorded": 22,
 "chunks": 13,
+"history": {
+"1292": {
+"chunk": 8,
+"offset": 543
+}
+},
 "last_amended": "2022-08-29",
 "title": "Companies (Registration of Charges) Rules, 2014",
 "type": "Rules",
@@ -2587,6 +3534,7 @@
 "amendments_recorded": 8,
 "chunks": 38,
 "last_amended": "2024-09-09",
+"operative_prior_wording": 1,
 "title": "Companies (Registration of Foreign Companies) Rules, 2014",
 "type": "Rules",
 "year": 2014
@@ -2594,6 +3542,12 @@
 "crncrcr_2016.htm": {
 "amendments_recorded": 24,
 "chunks": 19,
+"history": {
+"1502": {
+"chunk": 15,
+"offset": 1241
+}
+},
 "last_amended": "2025-12-31",
 "title": "Companies (Removal of Names of Companies from the Register of Companies) Rules, 2016",
 "type": "Rules",
@@ -2602,6 +3556,12 @@
 "crnlr_2017.htm": {
 "amendments_recorded": 1,
 "chunks": 5,
+"history": {
+"1548": {
+"chunk": 2,
+"offset": 1228
+}
+},
 "last_amended": "2025-06-27",
 "title": "Companies (Restriction on number of layers) Rules, 2017",
 "type": "Rules",
@@ -2610,6 +3570,12 @@
 "crofr_2014.htm": {
 "amendments_recorded": 44,
 "chunks": 48,
+"history": {
+"1330": {
+"chunk": 42,
+"offset": 465
+}
+},
 "last_amended": "2026-04-21",
 "title": "Companies (Registration Offices and Fees) Rules, 2014",
 "type": "Rules",
@@ -2618,6 +3584,12 @@
 "crvvr_2017.htm": {
 "amendments_recorded": 33,
 "chunks": 77,
+"history": {
+"1552": {
+"chunk": 69,
+"offset": 968
+}
+},
 "last_amended": "2026-06-01",
 "title": "Companies (Registered Valuers and Valuation) Rules, 2017",
 "type": "Rules",
@@ -2627,6 +3599,7 @@
 "amendments_recorded": 96,
 "chunks": 131,
 "last_amended": "2022-05-10",
+"operative_prior_wording": 51,
 "title": "Company Secretaries Act, 1980",
 "type": "Act",
 "year": 1980
@@ -2635,6 +3608,7 @@
 "amendments_recorded": 10,
 "chunks": 16,
 "last_amended": "2019-07-01",
+"operative_prior_wording": 8,
 "title": "Companies (Significant Beneficial Owners) Rules, 2018",
 "type": "Rules",
 "year": 2018
@@ -2642,6 +3616,12 @@
 "cscdr_2014.htm": {
 "amendments_recorded": 87,
 "chunks": 91,
+"history": {
+"1324": {
+"chunk": 75,
+"offset": 792
+}
+},
 "last_amended": "2023-01-28",
 "title": "Companies (Share Capital and Debentures) Rules, 2014",
 "type": "Rules",
@@ -2650,6 +3630,12 @@
 "csddr_2014.htm": {
 "amendments_recorded": 12,
 "chunks": 9,
+"history": {
+"629": {
+"chunk": 7,
+"offset": 847
+}
+},
 "last_amended": "2025-12-01",
 "title": "Companies (Specification of Definitions Details) Rules, 2014",
 "type": "Rules",
@@ -2666,6 +3652,12 @@
 "ctppr_2016.htm": {
 "amendments_recorded": 5,
 "chunks": 8,
+"history": {
+"1490": {
+"chunk": 4,
+"offset": 1035
+}
+},
 "last_amended": "2017-06-29",
 "title": "Companies (Transfer of Pending Proceedings) Rules, 2016",
 "type": "Rules",
@@ -2682,6 +3674,12 @@
 "da_1996.htm": {
 "amendments_recorded": 21,
 "chunks": 44,
+"history": {
+"569": {
+"chunk": 42,
+"offset": 286
+}
+},
 "last_amended": "2014-09-08",
 "title": "Depositories Act, 1996",
 "type": "Act",
@@ -2794,6 +3792,12 @@
 "drt_2013.htm": {
 "amendments_recorded": 2,
 "chunks": 3,
+"history": {
+"21": {
+"chunk": 2,
+"offset": 500
+}
+},
 "last_amended": "2026-05-19",
 "title": "Debts Recovery Tribunal (Refund of Court Fee) Rules, 2013",
 "type": "Rules",
@@ -2802,6 +3806,12 @@
 "enpi_1950.htm": {
 "amendments_recorded": 1,
 "chunks": 10,
+"history": {
+"571": {
+"chunk": 8,
+"offset": 1346
+}
+},
 "last_amended": "2013-09-13",
 "title": "Emblems and Names (Prevention of Improper Use) Act, 1950",
 "type": "Act",
@@ -2851,6 +3861,7 @@
 "amendments_recorded": 188,
 "chunks": 125,
 "last_amended": "2017-05-26",
+"operative_prior_wording": 10,
 "title": "Employees` Provident Funds and Miscellaneous Provisions Act 1952",
 "type": "Act",
 "year": 1952
@@ -2858,6 +3869,12 @@
 "epfpre_1952.htm": {
 "amendments_recorded": 1,
 "chunks": 1,
+"history": {
+"581": {
+"chunk": 0,
+"offset": 330
+}
+},
 "last_amended": "1976-08-01",
 "title": "Employees` Provident Funds and Miscellaneous Provisions Act 1952",
 "type": "Act",
@@ -2866,6 +3883,12 @@
 "esich1_1948.htm": {
 "amendments_recorded": 27,
 "chunks": 18,
+"history": {
+"584": {
+"chunk": 15,
+"offset": 853
+}
+},
 "last_amended": "1991-02-01",
 "title": "Employees` State Insurance Act 1948",
 "type": "Act",
@@ -2874,6 +3897,12 @@
 "esich2_1948.htm": {
 "amendments_recorded": 36,
 "chunks": 21,
+"history": {
+"585": {
+"chunk": 3,
+"offset": 341
+}
+},
 "last_amended": "1991-02-01",
 "title": "Employees` State Insurance Act 1948",
 "type": "Act",
@@ -2882,6 +3911,12 @@
 "esich3_1948.htm": {
 "amendments_recorded": 6,
 "chunks": 9,
+"history": {
+"586": {
+"chunk": 7,
+"offset": 1151
+}
+},
 "last_amended": "1997-05-01",
 "title": "Employees` State Insurance Act 1948",
 "type": "Act",
@@ -2890,6 +3925,12 @@
 "esich4_1948.htm": {
 "amendments_recorded": 18,
 "chunks": 24,
+"history": {
+"587": {
+"chunk": 2,
+"offset": 765
+}
+},
 "last_amended": "1991-09-01",
 "title": "Employees` State Insurance Act 1948",
 "type": "Act",
@@ -2898,6 +3939,12 @@
 "esich5_1948.htm": {
 "amendments_recorded": 30,
 "chunks": 31,
+"history": {
+"588": {
+"chunk": 5,
+"offset": 0
+}
+},
 "last_amended": "1991-03-01",
 "title": "Employees` State Insurance Act 1948",
 "type": "Act",
@@ -2906,6 +3953,12 @@
 "esich6_1948.htm": {
 "amendments_recorded": 12,
 "chunks": 13,
+"history": {
+"589": {
+"chunk": 6,
+"offset": 0
+}
+},
 "last_amended": "1989-10-20",
 "title": "Employees` State Insurance Act 1948",
 "type": "Act",
@@ -2914,6 +3967,12 @@
 "esich7_1948.htm": {
 "amendments_recorded": 16,
 "chunks": 10,
+"history": {
+"590": {
+"chunk": 1,
+"offset": 850
+}
+},
 "last_amended": "1992-01-01",
 "title": "Employees` State Insurance Act 1948",
 "type": "Act",
@@ -2922,6 +3981,12 @@
 "esich8_1948.htm": {
 "amendments_recorded": 33,
 "chunks": 30,
+"history": {
+"591": {
+"chunk": 2,
+"offset": 551
+}
+},
 "last_amended": "1991-02-01",
 "title": "Employees` State Insurance Act 1948",
 "type": "Act",
@@ -2938,6 +4003,12 @@
 "fach10_1948.htm": {
 "amendments_recorded": 27,
 "chunks": 17,
+"history": {
+"593": {
+"chunk": 2,
+"offset": 445
+}
+},
 "last_amended": "1998-12-01",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -2946,6 +4017,12 @@
 "fach11_1948.htm": {
 "amendments_recorded": 11,
 "chunks": 20,
+"history": {
+"594": {
+"chunk": 4,
+"offset": 434
+}
+},
 "last_amended": "1988-07-22",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -2954,6 +4031,12 @@
 "fach1_1948.htm": {
 "amendments_recorded": 19,
 "chunks": 19,
+"history": {
+"595": {
+"chunk": 10,
+"offset": 0
+}
+},
 "last_amended": "1987-12-01",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -2962,6 +4045,12 @@
 "fach2_1948.htm": {
 "amendments_recorded": 7,
 "chunks": 14,
+"history": {
+"596": {
+"chunk": 7,
+"offset": 854
+}
+},
 "last_amended": "1988-06-01",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -2970,6 +4059,12 @@
 "fach3_1948.htm": {
 "amendments_recorded": 11,
 "chunks": 15,
+"history": {
+"597": {
+"chunk": 4,
+"offset": 499
+}
+},
 "last_amended": "1987-12-01",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -2978,6 +4073,12 @@
 "fach4_1948.htm": {
 "amendments_recorded": 22,
 "chunks": 32,
+"history": {
+"599": {
+"chunk": 5,
+"offset": 0
+}
+},
 "last_amended": "1987-12-01",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -2994,6 +4095,12 @@
 "fach5_1948.htm": {
 "amendments_recorded": 4,
 "chunks": 8,
+"history": {
+"600": {
+"chunk": 3,
+"offset": 650
+}
+},
 "last_amended": "1976-10-26",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -3002,6 +4109,12 @@
 "fach6_1948.htm": {
 "amendments_recorded": 12,
 "chunks": 21,
+"history": {
+"601": {
+"chunk": 7,
+"offset": 364
+}
+},
 "last_amended": "1987-12-01",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -3010,6 +4123,12 @@
 "fach7_1948.htm": {
 "amendments_recorded": 4,
 "chunks": 9,
+"history": {
+"602": {
+"chunk": 5,
+"offset": 791
+}
+},
 "last_amended": "1987-12-01",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -3018,6 +4137,12 @@
 "fach8_1948.htm": {
 "amendments_recorded": 11,
 "chunks": 12,
+"history": {
+"603": {
+"chunk": 0,
+"offset": 1082
+}
+},
 "last_amended": "1987-12-01",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -3026,6 +4151,12 @@
 "fach9_1948.htm": {
 "amendments_recorded": 13,
 "chunks": 14,
+"history": {
+"604": {
+"chunk": 2,
+"offset": 910
+}
+},
 "last_amended": "1987-12-01",
 "title": "Factories Act 1948",
 "type": "Act",
@@ -3042,6 +4173,12 @@
 "fcr_2012.htm": {
 "amendments_recorded": 49,
 "chunks": 91,
+"history": {
+"1304": {
+"chunk": 81,
+"offset": 1175
+}
+},
 "last_amended": "2024-12-31",
 "title": "Foreign Contribution (Regulation) Rules, 2011",
 "type": "Rules",
@@ -3058,6 +4195,12 @@
 "fem_1999.htm": {
 "amendments_recorded": 18,
 "chunks": 62,
+"history": {
+"687": {
+"chunk": 53,
+"offset": 278
+}
+},
 "last_amended": "2017-05-26",
 "title": "Foreign Exchange Management Act, 1999",
 "type": "Act",
@@ -3074,6 +4217,12 @@
 "fema3_132.htm": {
 "amendments_recorded": 5,
 "chunks": 12,
+"history": {
+"2": {
+"chunk": 10,
+"offset": 154
+}
+},
 "last_amended": "2014-09-26",
 "title": "Foreign Exchange Management (Acquisition and Transfer of Immovable Property In India) Regulations, 2000",
 "type": "Regulations",
@@ -3082,6 +4231,12 @@
 "fema3_137.htm": {
 "amendments_recorded": 10,
 "chunks": 16,
+"history": {
+"659": {
+"chunk": 12,
+"offset": 1346
+}
+},
 "last_amended": "2014-02-24",
 "title": "Foreign Exchange Management (Establishment In India of Branch or Office or Other Place of Business) Regulations, 2000",
 "type": "Regulations",
@@ -3090,6 +4245,12 @@
 "fema3_143.htm": {
 "amendments_recorded": 19,
 "chunks": 60,
+"history": {
+"90": {
+"chunk": 56,
+"offset": 826
+}
+},
 "last_amended": "2015-07-24",
 "title": "Foreign Exchange Management (Export of Goods and Services) Regulations, 2000",
 "type": "Regulations",
@@ -3106,6 +4267,12 @@
 "fema3_177.htm": {
 "amendments_recorded": 62,
 "chunks": 25,
+"history": {
+"91": {
+"chunk": 8,
+"offset": 1237
+}
+},
 "last_amended": "2020-02-18",
 "title": "Foreign Exchange Management (Foreign Exchange Derivative Contracts) Regulations, 2000",
 "type": "Regulations",
@@ -3114,6 +4281,12 @@
 "fema3_18.htm": {
 "amendments_recorded": 2,
 "chunks": 8,
+"history": {
+"621": {
+"chunk": 7,
+"offset": 907
+}
+},
 "last_amended": "2017-02-20",
 "title": "Foreign Exchange (Compounding Proceedings) Rules, 2000",
 "type": "Rules",
@@ -3122,6 +4295,12 @@
 "fema3_22.htm": {
 "amendments_recorded": 15,
 "chunks": 12,
+"history": {
+"624": {
+"chunk": 7,
+"offset": 1103
+}
+},
 "last_amended": "2019-03-07",
 "title": "Foreign Exchange Management (Permissible Capital Account Transactions) Regulations, 2000",
 "type": "Regulations",
@@ -3170,6 +4349,12 @@
 "fema3_39.htm": {
 "amendments_recorded": 4,
 "chunks": 21,
+"history": {
+"94": {
+"chunk": 19,
+"offset": 1110
+}
+},
 "last_amended": "2013-09-17",
 "title": "Foreign Exchange Management (Borrowing and Lending In Rupees) Regulations, 2000",
 "type": "Regulations",
@@ -3179,6 +4364,7 @@
 "amendments_recorded": 22,
 "chunks": 55,
 "last_amended": "2014-11-24",
+"operative_prior_wording": 8,
 "title": "Foreign Exchange Management (Deposit) Regulations, 2000",
 "type": "Regulations",
 "year": 2000
@@ -3194,6 +4380,12 @@
 "fema3_6.htm": {
 "amendments_recorded": 12,
 "chunks": 11,
+"history": {
+"645": {
+"chunk": 8,
+"offset": 880
+}
+},
 "last_amended": "2023-06-30",
 "title": "Foreign Exchange Management (Current Account Transactions) Rules, 2000",
 "type": "Rules",
@@ -3202,6 +4394,12 @@
 "fema3_63.htm": {
 "amendments_recorded": 10,
 "chunks": 9,
+"history": {
+"646": {
+"chunk": 7,
+"offset": 366
+}
+},
 "last_amended": "2014-12-16",
 "title": "Foreign Exchange Management (Export and Import of Currency) Regulations, 2000",
 "type": "Regulations",
@@ -3210,6 +4408,12 @@
 "fema3_67.htm": {
 "amendments_recorded": 1,
 "chunks": 3,
+"history": {
+"648": {
+"chunk": 1,
+"offset": 1282
+}
+},
 "last_amended": "2003-10-13",
 "title": "Foreign Exchange Management (Acquisition and Transfer of Immovable Property Outside India) Regulations, 2000",
 "type": "Regulations",
@@ -3219,6 +4423,7 @@
 "amendments_recorded": 13,
 "chunks": 17,
 "last_amended": "2013-05-08",
+"operative_prior_wording": 6,
 "title": "Foreign Exchange Management (Guarantees) Regulations, 2000",
 "type": "Regulations",
 "year": 2000
@@ -3234,6 +4439,12 @@
 "fema3_73.htm": {
 "amendments_recorded": 27,
 "chunks": 33,
+"history": {
+"3": {
+"chunk": 25,
+"offset": 1229
+}
+},
 "last_amended": "2014-12-03",
 "title": "Foreign Exchange Management (Foreign Currency Accounts by a Person Resident In India) Regulations, 2000",
 "type": "Regulations",
@@ -3259,6 +4470,7 @@
 "amendments_recorded": 11,
 "chunks": 12,
 "last_amended": "2014-10-31",
+"operative_prior_wording": 8,
 "title": "Foreign Exchange Management (Remittance of Assets) Regulations, 2000",
 "type": "Regulations",
 "year": 2000
@@ -3266,6 +4478,12 @@
 "fema3_91.htm": {
 "amendments_recorded": 16,
 "chunks": 12,
+"history": {
+"660": {
+"chunk": 8,
+"offset": 1223
+}
+},
 "last_amended": "2015-12-07",
 "title": "Foreign Exchange Management (Manner of Receipt and Payment) Regulations, 2000",
 "type": "Regulations",
@@ -3274,6 +4492,12 @@
 "fema3_94.htm": {
 "amendments_recorded": 447,
 "chunks": 367,
+"history": {
+"747": {
+"chunk": 201,
+"offset": 745
+}
+},
 "last_amended": "2017-03-09",
 "title": "Foreign Exchange Management (Transfer or Issue of Security by a Person Resident Outside India) Regulations, 2000",
 "type": "Regulations",
@@ -3290,6 +4514,12 @@
 "fema8_11.htm": {
 "amendments_recorded": 2,
 "chunks": 7,
+"history": {
+"669": {
+"chunk": 5,
+"offset": 1381
+}
+},
 "last_amended": "2016-12-06",
 "title": "Prevention of Money-Laundering (Appeal) Rules, 2005",
 "type": "Rules",
@@ -3378,6 +4608,12 @@
 "fembalr_2018.html": {
 "amendments_recorded": 14,
 "chunks": 53,
+"history": {
+"2624": {
+"chunk": 41,
+"offset": 339
+}
+},
 "last_amended": "2026-02-09",
 "title": "FOREIGN EXCHANGE MANAGEMENT (BORROWING AND LENDING) REGULATIONS, 2018",
 "type": "Regulations",
@@ -3386,6 +4622,12 @@
 "femdir_2019.htm": {
 "amendments_recorded": 14,
 "chunks": 22,
+"history": {
+"2660": {
+"chunk": 19,
+"offset": 663
+}
+},
 "last_amended": "2025-09-29",
 "title": "FOREIGN EXCHANGE MANAGEMENT (DEBT INSTRUMENTS) REGULATIONS, 2019",
 "type": "Regulations",
@@ -3394,6 +4636,12 @@
 "femdr_2016.htm": {
 "amendments_recorded": 32,
 "chunks": 54,
+"history": {
+"1433": {
+"chunk": 43,
+"offset": 987
+}
+},
 "last_amended": "2025-01-14",
 "title": "Foreign Exchange Management (Deposit) Regulations, 2016",
 "type": "Regulations",
@@ -3403,6 +4651,7 @@
 "amendments_recorded": 10,
 "chunks": 12,
 "last_amended": "2026-02-23",
+"operative_prior_wording": 4,
 "title": "Foreign Exchange Management (Export and Import of Currency) Regulations, 2015",
 "type": "Regulations",
 "year": 2015
@@ -3410,6 +4659,12 @@
 "femegsr_2015.htm": {
 "amendments_recorded": 27,
 "chunks": 25,
+"history": {
+"1417": {
+"chunk": 21,
+"offset": 871
+}
+},
 "last_amended": "2026-06-05",
 "title": "Foreign Exchange Management (Export of Goods and Services) Regulations, 2015",
 "type": "Regulations",
@@ -3434,6 +4689,12 @@
 "femmfdcr_2020.html": {
 "amendments_recorded": 4,
 "chunks": 6,
+"history": {
+"2810": {
+"chunk": 4,
+"offset": 441
+}
+},
 "last_amended": "2024-04-30",
 "title": "FOREIGN EXCHANGE MANAGEMENT (MARGIN FOR DERIVATIVE CONTRACTS) REGULATIONS, 2020",
 "type": "Regulations",
@@ -3442,6 +4703,12 @@
 "femmorapr_2016.htm": {
 "amendments_recorded": 9,
 "chunks": 13,
+"history": {
+"1437": {
+"chunk": 10,
+"offset": 507
+}
+},
 "last_amended": "2020-03-04",
 "title": "Foreign Exchange Management (Manner of Receipt and Payment) Regulations, 2016",
 "type": "Regulations",
@@ -3450,6 +4717,12 @@
 "femmprndir_2019.htm": {
 "amendments_recorded": 10,
 "chunks": 22,
+"history": {
+"2662": {
+"chunk": 14,
+"offset": 444
+}
+},
 "last_amended": "2026-06-13",
 "title": "FOREIGN EXCHANGE MANAGEMENT (MODE OF PAYMENT AND REPORTING OF NON-DEBT INSTRUMENTS) REGULATIONS, 2019",
 "type": "Regulations",
@@ -3458,6 +4731,12 @@
 "femmrpr_2023.htm": {
 "amendments_recorded": 2,
 "chunks": 4,
+"history": {
+"2788": {
+"chunk": 2,
+"offset": 677
+}
+},
 "last_amended": "2025-02-04",
 "title": "FOREIGN EXCHANGE MANAGEMENT (MANNER OF RECEIPT AND PAYMENT) REGULATIONS, 2023",
 "type": "Regulations",
@@ -3466,6 +4745,12 @@
 "femndir_2019.htm": {
 "amendments_recorded": 120,
 "chunks": 211,
+"history": {
+"2658": {
+"chunk": 181,
+"offset": 1342
+}
+},
 "last_amended": "2026-06-12",
 "title": "FOREIGN EXCHANGE MANAGEMENT (NON-DEBT INSTRUMENTS) RULES, 2019",
 "type": "Rules",
@@ -3498,6 +4783,12 @@
 "femr_2000.htm": {
 "amendments_recorded": 25,
 "chunks": 45,
+"history": {
+"1401": {
+"chunk": 39,
+"offset": 681
+}
+},
 "last_amended": "2013-09-26",
 "title": "FOREIGN EXCHANGE MANAGEMENT (BORROWING OR LENDING IN FOREIGN EXCHANGE) REGULATIONS, 2000",
 "type": "Regulations",
@@ -3507,6 +4798,7 @@
 "amendments_recorded": 117,
 "chunks": 160,
 "last_amended": "2017-11-14",
+"operative_prior_wording": 74,
 "title": "FOREIGN EXCHANGE MANAGEMENT (TRANSFER OR ISSUE OF ANY FOREIGN SECURITY) REGULATIONS, 2004",
 "type": "Regulations",
 "year": 2004
@@ -3515,6 +4807,7 @@
 "amendments_recorded": 23,
 "chunks": 37,
 "last_amended": "2025-10-06",
+"operative_prior_wording": 12,
 "title": "Foreign Exchange Management (Foreign Currency Accounts by a person resident in India) Regulations, 2015",
 "type": "Regulations",
 "year": 2015
@@ -3522,6 +4815,12 @@
 "femr_2016.htm": {
 "amendments_recorded": 6,
 "chunks": 22,
+"history": {
+"1431": {
+"chunk": 20,
+"offset": 1382
+}
+},
 "last_amended": "2019-01-21",
 "title": "Foreign Exchange Management (Establishment in India of a branch office or a liaison office or a project office or any other place of business) Regulations, 2016",
 "type": "Regulations",
@@ -3530,6 +4829,12 @@
 "femr_2018.htm": {
 "amendments_recorded": 18,
 "chunks": 12,
+"history": {
+"1568": {
+"chunk": 9,
+"offset": 1352
+}
+},
 "last_amended": "2026-05-29",
 "title": "Foreign Exchange Management (Cross Border Merger) Regulations, 2018",
 "type": "Regulations",
@@ -3562,6 +4867,12 @@
 "femtisproir_2017.htm": {
 "amendments_recorded": 46,
 "chunks": 157,
+"history": {
+"1554": {
+"chunk": 147,
+"offset": 767
+}
+},
 "last_amended": "2019-04-18",
 "title": "Foreign Exchange Management (Transfer or Issue of Security by a Person Resident Outside India) Regulations, 2017",
 "type": "Regulations",
@@ -3570,6 +4881,12 @@
 "fpir_2014.htm": {
 "amendments_recorded": 50,
 "chunks": 88,
+"history": {
+"1306": {
+"chunk": 80,
+"offset": 865
+}
+},
 "last_amended": "2018-12-31",
 "title": "Securities and Exchange Board of India (Foreign Portfolio Investors) Regulations, 2014",
 "type": "Regulations",
@@ -3578,6 +4895,12 @@
 "fra_2012.htm": {
 "amendments_recorded": 6,
 "chunks": 39,
+"history": {
+"304": {
+"chunk": 35,
+"offset": 288
+}
+},
 "last_amended": "2021-08-23",
 "title": "Factoring Regulation Act, 2011",
 "type": "Act",
@@ -3602,6 +4925,12 @@
 "ftach1_1992.htm": {
 "amendments_recorded": 0,
 "chunks": 7,
+"history": {
+"691": {
+"chunk": 6,
+"offset": 563
+}
+},
 "last_amended": null,
 "title": "Foreign Trade (Development and Regulation) Act 1992",
 "type": "Act",
@@ -3611,6 +4940,7 @@
 "amendments_recorded": 0,
 "chunks": 4,
 "last_amended": null,
+"operative_prior_wording": 2,
 "title": "Foreign Trade (Development and Regulation) Act 1992",
 "type": "Act",
 "year": 1992
@@ -3619,6 +4949,7 @@
 "amendments_recorded": 0,
 "chunks": 12,
 "last_amended": null,
+"operative_prior_wording": 4,
 "title": "Foreign Trade (Development and Regulation) Act 1992",
 "type": "Act",
 "year": 1992
@@ -3627,6 +4958,7 @@
 "amendments_recorded": 0,
 "chunks": 17,
 "last_amended": null,
+"operative_prior_wording": 4,
 "title": "Foreign Trade (Development and Regulation) Act 1992",
 "type": "Act",
 "year": 1992
@@ -3635,6 +4967,7 @@
 "amendments_recorded": 0,
 "chunks": 7,
 "last_amended": null,
+"operative_prior_wording": 2,
 "title": "Foreign Trade (Development and Regulation) Act 1992",
 "type": "Act",
 "year": 1992
@@ -3643,6 +4976,7 @@
 "amendments_recorded": 0,
 "chunks": 8,
 "last_amended": null,
+"operative_prior_wording": 6,
 "title": "Foreign Trade (Development and Regulation) Act 1992",
 "type": "Act",
 "year": 1992
@@ -3674,6 +5008,12 @@
 "gcch3_1897.htm": {
 "amendments_recorded": 0,
 "chunks": 6,
+"history": {
+"702": {
+"chunk": 0,
+"offset": 675
+}
+},
 "last_amended": null,
 "title": "General Clauses Act 1897",
 "type": "Act",
@@ -3682,6 +5022,12 @@
 "gcch4_1897.htm": {
 "amendments_recorded": 0,
 "chunks": 3,
+"history": {
+"703": {
+"chunk": 0,
+"offset": 511
+}
+},
 "last_amended": null,
 "title": "General Clauses Act 1897",
 "type": "Act",
@@ -3690,6 +5036,12 @@
 "gcch5_1897.htm": {
 "amendments_recorded": 0,
 "chunks": 6,
+"history": {
+"704": {
+"chunk": 0,
+"offset": 617
+}
+},
 "last_amended": null,
 "title": "General Clauses Act 1897",
 "type": "Act",
@@ -3698,6 +5050,12 @@
 "gcch6_1897.htm": {
 "amendments_recorded": 0,
 "chunks": 4,
+"history": {
+"705": {
+"chunk": 1,
+"offset": 602
+}
+},
 "last_amended": null,
 "title": "General Clauses Act 1897",
 "type": "Act",
@@ -3755,6 +5113,7 @@
 "amendments_recorded": 24,
 "chunks": 55,
 "last_amended": "2025-01-29",
+"operative_prior_wording": 20,
 "title": "Guidelines for Technical Standards for the performance of core services and other services under the Insolvency and Bankruptcy Board of India (Information Utilities) Regulations, 2017",
 "type": "Guidelines",
 "year": 2017
@@ -3771,6 +5130,7 @@
 "amendments_recorded": 88,
 "chunks": 71,
 "last_amended": "2026-06-01",
+"operative_prior_wording": 42,
 "title": "Insolvency and Bankruptcy Board of India (Information Utilities) Regulations, 2017",
 "type": "Regulations",
 "year": 2017
@@ -3778,6 +5138,12 @@
 "iabc_2016.htm": {
 "amendments_recorded": 244,
 "chunks": 502,
+"history": {
+"1472": {
+"chunk": 440,
+"offset": 136
+}
+},
 "last_amended": "2026-05-26",
 "title": "Insolvency and Bankruptcy Code, 2016",
 "type": "Act",
@@ -3786,6 +5152,12 @@
 "iap1_1938.htm": {
 "amendments_recorded": 19,
 "chunks": 17,
+"history": {
+"711": {
+"chunk": 13,
+"offset": 730
+}
+},
 "last_amended": "1964-03-20",
 "title": "Insurance Act 1938",
 "type": "Act",
@@ -3794,6 +5166,12 @@
 "iap2_1938.htm": {
 "amendments_recorded": 199,
 "chunks": 322,
+"history": {
+"715": {
+"chunk": 18,
+"offset": 819
+}
+},
 "last_amended": "1984-03-15",
 "title": "Insurance Act 1938",
 "type": "Act",
@@ -3802,6 +5180,12 @@
 "iap2a_1938.htm": {
 "amendments_recorded": 8,
 "chunks": 19,
+"history": {
+"712": {
+"chunk": 5,
+"offset": 1339
+}
+},
 "last_amended": "1969-06-01",
 "title": "Insurance Act 1938",
 "type": "Act",
@@ -3810,6 +5194,12 @@
 "iap2b_1938.htm": {
 "amendments_recorded": 3,
 "chunks": 35,
+"history": {
+"713": {
+"chunk": 1,
+"offset": 942
+}
+},
 "last_amended": "1984-03-15",
 "title": "Insurance Act 1938",
 "type": "Act",
@@ -3818,6 +5208,12 @@
 "iap2c_1938.htm": {
 "amendments_recorded": 2,
 "chunks": 19,
+"history": {
+"714": {
+"chunk": 3,
+"offset": 1259
+}
+},
 "last_amended": "1969-06-01",
 "title": "Insurance Act 1938",
 "type": "Act",
@@ -3826,6 +5222,12 @@
 "iap3_1938.htm": {
 "amendments_recorded": 48,
 "chunks": 70,
+"history": {
+"716": {
+"chunk": 3,
+"offset": 825
+}
+},
 "last_amended": "1956-11-01",
 "title": "Insurance Act 1938",
 "type": "Act",
@@ -3834,6 +5236,12 @@
 "iap4_1938.htm": {
 "amendments_recorded": 6,
 "chunks": 7,
+"history": {
+"718": {
+"chunk": 2,
+"offset": 774
+}
+},
 "last_amended": "1969-06-01",
 "title": "Insurance Act 1938",
 "type": "Act",
@@ -3842,7 +5250,14 @@
 "iap4a_1938.htm": {
 "amendments_recorded": 2,
 "chunks": 5,
+"history": {
+"717": {
+"chunk": 3,
+"offset": 618
+}
+},
 "last_amended": "1969-06-01",
+"operative_prior_wording": 2,
 "title": "Insurance Act 1938",
 "type": "Act",
 "year": 1938
@@ -3851,6 +5266,7 @@
 "amendments_recorded": 16,
 "chunks": 123,
 "last_amended": "1984-03-15",
+"operative_prior_wording": 4,
 "title": "Insurance Act 1938",
 "type": "Act",
 "year": 1938
@@ -3874,6 +5290,12 @@
 "ibaaar_2016.htm": {
 "amendments_recorded": 22,
 "chunks": 35,
+"history": {
+"1492": {
+"chunk": 30,
+"offset": 1238
+}
+},
 "last_amended": "2020-09-24",
 "title": "Insolvency and Bankruptcy (Application to Adjudicating Authority) Rules, 2016",
 "type": "Rules",
@@ -3891,6 +5313,7 @@
 "amendments_recorded": 1,
 "chunks": 5,
 "last_amended": "2020-09-10",
+"operative_prior_wording": 2,
 "title": "Insolvency and Bankruptcy Board of India (Annual Report) Rules, 2018",
 "type": "Rules",
 "year": 2018
@@ -3907,6 +5330,7 @@
 "amendments_recorded": 4,
 "chunks": 72,
 "last_amended": "2022-07-06",
+"operative_prior_wording": 2,
 "title": "Insolvency and Bankruptcy Board of India (Employees’ Service) Regulations, 2017",
 "type": "Regulations",
 "year": 2017
@@ -3922,6 +5346,12 @@
 "ibbiftirpcpr_2017.htm": {
 "amendments_recorded": 40,
 "chunks": 72,
+"history": {
+"1540": {
+"chunk": 62,
+"offset": 179
+}
+},
 "last_amended": "2018-02-07",
 "title": "Insolvency and Bankruptcy Board of India (Fast Track Insolvency Resolution Process for Corporate Persons) Regulations, 2017",
 "type": "Regulations",
@@ -3930,6 +5360,12 @@
 "ibbigchpr_2017.htm": {
 "amendments_recorded": 18,
 "chunks": 16,
+"history": {
+"1558": {
+"chunk": 10,
+"offset": 167
+}
+},
 "last_amended": "2026-06-01",
 "title": "Insolvency and Bankruptcy Board of India (Grievance and Complaint Handling Procedure) Regulations, 2017",
 "type": "Regulations",
@@ -3939,6 +5375,7 @@
 "amendments_recorded": 42,
 "chunks": 27,
 "last_amended": "2026-06-01",
+"operative_prior_wording": 14,
 "title": "Insolvency and Bankruptcy Board of India (Inspection and Investigation) Regulations, 2017",
 "type": "Regulations",
 "year": 2017
@@ -3946,6 +5383,12 @@
 "ibbiior_2016.htm": {
 "amendments_recorded": 122,
 "chunks": 99,
+"history": {
+"1488": {
+"chunk": 81,
+"offset": 891
+}
+},
 "last_amended": "2025-11-20",
 "title": "Insolvency and Bankruptcy Board of India (Insolvency Professionals) Regulations, 2016",
 "type": "Regulations",
@@ -3954,6 +5397,12 @@
 "ibbiirpcpr_2016.htm": {
 "amendments_recorded": 408,
 "chunks": 276,
+"history": {
+"1494": {
+"chunk": 147,
+"offset": 682
+}
+},
 "last_amended": "2026-06-08",
 "title": "Insolvency and Bankruptcy Board of India (Insolvency Resolution Process for Corporate Persons) Regulations, 2016",
 "type": "Regulations",
@@ -3962,6 +5411,12 @@
 "ibbilpr_2016.htm": {
 "amendments_recorded": 182,
 "chunks": 153,
+"history": {
+"1498": {
+"chunk": 124,
+"offset": 337
+}
+},
 "last_amended": "2026-05-19",
 "title": "Insolvency and Bankruptcy Board of India (Liquidation Process) Regulations, 2016",
 "type": "Regulations",
@@ -3979,6 +5434,7 @@
 "amendments_recorded": 0,
 "chunks": 17,
 "last_amended": null,
+"operative_prior_wording": 1,
 "title": "Insolvency and Bankruptcy Board of India (Procedure for Governing Board Meetings) Regulations, 2017",
 "type": "Regulations",
 "year": 2017
@@ -3986,6 +5442,12 @@
 "ibbipirpr_2021.htm": {
 "amendments_recorded": 76,
 "chunks": 110,
+"history": {
+"2726": {
+"chunk": 53,
+"offset": 708
+}
+},
 "last_amended": "2026-06-01",
 "title": "INSOLVENCY AND BANKRUPTCY BOARD OF INDIA (PRE-PACKAGED INSOLVENCY RESOLUTION PROCESS) REGULATIONS, 2021",
 "type": "Regulations",
@@ -3995,6 +5457,7 @@
 "amendments_recorded": 24,
 "chunks": 13,
 "last_amended": "2024-09-10",
+"operative_prior_wording": 16,
 "title": "Insolvency and Bankruptcy Board of India (Salary, Allowances and other Terms and Conditions of Service of Chairperson and members) Rules, 2016",
 "type": "Rules",
 "year": 2016
@@ -4002,6 +5465,12 @@
 "ibbir_2017.htm": {
 "amendments_recorded": 6,
 "chunks": 9,
+"history": {
+"1510": {
+"chunk": 7,
+"offset": 998
+}
+},
 "last_amended": "2022-06-01",
 "title": "Insolvency and Bankruptcy Board of India (Engagement of Research Associates and Consultants) Regulations, 2017",
 "type": "Regulations",
@@ -4018,6 +5487,12 @@
 "ibbivlpr_2017.htm": {
 "amendments_recorded": 101,
 "chunks": 106,
+"history": {
+"1528": {
+"chunk": 50,
+"offset": 476
+}
+},
 "last_amended": "2026-06-01",
 "title": "Insolvency and Bankruptcy Board of India (Voluntary Liquidation Process) Regulations, 2017",
 "type": "Regulations",
@@ -4082,6 +5557,12 @@
 "icch6_1872.htm": {
 "amendments_recorded": 0,
 "chunks": 12,
+"history": {
+"731": {
+"chunk": 10,
+"offset": 1271
+}
+},
 "last_amended": null,
 "title": "Indian Contract Act 1872",
 "type": "Act",
@@ -4139,6 +5620,7 @@
 "amendments_recorded": 46,
 "chunks": 23,
 "last_amended": "2010-08-18",
+"operative_prior_wording": 2,
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
 "year": 1947
@@ -4146,6 +5628,12 @@
 "idch2_1947.htm": {
 "amendments_recorded": 15,
 "chunks": 12,
+"history": {
+"740": {
+"chunk": 5,
+"offset": 1148
+}
+},
 "last_amended": "2021-08-13",
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
@@ -4154,6 +5642,12 @@
 "idch2a_1947.htm": {
 "amendments_recorded": 3,
 "chunks": 4,
+"history": {
+"739": {
+"chunk": 0,
+"offset": 1203
+}
+},
 "last_amended": "2010-08-18",
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
@@ -4162,6 +5656,12 @@
 "idch3_1947.htm": {
 "amendments_recorded": 16,
 "chunks": 15,
+"history": {
+"741": {
+"chunk": 10,
+"offset": 1236
+}
+},
 "last_amended": "1984-08-21",
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
@@ -4170,6 +5670,12 @@
 "idch4_1947.htm": {
 "amendments_recorded": 39,
 "chunks": 24,
+"history": {
+"742": {
+"chunk": 4,
+"offset": 570
+}
+},
 "last_amended": "2010-08-18",
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
@@ -4178,6 +5684,12 @@
 "idch5_1947.htm": {
 "amendments_recorded": 5,
 "chunks": 5,
+"history": {
+"746": {
+"chunk": 3,
+"offset": 850
+}
+},
 "last_amended": "1964-12-19",
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
@@ -4186,6 +5698,12 @@
 "idch5a_1947.htm": {
 "amendments_recorded": 16,
 "chunks": 16,
+"history": {
+"743": {
+"chunk": 5,
+"offset": 341
+}
+},
 "last_amended": "1984-08-18",
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
@@ -4194,6 +5712,12 @@
 "idch5b_1947.htm": {
 "amendments_recorded": 10,
 "chunks": 17,
+"history": {
+"744": {
+"chunk": 6,
+"offset": 768
+}
+},
 "last_amended": "1984-08-31",
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
@@ -4210,6 +5734,12 @@
 "idch6_1947.htm": {
 "amendments_recorded": 3,
 "chunks": 4,
+"history": {
+"752": {
+"chunk": 2,
+"offset": 693
+}
+},
 "last_amended": "1972-06-14",
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
@@ -4219,6 +5749,7 @@
 "amendments_recorded": 21,
 "chunks": 28,
 "last_amended": "2017-06-20",
+"operative_prior_wording": 2,
 "title": "Industrial Disputes Act 1947",
 "type": "Act",
 "year": 1947
@@ -4234,6 +5765,12 @@
 "idr_1951.htm": {
 "amendments_recorded": 6,
 "chunks": 106,
+"history": {
+"755": {
+"chunk": 105,
+"offset": 206
+}
+},
 "last_amended": "2016-05-14",
 "title": "Industries (Development and Regulation) Act, 1951",
 "type": "Act",
@@ -4242,6 +5779,12 @@
 "iepafasar_2018.htm": {
 "amendments_recorded": 2,
 "chunks": 21,
+"history": {
+"2600": {
+"chunk": 20,
+"offset": 1082
+}
+},
 "last_amended": "2024-10-03",
 "title": "INVESTOR EDUCATION AND PROTECTION FUND AUTHORITY (FORM OF ANNUAL STATEMENT OF ACCOUNTS) RULES, 2018",
 "type": "Rules",
@@ -4250,6 +5793,12 @@
 "iepf_2012.htm": {
 "amendments_recorded": 4,
 "chunks": 5,
+"history": {
+"18": {
+"chunk": 4,
+"offset": 577
+}
+},
 "last_amended": "2014-03-31",
 "title": "Investor Education and Protection Fund (Uploading of information regarding unpaid and unclaimed amounts lying with companies) Rules, 2012",
 "type": "Rules",
@@ -4258,6 +5807,12 @@
 "iepfaaatrr_2016.htm": {
 "amendments_recorded": 155,
 "chunks": 90,
+"history": {
+"1466": {
+"chunk": 54,
+"offset": 982
+}
+},
 "last_amended": "2025-10-06",
 "title": "Investor Education and Protection Fund Authority (Accounting, Audit, Transfer and Refund) Rules, 2016",
 "type": "Rules",
@@ -4266,6 +5821,12 @@
 "iepfar_2016.htm": {
 "amendments_recorded": 2,
 "chunks": 11,
+"history": {
+"1391": {
+"chunk": 10,
+"offset": 1067
+}
+},
 "last_amended": "2016-09-05",
 "title": "Investor Education and Protection Fund Authority (Appointment of Chairperson and Members, holding of meetings and provision for offices and officers) Rules, 2016",
 "type": "Rules",
@@ -4282,6 +5843,12 @@
 "iepfarsotcsgmagmr_2017.htm": {
 "amendments_recorded": 6,
 "chunks": 8,
+"history": {
+"1507": {
+"chunk": 6,
+"offset": 813
+}
+},
 "last_amended": "2019-09-30",
 "title": "Investor Education and Protection Fund Authority (Recruitment, Salary and other Terms and Conditions of Service of General Manager and Assistant General Manager) Rules, 2017",
 "type": "Rules",
@@ -4290,6 +5857,12 @@
 "ifscaa_2020.htm": {
 "amendments_recorded": 2,
 "chunks": 47,
+"history": {
+"2688": {
+"chunk": 46,
+"offset": 676
+}
+},
 "last_amended": "2021-10-14",
 "title": "INTERNATIONAL FINANCIAL SERVICES CENTRES AUTHORITY ACT, 2019",
 "type": "Act",
@@ -4306,6 +5879,12 @@
 "ifscabr_2020.htm": {
 "amendments_recorded": 63,
 "chunks": 38,
+"history": {
+"2704": {
+"chunk": 18,
+"offset": 358
+}
+},
 "last_amended": "2024-07-04",
 "title": "INTERNATIONAL FINANCIAL SERVICES CENTRES AUTHORITY (BANKING) REGULATIONS, 2020",
 "type": "Regulations",
@@ -4322,6 +5901,12 @@
 "ifscafcr_2021.htm": {
 "amendments_recorded": 16,
 "chunks": 28,
+"history": {
+"2722": {
+"chunk": 22,
+"offset": 1104
+}
+},
 "last_amended": "2026-05-05",
 "title": "INTERNATIONAL FINANCIAL SERVICES CENTRES AUTHORITY (FINANCE COMPANY) REGULATIONS, 2021",
 "type": "Regulations",
@@ -4330,6 +5915,12 @@
 "ifscafmr_2025.html": {
 "amendments_recorded": 12,
 "chunks": 180,
+"history": {
+"2845": {
+"chunk": 176,
+"offset": 556
+}
+},
 "last_amended": "2026-01-27",
 "title": "International Financial Services Centres Authority (Fund Management) Regulations, 2025",
 "type": "Regulations",
@@ -4346,6 +5937,12 @@
 "ifscalr_2024.html": {
 "amendments_recorded": 12,
 "chunks": 92,
+"history": {
+"2831": {
+"chunk": 90,
+"offset": 336
+}
+},
 "last_amended": "2025-10-13",
 "title": "International Financial Services Centres Authority (Listing) Regulations, 2024",
 "type": "Regulations",
@@ -4354,6 +5951,12 @@
 "ifscamiir_2021.htm": {
 "amendments_recorded": 78,
 "chunks": 90,
+"history": {
+"2730": {
+"chunk": 78,
+"offset": 611
+}
+},
 "last_amended": "2024-10-29",
 "title": "INTERNATIONAL FINANCIAL SERVICES CENTRES AUTHORITY (MARKET INFRASTRUCTURE INSTITUTIONS) REGULATIONS, 2021",
 "type": "Regulations",
@@ -4363,6 +5966,7 @@
 "amendments_recorded": 2,
 "chunks": 53,
 "last_amended": "2024-04-02",
+"operative_prior_wording": 2,
 "title": "INTERNATIONAL FINANCIAL SERVICES CENTRES AUTHORITY (PAYMENT SERVICES) REGULATIONS, 2024",
 "type": "Regulations",
 "year": 2024
@@ -4370,6 +5974,12 @@
 "ifscar_2020.htm": {
 "amendments_recorded": 6,
 "chunks": 11,
+"history": {
+"2702": {
+"chunk": 9,
+"offset": 1326
+}
+},
 "last_amended": "2024-08-20",
 "title": "INTERNATIONAL FINANCIAL SERVICES CENTRES AUTHORITY (PROCEDURE FOR AUTHORITY MEETINGS) REGULATIONS, 2020",
 "type": "Regulations",
@@ -4378,6 +5988,12 @@
 "ifscar_2021.htm": {
 "amendments_recorded": 23,
 "chunks": 40,
+"history": {
+"2744": {
+"chunk": 31,
+"offset": 342
+}
+},
 "last_amended": "2021-07-22",
 "title": "INTERNATIONAL FINANCIAL SERVICES CENTRES AUTHORITY (ISSUANCE AND LISTING OF SECURITIES) REGULATIONS, 2021",
 "type": "Regulations",
@@ -4387,6 +6003,7 @@
 "amendments_recorded": 24,
 "chunks": 15,
 "last_amended": "2025-02-04",
+"operative_prior_wording": 1,
 "title": "International Financial Services Centres Authority (Registration of Factors and Registration of Assignment of Receivables) Regulations, 2024",
 "type": "Regulations",
 "year": 2024
@@ -4394,6 +6011,12 @@
 "iicfir_2014.htm": {
 "amendments_recorded": 8,
 "chunks": 10,
+"history": {
+"97": {
+"chunk": 8,
+"offset": 417
+}
+},
 "last_amended": "2019-09-02",
 "title": "Indian Insurance Companies (Foreign Investment) Rules, 2015",
 "type": "Rules",
@@ -4402,6 +6025,12 @@
 "ilncrpsr_2013.htm": {
 "amendments_recorded": 19,
 "chunks": 47,
+"history": {
+"221": {
+"chunk": 43,
+"offset": 457
+}
+},
 "last_amended": "2021-08-03",
 "title": "Securities and Exchange Board of India (Issue and Listing of Non-Convertible Redeemable Preference Shares) Regulations, 2013",
 "type": "Regulations",
@@ -4458,6 +6087,12 @@
 "ior_2017.htm": {
 "amendments_recorded": 4,
 "chunks": 20,
+"history": {
+"1530": {
+"chunk": 19,
+"offset": 232
+}
+},
 "last_amended": "2018-08-17",
 "title": "Insurance Ombudsman Rules, 2017",
 "type": "Rules",
@@ -4467,6 +6102,7 @@
 "amendments_recorded": 8,
 "chunks": 21,
 "last_amended": "2022-07-04",
+"operative_prior_wording": 3,
 "title": "Insolvency and Bankruptcy Board of India (Insolvency Professional Agencies) Regulations, 2016",
 "type": "Regulations",
 "year": 2016
@@ -4658,6 +6294,12 @@
 "irada_2015.htm": {
 "amendments_recorded": 18,
 "chunks": 46,
+"history": {
+"1369": {
+"chunk": 41,
+"offset": 1343
+}
+},
 "last_amended": "2016-12-02",
 "title": "Insurance Regulatory and Development Authority of India (Registration and Operations of Branch Offices of Foreign Reinsurers other than Lloyd’s) Regulations, 2015",
 "type": "Regulations",
@@ -4714,6 +6356,12 @@
 "irda_hir_2013.htm": {
 "amendments_recorded": 10,
 "chunks": 53,
+"history": {
+"44": {
+"chunk": 50,
+"offset": 1320
+}
+},
 "last_amended": "2014-11-19",
 "title": "Insurance Regulatory and Development Authority (Health Insurance) Regulations, 2013",
 "type": "Regulations",
@@ -4722,6 +6370,12 @@
 "irda_ibr_2002.htm": {
 "amendments_recorded": 14,
 "chunks": 67,
+"history": {
+"775": {
+"chunk": 64,
+"offset": 0
+}
+},
 "last_amended": "2013-02-07",
 "title": "Insurance Regulatory and Development Authority (Insurance Brokers) Regulations, 2002",
 "type": "Regulations",
@@ -4730,6 +6384,12 @@
 "irda_ir_2000.htm": {
 "amendments_recorded": 10,
 "chunks": 58,
+"history": {
+"777": {
+"chunk": 56,
+"offset": 968
+}
+},
 "last_amended": "2013-02-16",
 "title": "Insurance Regulatory and Development Authority (Investment) Regulations, 2000",
 "type": "Regulations",
@@ -4738,6 +6398,12 @@
 "irda_lcar_2002.htm": {
 "amendments_recorded": 16,
 "chunks": 39,
+"history": {
+"779": {
+"chunk": 35,
+"offset": 1233
+}
+},
 "last_amended": "2010-07-01",
 "title": "Insurance Regulatory and Development Authority (Licensing of Corporate Agents) Regulations, 2002",
 "type": "Regulations",
@@ -4746,6 +6412,12 @@
 "irda_liar_2000.htm": {
 "amendments_recorded": 8,
 "chunks": 28,
+"history": {
+"781": {
+"chunk": 26,
+"offset": 742
+}
+},
 "last_amended": "2014-01-22",
 "title": "Insurance Regulatory and Development Authority (Licensing of Insurance Agents) Regulations, 2000",
 "type": "Regulations",
@@ -4794,6 +6466,12 @@
 "irda_riicr_2000.htm": {
 "amendments_recorded": 30,
 "chunks": 77,
+"history": {
+"748": {
+"chunk": 48,
+"offset": 872
+}
+},
 "last_amended": "2016-07-25",
 "title": "Insurance Regulatory and Development Authority (Registration of Indian Insurance Companies) Regulations, 2000",
 "type": "Regulations",
@@ -4810,6 +6488,12 @@
 "irda_tpa_hsr_2001.htm": {
 "amendments_recorded": 18,
 "chunks": 22,
+"history": {
+"797": {
+"chunk": 18,
+"offset": 1151
+}
+},
 "last_amended": "2014-01-22",
 "title": "Insurance Regulatory and Development Authority (Third Party Administrators - Health Services) Regulations, 2001",
 "type": "Regulations",
@@ -4818,6 +6502,12 @@
 "irdaiaar_2017.htm": {
 "amendments_recorded": 2,
 "chunks": 18,
+"history": {
+"1532": {
+"chunk": 17,
+"offset": 1113
+}
+},
 "last_amended": "2019-05-15",
 "title": "Insurance Regulatory and Development Authority of India (Appointed Actuary) Regulations, 2017",
 "type": "Regulations",
@@ -4850,6 +6540,12 @@
 "irdaiioeipr_2016.htm": {
 "amendments_recorded": 2,
 "chunks": 8,
+"history": {
+"1451": {
+"chunk": 6,
+"offset": 1127
+}
+},
 "last_amended": "2016-12-02",
 "title": "Insurance Regulatory and Development Authority of India (Issuance of e-Insurance Policies) Regulations, 2016",
 "type": "Regulations",
@@ -4890,6 +6586,12 @@
 "irdalirr_2013.htm": {
 "amendments_recorded": 2,
 "chunks": 87,
+"history": {
+"880": {
+"chunk": 85,
+"offset": 1137
+}
+},
 "last_amended": "2013-09-30",
 "title": "Insurance Regulatory and Development Authority (Linked Insurance Products) Regulations, 2013",
 "type": "Regulations",
@@ -4899,6 +6601,7 @@
 "amendments_recorded": 2,
 "chunks": 62,
 "last_amended": "2013-09-30",
+"operative_prior_wording": 2,
 "title": "Insurance Regulatory and Development Authority (Non-Linked Insurance Products) Regulations, 2013",
 "type": "Regulations",
 "year": 2013
@@ -4930,6 +6633,12 @@
 "irppgcd_2019.htm": {
 "amendments_recorded": 26,
 "chunks": 35,
+"history": {
+"2672": {
+"chunk": 25,
+"offset": 429
+}
+},
 "last_amended": "2026-06-01",
 "title": "INSOLVENCY AND BANKRUPTCY BOARD OF INDIA (INSOLVENCY RESOLUTION PROCESS FOR PERSONAL GUARANTORS TO CORPORATE DEBTORS) REGULATIONS, 2019",
 "type": "Regulations",
@@ -4938,6 +6647,12 @@
 "isla_lprccr_2000.htm": {
 "amendments_recorded": 26,
 "chunks": 88,
+"history": {
+"808": {
+"chunk": 83,
+"offset": 1289
+}
+},
 "last_amended": "2014-01-22",
 "title": "Insurance Surveyors and Loss Assessors (Licensing, Professional Requirements and Code of Conduct) Regulations, 2000",
 "type": "Regulations",
@@ -4946,6 +6661,12 @@
 "itch10_2000.htm": {
 "amendments_recorded": 13,
 "chunks": 17,
+"history": {
+"812": {
+"chunk": 7,
+"offset": 247
+}
+},
 "last_amended": "2017-05-26",
 "title": "Information Technology Act 2000",
 "type": "Act",
@@ -4954,6 +6675,12 @@
 "itch11_2000.htm": {
 "amendments_recorded": 0,
 "chunks": 28,
+"history": {
+"813": {
+"chunk": 24,
+"offset": 0
+}
+},
 "last_amended": null,
 "title": "Information Technology Act 2000",
 "type": "Act",
@@ -4963,6 +6690,7 @@
 "amendments_recorded": 0,
 "chunks": 4,
 "last_amended": null,
+"operative_prior_wording": 2,
 "title": "Information Technology Act 2000",
 "type": "Act",
 "year": 2000
@@ -4970,6 +6698,12 @@
 "itch13_2000.htm": {
 "amendments_recorded": 6,
 "chunks": 44,
+"history": {
+"815": {
+"chunk": 17,
+"offset": 377
+}
+},
 "last_amended": "2017-05-26",
 "title": "Information Technology Act 2000",
 "type": "Act",
@@ -4978,6 +6712,12 @@
 "itch1_2000.htm": {
 "amendments_recorded": 2,
 "chunks": 12,
+"history": {
+"816": {
+"chunk": 10,
+"offset": 296
+}
+},
 "last_amended": "2017-05-26",
 "title": "Information Technology Act 2000",
 "type": "Act",
@@ -4986,6 +6726,12 @@
 "itch2_2000.htm": {
 "amendments_recorded": 0,
 "chunks": 4,
+"history": {
+"817": {
+"chunk": 3,
+"offset": 489
+}
+},
 "last_amended": null,
 "title": "Information Technology Act 2000",
 "type": "Act",
@@ -4994,6 +6740,12 @@
 "itch3_2000.htm": {
 "amendments_recorded": 0,
 "chunks": 8,
+"history": {
+"818": {
+"chunk": 7,
+"offset": 1061
+}
+},
 "last_amended": null,
 "title": "Information Technology Act 2000",
 "type": "Act",
@@ -5010,6 +6762,12 @@
 "itch5_2000.htm": {
 "amendments_recorded": 0,
 "chunks": 4,
+"history": {
+"820": {
+"chunk": 1,
+"offset": 1198
+}
+},
 "last_amended": null,
 "title": "Information Technology Act 2000",
 "type": "Act",
@@ -5018,6 +6776,12 @@
 "itch6_2000.htm": {
 "amendments_recorded": 3,
 "chunks": 14,
+"history": {
+"821": {
+"chunk": 11,
+"offset": 1367
+}
+},
 "last_amended": "2009-02-05",
 "title": "Information Technology Act 2000",
 "type": "Act",
@@ -5026,6 +6790,12 @@
 "itch7_2000.htm": {
 "amendments_recorded": 0,
 "chunks": 6,
+"history": {
+"822": {
+"chunk": 5,
+"offset": 176
+}
+},
 "last_amended": null,
 "title": "Information Technology Act 2000",
 "type": "Act",
@@ -5090,6 +6860,12 @@
 "lap5_1963.htm": {
 "amendments_recorded": 0,
 "chunks": 26,
+"history": {
+"830": {
+"chunk": 3,
+"offset": 0
+}
+},
 "last_amended": null,
 "title": "Limitation Act 1963",
 "type": "Act",
@@ -5146,6 +6922,12 @@
 "ma_2023.htm": {
 "amendments_recorded": 5,
 "chunks": 66,
+"history": {
+"2784": {
+"chunk": 65,
+"offset": 284
+}
+},
 "last_amended": "2023-10-13",
 "title": "MEDIATION ACT, 2023",
 "type": "Act",
@@ -5154,6 +6936,12 @@
 "mblagboipa_2016.htm": {
 "amendments_recorded": 69,
 "chunks": 53,
+"history": {
+"1484": {
+"chunk": 38,
+"offset": 475
+}
+},
 "last_amended": "2026-05-13",
 "title": "Insolvency and Bankruptcy Board of India (Model Bye-Laws and Governing Board of Insolvency Professional Agencies) Regulations, 2016",
 "type": "Regulations",
@@ -5211,6 +6999,7 @@
 "amendments_recorded": 10,
 "chunks": 3,
 "last_amended": "2026-01-13",
+"operative_prior_wording": 6,
 "title": "NATIONAL FINANCIAL REPORTING AUTHORITY APPOINTMENT OF PART-TIME MEMBERS, RULES, 2022",
 "type": "Rules",
 "year": 2022
@@ -5227,6 +7016,7 @@
 "amendments_recorded": 7,
 "chunks": 72,
 "last_amended": "2023-09-14",
+"operative_prior_wording": 10,
 "title": "Micro, Small and Medium Enterprises Development Act, 2006",
 "type": "Act",
 "year": 2006
@@ -5250,6 +7040,12 @@
 "nclatr-2_2016.htm": {
 "amendments_recorded": 30,
 "chunks": 174,
+"history": {
+"1464": {
+"chunk": 169,
+"offset": 1162
+}
+},
 "last_amended": "2020-02-03",
 "title": "National Company Law Tribunal Rules, 2016",
 "type": "Rules",
@@ -5259,6 +7055,7 @@
 "amendments_recorded": 2,
 "chunks": 50,
 "last_amended": "2017-08-23",
+"operative_prior_wording": 2,
 "title": "National Company Law Appellate Tribunal Rules, 2016",
 "type": "Rules",
 "year": 2016
@@ -5323,6 +7120,7 @@
 "amendments_recorded": 16,
 "chunks": 19,
 "last_amended": "2024-09-18",
+"operative_prior_wording": 9,
 "title": "National Financial Reporting Authority (Manner of Appointment and other Terms and Conditions of Service of Chairperson and Members) Rules, 2018",
 "type": "Rules",
 "year": 2018
@@ -5338,6 +7136,12 @@
 "nfrar_gsr_1111_2018.htm": {
 "amendments_recorded": 5,
 "chunks": 22,
+"history": {
+"2768": {
+"chunk": 21,
+"offset": 359
+}
+},
 "last_amended": "2022-06-17",
 "title": "NATIONAL FINANCIAL REPORTING AUTHORITY RULES, 2018",
 "type": "Rules",
@@ -5378,6 +7182,12 @@
 "nich14_1881.htm": {
 "amendments_recorded": 0,
 "chunks": 5,
+"history": {
+"946": {
+"chunk": 3,
+"offset": 1223
+}
+},
 "last_amended": null,
 "title": "Negotiable Instruments Act 1881",
 "type": "Act",
@@ -5403,6 +7213,7 @@
 "amendments_recorded": 10,
 "chunks": 14,
 "last_amended": "2018-09-01",
+"operative_prior_wording": 2,
 "title": "Negotiable Instruments Act 1881",
 "type": "Act",
 "year": null
@@ -5418,6 +7229,12 @@
 "nich2_1881.htm": {
 "amendments_recorded": 4,
 "chunks": 12,
+"history": {
+"951": {
+"chunk": 3,
+"offset": 1396
+}
+},
 "last_amended": "2015-12-26",
 "title": "Negotiable Instruments Act 1881",
 "type": "Act",
@@ -5442,6 +7259,12 @@
 "nich5_1881.htm": {
 "amendments_recorded": 0,
 "chunks": 9,
+"history": {
+"954": {
+"chunk": 1,
+"offset": 924
+}
+},
 "last_amended": null,
 "title": "Negotiable Instruments Act 1881",
 "type": "Act",
@@ -5450,6 +7273,12 @@
 "nich6_1881.htm": {
 "amendments_recorded": 1,
 "chunks": 4,
+"history": {
+"955": {
+"chunk": 2,
+"offset": 187
+}
+},
 "last_amended": "1988-12-30",
 "title": "Negotiable Instruments Act 1881",
 "type": "Act",
@@ -5458,6 +7287,12 @@
 "nich7_1881.htm": {
 "amendments_recorded": 0,
 "chunks": 8,
+"history": {
+"956": {
+"chunk": 6,
+"offset": 1341
+}
+},
 "last_amended": null,
 "title": "Negotiable Instruments Act 1881",
 "type": "Act",
@@ -5490,6 +7325,12 @@
 "nr_2014.htm": {
 "amendments_recorded": 34,
 "chunks": 41,
+"history": {
+"12": {
+"chunk": 36,
+"offset": 1180
+}
+},
 "last_amended": "2024-07-16",
 "title": "Nidhi Rules, 2014",
 "type": "Rules",
@@ -5506,6 +7347,12 @@
 "odeccpeiparvo_2020.htm": {
 "amendments_recorded": 4,
 "chunks": 7,
+"history": {
+"2696": {
+"chunk": 6,
+"offset": 204
+}
+},
 "last_amended": "2022-09-30",
 "title": "INSOLVENCY AND BANKRUPTCY BOARD OF INDIA (ONLINE DELIVERY OF EDUCATIONAL COURSE AND CONTINUING PROFESSIONAL EDUCATION BY INSOLVENCY PROFESSIONAL AGENCIES AND REGISTERED VALUERS ORGANISATIONS) GUIDELINES, 2020",
 "type": "Guidelines",
@@ -5555,6 +7402,7 @@
 "amendments_recorded": 32,
 "chunks": 38,
 "last_amended": "2018-03-29",
+"operative_prior_wording": 2,
 "title": "Payment of Gratuity Act 1972",
 "type": "Act",
 "year": 1972
@@ -5611,6 +7459,7 @@
 "amendments_recorded": 4,
 "chunks": 10,
 "last_amended": "2021-08-13",
+"operative_prior_wording": 4,
 "title": "Protection of Plant Varieties and Farmers-Rights Act 2001",
 "type": "Act",
 "year": 2001
@@ -5667,6 +7516,7 @@
 "amendments_recorded": 12,
 "chunks": 7,
 "last_amended": "2021-08-13",
+"operative_prior_wording": 5,
 "title": "Protection of Plant Varieties and Farmers-Rights Act 2001",
 "type": "Act",
 "year": 2001
@@ -5682,6 +7532,12 @@
 "pml_2002.htm": {
 "amendments_recorded": 16,
 "chunks": 99,
+"history": {
+"466": {
+"chunk": 93,
+"offset": 750
+}
+},
 "last_amended": "2015-07-01",
 "title": "Prevention of Money Laundering Act, 2002",
 "type": "Act",
@@ -5698,6 +7554,12 @@
 "pml_mrr_2005.htm": {
 "amendments_recorded": 194,
 "chunks": 110,
+"history": {
+"1341": {
+"chunk": 55,
+"offset": 374
+}
+},
 "last_amended": "2024-07-19",
 "title": "The Prevention of Money-Laundering (Maintenance of Records) Rules, 2005",
 "type": "Rules",
@@ -5706,6 +7568,12 @@
 "pmlrcpr_2016.htm": {
 "amendments_recorded": 4,
 "chunks": 5,
+"history": {
+"1474": {
+"chunk": 4,
+"offset": 143
+}
+},
 "last_amended": "2019-01-11",
 "title": "Prevention of Money- laundering (Restoration of Confiscated Property) Rules, 2016",
 "type": "Rules",
@@ -5738,7 +7606,14 @@
 "pwch1_1936.htm": {
 "amendments_recorded": 56,
 "chunks": 63,
+"history": {
+"1025": {
+"chunk": 25,
+"offset": 320
+}
+},
 "last_amended": "2017-02-15",
+"operative_prior_wording": 3,
 "title": "Payment of Wages Act 1936",
 "type": "Act",
 "year": 1936
@@ -5762,6 +7637,12 @@
 "rbich2_1934.htm": {
 "amendments_recorded": 66,
 "chunks": 50,
+"history": {
+"308": {
+"chunk": 1,
+"offset": 543
+}
+},
 "last_amended": "1988-12-30",
 "title": "Reserve Bank of India Act 1934",
 "type": "Act",
@@ -5771,6 +7652,7 @@
 "amendments_recorded": 43,
 "chunks": 44,
 "last_amended": "2025-12-15",
+"operative_prior_wording": 5,
 "title": "Reserve Bank of India Act 1934",
 "type": "Act",
 "year": 1934
@@ -5778,6 +7660,12 @@
 "rbich3a_1934.htm": {
 "amendments_recorded": 0,
 "chunks": 7,
+"history": {
+"1029": {
+"chunk": 2,
+"offset": 608
+}
+},
 "last_amended": null,
 "title": "Reserve Bank of India Act 1934",
 "type": "Act",
@@ -5786,6 +7674,12 @@
 "rbich3b_1934.htm": {
 "amendments_recorded": 18,
 "chunks": 42,
+"history": {
+"1030": {
+"chunk": 0,
+"offset": 852
+}
+},
 "last_amended": "1997-01-09",
 "title": "Reserve Bank of India Act 1934",
 "type": "Act",
@@ -5794,6 +7688,12 @@
 "rbich3c_1934.htm": {
 "amendments_recorded": 3,
 "chunks": 12,
+"history": {
+"1031": {
+"chunk": 11,
+"offset": 476
+}
+},
 "last_amended": "2010-06-18",
 "title": "Reserve Bank of India Act 1934",
 "type": "Act",
@@ -5810,6 +7710,12 @@
 "rbich5_1934.htm": {
 "amendments_recorded": 22,
 "chunks": 26,
+"history": {
+"1034": {
+"chunk": 5,
+"offset": 541
+}
+},
 "last_amended": "2017-07-24",
 "title": "Reserve Bank of India Act 1934",
 "type": "Act",
@@ -5826,6 +7732,12 @@
 "rddbch1_1993.htm": {
 "amendments_recorded": 6,
 "chunks": 8,
+"history": {
+"1041": {
+"chunk": 6,
+"offset": 1088
+}
+},
 "last_amended": "2016-09-01",
 "title": "Recovery of Debts Due to Banks and Financial Institutions Act 1993",
 "type": "Act",
@@ -5834,6 +7746,12 @@
 "rddbch2_1993.htm": {
 "amendments_recorded": 9,
 "chunks": 13,
+"history": {
+"1042": {
+"chunk": 2,
+"offset": 583
+}
+},
 "last_amended": "2017-05-26",
 "title": "Recovery of Debts Due to Banks and Financial Institutions Act 1993",
 "type": "Act",
@@ -5842,6 +7760,12 @@
 "rddbch3_1993.htm": {
 "amendments_recorded": 3,
 "chunks": 5,
+"history": {
+"1043": {
+"chunk": 4,
+"offset": 425
+}
+},
 "last_amended": "2016-09-01",
 "title": "Recovery of Debts Due to Banks and Financial Institutions Act 1993",
 "type": "Act",
@@ -5850,7 +7774,14 @@
 "rddbch4_1993.htm": {
 "amendments_recorded": 26,
 "chunks": 37,
+"history": {
+"1044": {
+"chunk": 30,
+"offset": 1075
+}
+},
 "last_amended": "2016-09-01",
+"operative_prior_wording": 13,
 "title": "Recovery of Debts Due to Banks and Financial Institutions Act 1993",
 "type": "Act",
 "year": 1993
@@ -5859,6 +7790,7 @@
 "amendments_recorded": 3,
 "chunks": 12,
 "last_amended": "2016-09-01",
+"operative_prior_wording": 1,
 "title": "Recovery of Debts Due to Banks and Financial Institutions Act 1993",
 "type": "Act",
 "year": 1993
@@ -5874,6 +7806,12 @@
 "rddpre_1993.htm": {
 "amendments_recorded": 0,
 "chunks": 1,
+"history": {
+"1048": {
+"chunk": 0,
+"offset": 497
+}
+},
 "last_amended": null,
 "title": "Recovery of Debts Due to Banks and Financial Institutions Act 1993",
 "type": "Act",
@@ -5898,6 +7836,12 @@
 "reg81_01.htm": {
 "amendments_recorded": 12,
 "chunks": 13,
+"history": {
+"1055": {
+"chunk": 9,
+"offset": 1364
+}
+},
 "last_amended": "2025-07-14",
 "title": "SEBI (Certification of Associated Persons In the Securities Markets) Regulations, 2007",
 "type": "Regulations",
@@ -5907,6 +7851,7 @@
 "amendments_recorded": 20,
 "chunks": 69,
 "last_amended": "2019-10-24",
+"operative_prior_wording": 4,
 "title": "Right to Information Act, 2005",
 "type": "Act",
 "year": 2005
@@ -5938,6 +7883,12 @@
 "sacpr_2014.htm": {
 "amendments_recorded": 28,
 "chunks": 83,
+"history": {
+"786": {
+"chunk": 76,
+"offset": 631
+}
+},
 "last_amended": "2017-12-27",
 "title": "Securities and Exchange Board of India (Settlement of Administrative and Civil Proceedings) Regulations, 2014",
 "type": "Regulations",
@@ -5954,6 +7905,12 @@
 "saeboibbosr_2018.htm": {
 "amendments_recorded": 123,
 "chunks": 81,
+"history": {
+"2612": {
+"chunk": 63,
+"offset": 0
+}
+},
 "last_amended": "2024-11-28",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (BUY-BACK OF SECURITIES) REGULATIONS, 2018",
 "type": "Regulations",
@@ -5962,6 +7919,12 @@
 "saeboiialodsbmr_2015.htm": {
 "amendments_recorded": 78,
 "chunks": 106,
+"history": {
+"143": {
+"chunk": 67,
+"offset": 116
+}
+},
 "last_amended": "2023-08-16",
 "title": "Securities and Exchange Board of India (Issue and Listing of Debt Securities by Municipalities) Regulations, 2015",
 "type": "Regulations",
@@ -5971,6 +7934,7 @@
 "amendments_recorded": 20,
 "chunks": 32,
 "last_amended": "2020-08-21",
+"operative_prior_wording": 26,
 "title": "Securities and Exchange Board of India (International Financial Services Centres) Guidelines, 2015",
 "type": "Guidelines",
 "year": 2015
@@ -5986,6 +7950,12 @@
 "saeboiloadrr_2015.htm": {
 "amendments_recorded": 1064,
 "chunks": 600,
+"history": {
+"1365": {
+"chunk": 412,
+"offset": 500
+}
+},
 "last_amended": "2026-01-20",
 "title": "Securities and Exchange Board of India (Listing Obligations and Disclosure Requirements) Regulations, 2015",
 "type": "Regulations",
@@ -6002,6 +7972,12 @@
 "saeboirar_2014.htm": {
 "amendments_recorded": 160,
 "chunks": 95,
+"history": {
+"545": {
+"chunk": 68,
+"offset": 232
+}
+},
 "last_amended": "2025-11-25",
 "title": "Securities and Exchange Board of India (Research Analysts) Regulations, 2014",
 "type": "Regulations",
@@ -6010,6 +7986,12 @@
 "saeboispr_2018.html": {
 "amendments_recorded": 62,
 "chunks": 97,
+"history": {
+"2620": {
+"chunk": 86,
+"offset": 738
+}
+},
 "last_amended": "2024-11-28",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (SETTLEMENT PROCEEDINGS) REGULATIONS, 2018",
 "type": "Regulations",
@@ -6018,6 +8000,12 @@
 "saotcscm_2020.htm": {
 "amendments_recorded": 4,
 "chunks": 14,
+"history": {
+"2690": {
+"chunk": 12,
+"offset": 585
+}
+},
 "last_amended": "2025-04-28",
 "title": "INTERNATIONAL FINANCIAL SERVICES CENTRES AUTHORITY (SALARY, ALLOWANCES AND OTHER TERMS AND CONDITIONS OF SERVICE OF CHAIRPERSON AND MEMBERS) RULES, 2020",
 "type": "Rules",
@@ -6026,6 +8014,12 @@
 "sast_2011.htm": {
 "amendments_recorded": 142,
 "chunks": 166,
+"history": {
+"86": {
+"chunk": 135,
+"offset": 36
+}
+},
 "last_amended": "2025-12-03",
 "title": "SEBI (SUBSTANTIAL ACQUISITION OF SHARES AND TAKEOVERS) REGULATIONS, 2011",
 "type": "Regulations",
@@ -6042,6 +8036,12 @@
 "scr_secc_2012.htm": {
 "amendments_recorded": 51,
 "chunks": 82,
+"history": {
+"1351": {
+"chunk": 70,
+"offset": 521
+}
+},
 "last_amended": "2018-10-01",
 "title": "SECURITIES CONTRACTS (REGULATION) (STOCK EXCHANGES AND CLEARING CORPORATIONS) REGULATIONS, 2012",
 "type": "Regulations",
@@ -6051,6 +8051,7 @@
 "amendments_recorded": 22,
 "chunks": 98,
 "last_amended": "2014-09-08",
+"operative_prior_wording": 2,
 "title": "Securities Contracts (Regulation) Act, 1956",
 "type": "Act",
 "year": 1956
@@ -6058,6 +8059,12 @@
 "scrseccr_2018.htm": {
 "amendments_recorded": 143,
 "chunks": 166,
+"history": {
+"2596": {
+"chunk": 137,
+"offset": 928
+}
+},
 "last_amended": "2025-11-21",
 "title": "SECURITIES CONTRACTS (REGULATION) (STOCK EXCHANGES AND CLEARING CORPORATIONS) REGULATIONS, 2018",
 "type": "Regulations",
@@ -6066,6 +8073,12 @@
 "sct_1992.htm": {
 "amendments_recorded": 0,
 "chunks": 16,
+"history": {
+"1067": {
+"chunk": 4,
+"offset": 522
+}
+},
 "last_amended": null,
 "title": "Special Court (Trial of Offences Relating to Transactions In Securities) Act 1992",
 "type": "Act",
@@ -6098,6 +8111,12 @@
 "sebi3_71.htm": {
 "amendments_recorded": 15,
 "chunks": 10,
+"history": {
+"1077": {
+"chunk": 6,
+"offset": 878
+}
+},
 "last_amended": "2021-12-31",
 "title": "Securities Contracts (Regulation) (Procedure For Holding Inquiry and Imposing Penalties by Adjudicating Officer) Rules, 2005",
 "type": "Rules",
@@ -6106,6 +8125,12 @@
 "sebi3_77.htm": {
 "amendments_recorded": 9,
 "chunks": 21,
+"history": {
+"1083": {
+"chunk": 18,
+"offset": 1051
+}
+},
 "last_amended": "2008-12-23",
 "title": "Securities Contracts (Regulation) (Manner of Increasing and Maintaining Public Shareholding In Recognised Stock Exchanges) Regulations, 2006",
 "type": "Regulations",
@@ -6138,6 +8163,12 @@
 "sebi4_1084.htm": {
 "amendments_recorded": 12,
 "chunks": 13,
+"history": {
+"848": {
+"chunk": 8,
+"offset": 862
+}
+},
 "last_amended": "2015-09-07",
 "title": "Securities Appellate Tribunal (Salaries, Allowances and Other Terms and Conditions of Presiding Officer and Other Members) Rules, 2003",
 "type": "Rules",
@@ -6154,6 +8185,12 @@
 "sebi4_1130.htm": {
 "amendments_recorded": 17,
 "chunks": 42,
+"history": {
+"749": {
+"chunk": 39,
+"offset": 884
+}
+},
 "last_amended": "2023-04-01",
 "title": "SEBI (Self Regulatory Organizations) Regulations, 2004",
 "type": "Regulations",
@@ -6162,6 +8199,12 @@
 "sebi4_1144.htm": {
 "amendments_recorded": 2,
 "chunks": 27,
+"history": {
+"855": {
+"chunk": 26,
+"offset": 1237
+}
+},
 "last_amended": "2018-04-17",
 "title": "SEBI (Stp Centralised Hub and Stp Service Providers) Guidelines, 2004",
 "type": "Guidelines",
@@ -6186,6 +8229,12 @@
 "sebi4_1297.htm": {
 "amendments_recorded": 17,
 "chunks": 100,
+"history": {
+"1201": {
+"chunk": 96,
+"offset": 1207
+}
+},
 "last_amended": "2009-11-06",
 "title": "SEBI (Substantial Acquisition of Shares and Takeovers) Regulations, 1997",
 "type": "Regulations",
@@ -6194,6 +8243,12 @@
 "sebi4_143.htm": {
 "amendments_recorded": 173,
 "chunks": 124,
+"history": {
+"115": {
+"chunk": 94,
+"offset": 1254
+}
+},
 "last_amended": "2026-01-13",
 "title": "SEBI (Credit Rating Agencies) Regulations, 1999",
 "type": "Regulations",
@@ -6202,6 +8257,12 @@
 "sebi4_1447.htm": {
 "amendments_recorded": 2,
 "chunks": 36,
+"history": {
+"1265": {
+"chunk": 34,
+"offset": 1021
+}
+},
 "last_amended": "2017-03-06",
 "title": "SEBI (Underwriters) Regulations, 1993",
 "type": "Regulations",
@@ -6210,6 +8271,12 @@
 "sebi4_1469.htm": {
 "amendments_recorded": 70,
 "chunks": 42,
+"history": {
+"750": {
+"chunk": 26,
+"offset": 788
+}
+},
 "last_amended": "2024-06-27",
 "title": "SEBI (Prohibition of Fraudulent and Unfair Trade Practices Relating to Securities Market) Regulations, 2003",
 "type": "Regulations",
@@ -6218,6 +8285,12 @@
 "sebi4_1485.htm": {
 "amendments_recorded": 0,
 "chunks": 32,
+"history": {
+"867": {
+"chunk": 30,
+"offset": 1177
+}
+},
 "last_amended": null,
 "title": "SEBI (Venture Capital Funds) Regulations, 1996",
 "type": "Regulations",
@@ -6250,6 +8323,12 @@
 "sebi4_1519.htm": {
 "amendments_recorded": 6,
 "chunks": 12,
+"history": {
+"875": {
+"chunk": 11,
+"offset": 583
+}
+},
 "last_amended": "2022-12-09",
 "title": "SEBI (Procedure For Board Meetings) Regulations, 2001",
 "type": "Regulations",
@@ -6258,6 +8337,12 @@
 "sebi4_1522.htm": {
 "amendments_recorded": 16,
 "chunks": 10,
+"history": {
+"877": {
+"chunk": 6,
+"offset": 881
+}
+},
 "last_amended": "2021-12-31",
 "title": "SEBI (Procedure For Holding Inquiry and Imposing Penalties by Adjudicating Officer) Rules, 1995",
 "type": "Rules",
@@ -6266,6 +8351,12 @@
 "sebi4_1524.htm": {
 "amendments_recorded": 1,
 "chunks": 44,
+"history": {
+"879": {
+"chunk": 43,
+"offset": 421
+}
+},
 "last_amended": "2007-04-23",
 "title": "SEBI (Procedure For Holding Enquiry by Enquiry Officer and Imposing Penalty) Regulations, 2002",
 "type": "Regulations",
@@ -6282,6 +8373,12 @@
 "sebi4_1540.htm": {
 "amendments_recorded": 13,
 "chunks": 9,
+"history": {
+"888": {
+"chunk": 6,
+"offset": 1054
+}
+},
 "last_amended": "2019-04-01",
 "title": "SEBI (Regulatory Fee on Stock Exchanges) Regulations, 2006",
 "type": "Regulations",
@@ -6291,6 +8388,7 @@
 "amendments_recorded": 71,
 "chunks": 50,
 "last_amended": "2025-09-18",
+"operative_prior_wording": 13,
 "title": "SEBI (Custodian) Regulations, 1996",
 "type": "Regulations",
 "year": 1996
@@ -6299,6 +8397,7 @@
 "amendments_recorded": 180,
 "chunks": 92,
 "last_amended": "2025-10-22",
+"operative_prior_wording": 83,
 "title": "SEBI (Debenture Trustees) Regulations, 1993",
 "type": "Regulations",
 "year": 1993
@@ -6314,6 +8413,12 @@
 "sebi4_225.htm": {
 "amendments_recorded": 109,
 "chunks": 118,
+"history": {
+"894": {
+"chunk": 99,
+"offset": 1251
+}
+},
 "last_amended": "2017-07-25",
 "title": "SEBI (Depositories and Participants) Regulations, 1996",
 "type": "Regulations",
@@ -6322,6 +8427,12 @@
 "sebi4_24.htm": {
 "amendments_recorded": 34,
 "chunks": 53,
+"history": {
+"28": {
+"chunk": 41,
+"offset": 512
+}
+},
 "last_amended": "2017-03-06",
 "title": "SEBI (Buy-Back of Securities) Regulations, 1998",
 "type": "Regulations",
@@ -6346,6 +8457,12 @@
 "sebi4_265.htm": {
 "amendments_recorded": 12,
 "chunks": 9,
+"history": {
+"901": {
+"chunk": 6,
+"offset": 880
+}
+},
 "last_amended": "2021-12-31",
 "title": "Depositories (Procedure For Holding Inquiry and Imposing Penalties by Adjudicating Officer) Rules, 2005",
 "type": "Rules",
@@ -6354,6 +8471,12 @@
 "sebi4_3.htm": {
 "amendments_recorded": 126,
 "chunks": 51,
+"history": {
+"1263": {
+"chunk": 30,
+"offset": 581
+}
+},
 "last_amended": "2025-02-10",
 "title": "SEBI (Bankers to An Issue) Regulations, 1994",
 "type": "Regulations",
@@ -6362,7 +8485,14 @@
 "sebi4_379.htm": {
 "amendments_recorded": 19,
 "chunks": 49,
+"history": {
+"751": {
+"chunk": 45,
+"offset": 505
+}
+},
 "last_amended": "2013-01-17",
+"operative_prior_wording": 1,
 "title": "SEBI (Employee Stock Option Scheme and Employee Stock Purchase Scheme) Guidelines, 1999",
 "type": "Guidelines",
 "year": 1999
@@ -6386,6 +8516,12 @@
 "sebi4_476.htm": {
 "amendments_recorded": 64,
 "chunks": 68,
+"history": {
+"87": {
+"chunk": 48,
+"offset": 1179
+}
+},
 "last_amended": "2025-12-01",
 "title": "SEBI (Foreign Venture Capital Investors) Regulations, 2000",
 "type": "Regulations",
@@ -6395,6 +8531,7 @@
 "amendments_recorded": 54,
 "chunks": 35,
 "last_amended": "2012-10-01",
+"operative_prior_wording": 17,
 "title": "Companies (Issue of Indian Depository Receipts) Rules, 2004",
 "type": "Rules",
 "year": 2004
@@ -6402,6 +8539,12 @@
 "sebi4_538.htm": {
 "amendments_recorded": 35,
 "chunks": 52,
+"history": {
+"314": {
+"chunk": 44,
+"offset": 601
+}
+},
 "last_amended": "2011-08-16",
 "title": "SEBI (Prohibition of Insider Trading) Regulations, 1992",
 "type": "Regulations",
@@ -6410,6 +8553,12 @@
 "sebi4_563.htm": {
 "amendments_recorded": 7,
 "chunks": 22,
+"history": {
+"1094": {
+"chunk": 20,
+"offset": 1117
+}
+},
 "last_amended": "2014-03-31",
 "title": "Investor Education and Protection Fund (Awareness and Protection of Investors) Rules, 2001",
 "type": "Rules",
@@ -6426,6 +8575,12 @@
 "sebi4_593.htm": {
 "amendments_recorded": 7,
 "chunks": 26,
+"history": {
+"1098": {
+"chunk": 25,
+"offset": 305
+}
+},
 "last_amended": "2021-01-13",
 "title": "SEBI (Central Database of Market Participants) Regulations, 2003",
 "type": "Regulations",
@@ -6434,6 +8589,12 @@
 "sebi4_636.htm": {
 "amendments_recorded": 212,
 "chunks": 106,
+"history": {
+"55": {
+"chunk": 63,
+"offset": 400
+}
+},
 "last_amended": "2025-12-03",
 "title": "SEBI (Merchant Bankers) Regulations, 1992",
 "type": "Regulations",
@@ -6443,6 +8604,7 @@
 "amendments_recorded": 519,
 "chunks": 372,
 "last_amended": "2025-10-31",
+"operative_prior_wording": 196,
 "title": "SEBI (Mutual Funds) Regulations, 1996",
 "type": "Regulations",
 "year": 1996
@@ -6450,6 +8612,12 @@
 "sebi4_74.htm": {
 "amendments_recorded": 43,
 "chunks": 158,
+"history": {
+"1102": {
+"chunk": 151,
+"offset": 560
+}
+},
 "last_amended": "2023-07-03",
 "title": "SEBI (Collective Investment Schemes) Regulations, 1999",
 "type": "Regulations",
@@ -6466,6 +8634,12 @@
 "sebi4_904.htm": {
 "amendments_recorded": 76,
 "chunks": 79,
+"history": {
+"116": {
+"chunk": 67,
+"offset": 386
+}
+},
 "last_amended": "2019-05-10",
 "title": "SEBI (Portfolio Managers) Regulations, 1993",
 "type": "Regulations",
@@ -6475,6 +8649,7 @@
 "amendments_recorded": 33,
 "chunks": 50,
 "last_amended": "2025-02-10",
+"operative_prior_wording": 5,
 "title": "SEBI (Registrars to An Issue and Share Transfer Agents) Regulations, 1993",
 "type": "Regulations",
 "year": 1993
@@ -6482,6 +8657,12 @@
 "sebi4gh.htm": {
 "amendments_recorded": 64,
 "chunks": 76,
+"history": {
+"472": {
+"chunk": 51,
+"offset": 399
+}
+},
 "last_amended": "2011-05-02",
 "title": "SEBI (Foreign Institutional Investors) Regulations, 1995",
 "type": "Regulations",
@@ -6490,6 +8671,12 @@
 "sebi_1992.htm": {
 "amendments_recorded": 71,
 "chunks": 93,
+"history": {
+"1170": {
+"chunk": 87,
+"offset": 107
+}
+},
 "last_amended": "2017-05-26",
 "title": "SEBI Act, 1992",
 "type": "Act",
@@ -6498,6 +8685,12 @@
 "sebi_2011.htm": {
 "amendments_recorded": 65,
 "chunks": 41,
+"history": {
+"302": {
+"chunk": 30,
+"offset": 707
+}
+},
 "last_amended": "2025-02-10",
 "title": "Securities and Exchange Board of India {KYC (Know Your Client) REGISTRATION AGENCY} Regulations, 2011",
 "type": "Regulations",
@@ -6506,6 +8699,12 @@
 "sebi_2012.htm": {
 "amendments_recorded": 309,
 "chunks": 199,
+"history": {
+"1275": {
+"chunk": 143,
+"offset": 1320
+}
+},
 "last_amended": "2026-04-16",
 "title": "Securities and Exchange Board of India (Alternative Investment Funds) Regulations, 2012",
 "type": "Regulations",
@@ -6531,6 +8730,7 @@
 "amendments_recorded": 67,
 "chunks": 115,
 "last_amended": "2025-09-01",
+"operative_prior_wording": 37,
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (DELISTING OF EQUITY SHARES) REGULATIONS, 2021",
 "type": "Regulations",
 "year": 2021
@@ -6538,6 +8738,12 @@
 "sebidip_1_10.htm": {
 "amendments_recorded": 7,
 "chunks": 11,
+"history": {
+"1107": {
+"chunk": 9,
+"offset": 1153
+}
+},
 "last_amended": "2007-11-29",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6554,6 +8760,12 @@
 "sebidip_1_119.htm": {
 "amendments_recorded": 4,
 "chunks": 3,
+"history": {
+"1109": {
+"chunk": 2,
+"offset": 746
+}
+},
 "last_amended": "2007-11-29",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6562,6 +8774,12 @@
 "sebidip_1_119a.htm": {
 "amendments_recorded": 21,
 "chunks": 21,
+"history": {
+"1110": {
+"chunk": 18,
+"offset": 916
+}
+},
 "last_amended": "2009-02-24",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6570,6 +8788,12 @@
 "sebidip_1_12.htm": {
 "amendments_recorded": 21,
 "chunks": 20,
+"history": {
+"1111": {
+"chunk": 17,
+"offset": 688
+}
+},
 "last_amended": "2009-07-09",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6578,6 +8802,12 @@
 "sebidip_1_124.htm": {
 "amendments_recorded": 12,
 "chunks": 14,
+"history": {
+"1112": {
+"chunk": 11,
+"offset": 849
+}
+},
 "last_amended": "2008-12-08",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6594,6 +8824,12 @@
 "sebidip_1_129.htm": {
 "amendments_recorded": 1,
 "chunks": 4,
+"history": {
+"1114": {
+"chunk": 3,
+"offset": 247
+}
+},
 "last_amended": "2009-02-24",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6602,6 +8838,12 @@
 "sebidip_1_130.htm": {
 "amendments_recorded": 7,
 "chunks": 14,
+"history": {
+"1115": {
+"chunk": 12,
+"offset": 750
+}
+},
 "last_amended": "2008-08-28",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6618,6 +8860,12 @@
 "sebidip_1_17.htm": {
 "amendments_recorded": 23,
 "chunks": 26,
+"history": {
+"1117": {
+"chunk": 23,
+"offset": 563
+}
+},
 "last_amended": "2009-02-24",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6626,6 +8874,12 @@
 "sebidip_1_23.htm": {
 "amendments_recorded": 38,
 "chunks": 109,
+"history": {
+"1118": {
+"chunk": 102,
+"offset": 1107
+}
+},
 "last_amended": "2008-08-28",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6634,6 +8888,12 @@
 "sebidip_1_3.htm": {
 "amendments_recorded": 10,
 "chunks": 13,
+"history": {
+"1119": {
+"chunk": 10,
+"offset": 857
+}
+},
 "last_amended": "2008-08-28",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6642,6 +8902,12 @@
 "sebidip_1_6.htm": {
 "amendments_recorded": 18,
 "chunks": 23,
+"history": {
+"1120": {
+"chunk": 19,
+"offset": 602
+}
+},
 "last_amended": "2009-07-09",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6651,6 +8917,7 @@
 "amendments_recorded": 12,
 "chunks": 38,
 "last_amended": "2007-11-29",
+"operative_prior_wording": 4,
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
 "year": 2000
@@ -6658,6 +8925,12 @@
 "sebidip_1_77.htm": {
 "amendments_recorded": 8,
 "chunks": 12,
+"history": {
+"1122": {
+"chunk": 9,
+"offset": 1007
+}
+},
 "last_amended": "2008-07-30",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6666,6 +8939,12 @@
 "sebidip_1_80.htm": {
 "amendments_recorded": 39,
 "chunks": 33,
+"history": {
+"1123": {
+"chunk": 25,
+"offset": 1174
+}
+},
 "last_amended": "2009-02-24",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6682,6 +8961,12 @@
 "sebidip_1_91.htm": {
 "amendments_recorded": 2,
 "chunks": 11,
+"history": {
+"1125": {
+"chunk": 10,
+"offset": 178
+}
+},
 "last_amended": "2007-11-29",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6690,6 +8975,12 @@
 "sebidip_1_94.htm": {
 "amendments_recorded": 44,
 "chunks": 18,
+"history": {
+"1126": {
+"chunk": 12,
+"offset": 211
+}
+},
 "last_amended": "2009-02-24",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6698,6 +8989,12 @@
 "sebidip_1_99.htm": {
 "amendments_recorded": 25,
 "chunks": 35,
+"history": {
+"1127": {
+"chunk": 30,
+"offset": 596
+}
+},
 "last_amended": "2009-07-09",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6706,6 +9003,12 @@
 "sebidip_sch1_135.htm": {
 "amendments_recorded": 2,
 "chunks": 6,
+"history": {
+"1128": {
+"chunk": 5,
+"offset": 331
+}
+},
 "last_amended": "2008-07-30",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6714,6 +9017,12 @@
 "sebidip_sch1_137.htm": {
 "amendments_recorded": 1,
 "chunks": 3,
+"history": {
+"1129": {
+"chunk": 2,
+"offset": 785
+}
+},
 "last_amended": "2008-07-30",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6722,6 +9031,12 @@
 "sebidip_sch1_138.htm": {
 "amendments_recorded": 4,
 "chunks": 7,
+"history": {
+"1130": {
+"chunk": 6,
+"offset": 1001
+}
+},
 "last_amended": "2007-11-29",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6738,6 +9053,12 @@
 "sebidip_sch1_141.htm": {
 "amendments_recorded": 2,
 "chunks": 2,
+"history": {
+"1132": {
+"chunk": 1,
+"offset": 402
+}
+},
 "last_amended": "2007-11-29",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6770,6 +9091,12 @@
 "sebidip_sch1_145.htm": {
 "amendments_recorded": 7,
 "chunks": 11,
+"history": {
+"1136": {
+"chunk": 9,
+"offset": 664
+}
+},
 "last_amended": "2008-07-30",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6890,6 +9217,12 @@
 "sebidip_sch1_179.htm": {
 "amendments_recorded": 4,
 "chunks": 8,
+"history": {
+"1151": {
+"chunk": 7,
+"offset": 921
+}
+},
 "last_amended": "2008-07-30",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6914,6 +9247,12 @@
 "sebidip_sch1_186.htm": {
 "amendments_recorded": 5,
 "chunks": 2,
+"history": {
+"1154": {
+"chunk": 0,
+"offset": 1251
+}
+},
 "last_amended": "2009-04-20",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6978,6 +9317,12 @@
 "sebidip_sch1_198.htm": {
 "amendments_recorded": 2,
 "chunks": 1,
+"history": {
+"1164": {
+"chunk": 0,
+"offset": 1191
+}
+},
 "last_amended": "2007-11-29",
 "title": "SEBI (Disclosure & Investor Protection) Guidelines, 2000",
 "type": "Guidelines",
@@ -6994,6 +9339,12 @@
 "sebidpr_2018.htm": {
 "amendments_recorded": 126,
 "chunks": 166,
+"history": {
+"2594": {
+"chunk": 143,
+"offset": 650
+}
+},
 "last_amended": "2025-11-21",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (DEPOSITORIES AND PARTICIPANTS) REGULATIONS, 2018",
 "type": "Regulations",
@@ -7002,6 +9353,12 @@
 "sebifpir_2019.htm": {
 "amendments_recorded": 82,
 "chunks": 86,
+"history": {
+"2642": {
+"chunk": 74,
+"offset": 1107
+}
+},
 "last_amended": "2025-12-01",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (FOREIGN PORTFOLIO INVESTORS) REGULATIONS, 2019",
 "type": "Regulations",
@@ -7018,6 +9375,12 @@
 "sebiiar_2013.htm": {
 "amendments_recorded": 249,
 "chunks": 101,
+"history": {
+"1301": {
+"chunk": 60,
+"offset": 277
+}
+},
 "last_amended": "2025-11-25",
 "title": "Securities and Exchange Board of India (Investment Advisers) Regulations, 2013",
 "type": "Regulations",
@@ -7026,6 +9389,12 @@
 "sebiicdrr_2018.htm": {
 "amendments_recorded": 663,
 "chunks": 972,
+"history": {
+"2853": {
+"chunk": 807,
+"offset": 1123
+}
+},
 "last_amended": "2025-10-08",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (ISSUE OF CAPITAL AND DISCLOSURE REQUIREMENTS) REGULATIONS, 2018",
 "type": "Regulations",
@@ -7034,6 +9403,12 @@
 "sebiiitr_2014.htm": {
 "amendments_recorded": 460,
 "chunks": 278,
+"history": {
+"844": {
+"chunk": 215,
+"offset": 1201
+}
+},
 "last_amended": "2026-04-16",
 "title": "Securities and Exchange Board of India (Infrastructure Investment Trusts) Regulations, 2014",
 "type": "Regulations",
@@ -7042,6 +9417,12 @@
 "sebiilncsr_2021.htm": {
 "amendments_recorded": 78,
 "chunks": 159,
+"history": {
+"2746": {
+"chunk": 139,
+"offset": 524
+}
+},
 "last_amended": "2026-01-20",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (ISSUE AND LISTING OF NON-CONVERTIBLE SECURITIES) REGULATIONS, 2021",
 "type": "Regulations",
@@ -7050,6 +9431,12 @@
 "sebilds_2013.htm": {
 "amendments_recorded": 81,
 "chunks": 74,
+"history": {
+"1284": {
+"chunk": 62,
+"offset": 1071
+}
+},
 "last_amended": "2021-08-03",
 "title": "Securities and Exchange Board of India (Issue and Listing of Debt Securities) Regulations, 2008",
 "type": "Regulations",
@@ -7058,6 +9445,12 @@
 "sebipmr_2020.htm": {
 "amendments_recorded": 33,
 "chunks": 93,
+"history": {
+"2714": {
+"chunk": 78,
+"offset": 1233
+}
+},
 "last_amended": "2025-09-01",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (PORTFOLIO MANAGERS) REGULATIONS, 2020",
 "type": "Regulations",
@@ -7066,6 +9459,12 @@
 "sebireitr_2014.htm": {
 "amendments_recorded": 491,
 "chunks": 335,
+"history": {
+"845": {
+"chunk": 275,
+"offset": 1239
+}
+},
 "last_amended": "2026-04-16",
 "title": "Securities and Exchange Board of India (Real Estate Investment Trusts) Regulations, 2014",
 "type": "Regulations",
@@ -7074,6 +9473,12 @@
 "sebisbasb_1992.htm_": {
 "amendments_recorded": 271,
 "chunks": 144,
+"history": {
+"1427": {
+"chunk": 83,
+"offset": 267
+}
+},
 "last_amended": "2025-02-10",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (STOCK BROKERS ) REGULATIONS, 1992",
 "type": "Regulations",
@@ -7082,6 +9487,12 @@
 "sebisbebr_2014.htm": {
 "amendments_recorded": 15,
 "chunks": 39,
+"history": {
+"11": {
+"chunk": 37,
+"offset": 0
+}
+},
 "last_amended": "2021-08-03",
 "title": "Securities and Exchange Board of India (Share Based Employee Benefits) Regulations, 2014",
 "type": "Regulations",
@@ -7090,6 +9501,12 @@
 "sebisbebser_2021.htm": {
 "amendments_recorded": 7,
 "chunks": 78,
+"history": {
+"2748": {
+"chunk": 75,
+"offset": 1259
+}
+},
 "last_amended": "2025-12-03",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (SHARE BASED EMPLOYEE BENEFITS AND SWEAT EQUITY) REGULATIONS, 2021",
 "type": "Regulations",
@@ -7098,6 +9515,12 @@
 "sebiunlisted.htm": {
 "amendments_recorded": 3,
 "chunks": 7,
+"history": {
+"295": {
+"chunk": 5,
+"offset": 861
+}
+},
 "last_amended": "2011-12-14",
 "title": "Unlisted Public Companies (Preferential Allotment) Rules, 2003",
 "type": "Rules",
@@ -7106,6 +9529,12 @@
 "sebivmr_2022.htm": {
 "amendments_recorded": 8,
 "chunks": 40,
+"history": {
+"2758": {
+"chunk": 37,
+"offset": 1147
+}
+},
 "last_amended": "2025-02-10",
 "title": "SECURITIES AND EXCHANGE BOARD OF INDIA (VAULT MANAGERS) REGULATIONS, 2021",
 "type": "Regulations",
@@ -7114,7 +9543,14 @@
 "sez_act.htm": {
 "amendments_recorded": 2,
 "chunks": 107,
+"history": {
+"1172": {
+"chunk": 105,
+"offset": 1302
+}
+},
 "last_amended": "2019-07-06",
+"operative_prior_wording": 1,
 "title": "Special Economic Zones Act, 2005",
 "type": "Act",
 "year": 2005
@@ -7122,6 +9558,12 @@
 "sez_rules.htm": {
 "amendments_recorded": 237,
 "chunks": 273,
+"history": {
+"1021": {
+"chunk": 220,
+"offset": 888
+}
+},
 "last_amended": "2026-02-03",
 "title": "Special Economic Zones Rules, 2006",
 "type": "Rules",
@@ -7130,6 +9572,12 @@
 "sfcch1_1951.htm": {
 "amendments_recorded": 16,
 "chunks": 7,
+"history": {
+"1175": {
+"chunk": 6,
+"offset": 0
+}
+},
 "last_amended": "2000-09-05",
 "title": "State Financial Corporations Act 1951",
 "type": "Act",
@@ -7138,6 +9586,12 @@
 "sfcch2_1951.htm": {
 "amendments_recorded": 47,
 "chunks": 39,
+"history": {
+"1176": {
+"chunk": 1,
+"offset": 602
+}
+},
 "last_amended": "2000-09-05",
 "title": "State Financial Corporations Act 1951",
 "type": "Act",
@@ -7146,6 +9600,12 @@
 "sfcch3_1951.htm": {
 "amendments_recorded": 47,
 "chunks": 41,
+"history": {
+"1177": {
+"chunk": 8,
+"offset": 418
+}
+},
 "last_amended": "2000-09-05",
 "title": "State Financial Corporations Act 1951",
 "type": "Act",
@@ -7154,6 +9614,12 @@
 "sfcch4_1951.htm": {
 "amendments_recorded": 22,
 "chunks": 10,
+"history": {
+"1178": {
+"chunk": 2,
+"offset": 225
+}
+},
 "last_amended": "2000-09-05",
 "title": "State Financial Corporations Act 1951",
 "type": "Act",
@@ -7162,6 +9628,12 @@
 "sfcch5_1951.htm": {
 "amendments_recorded": 42,
 "chunks": 22,
+"history": {
+"1179": {
+"chunk": 2,
+"offset": 697
+}
+},
 "last_amended": "2000-09-05",
 "title": "State Financial Corporations Act 1951",
 "type": "Act",
@@ -7186,6 +9658,12 @@
 "sicsp_17_1985.htm": {
 "amendments_recorded": 2,
 "chunks": 15,
+"history": {
+"1183": {
+"chunk": 11,
+"offset": 881
+}
+},
 "last_amended": "2017-05-24",
 "title": "Sick Industrial Companies (Special Provisions) Repeal Act 2003",
 "type": "Act",
@@ -7194,6 +9672,12 @@
 "spoitr_2015.htm": {
 "amendments_recorded": 188,
 "chunks": 142,
+"history": {
+"60": {
+"chunk": 118,
+"offset": 86
+}
+},
 "last_amended": "2025-03-11",
 "title": "SEBI (PROHIBITION OF INSIDER TRADING) REGULATIONS, 2015",
 "type": "Regulations",
@@ -7210,6 +9694,12 @@
 "srch2_1963.htm": {
 "amendments_recorded": 22,
 "chunks": 29,
+"history": {
+"1191": {
+"chunk": 20,
+"offset": 525
+}
+},
 "last_amended": "2018-10-01",
 "title": "Specific Relief Act 1963",
 "type": "Act",
@@ -7250,6 +9740,12 @@
 "srch8_1963.htm": {
 "amendments_recorded": 2,
 "chunks": 9,
+"history": {
+"1197": {
+"chunk": 8,
+"offset": 1087
+}
+},
 "last_amended": "2018-10-01",
 "title": "Specific Relief Act 1963",
 "type": "Act",
@@ -7258,6 +9754,12 @@
 "srfae_2011.htm": {
 "amendments_recorded": 16,
 "chunks": 14,
+"history": {
+"321": {
+"chunk": 9,
+"offset": 627
+}
+},
 "last_amended": "2020-01-24",
 "title": "Securitisation and Reconstruction of Financial Assets and Enforcement of Security Interest (Central Registry) Rules, 2011",
 "type": "Rules",
@@ -7266,7 +9768,14 @@
 "srfaesi_2002.htm": {
 "amendments_recorded": 89,
 "chunks": 125,
+"history": {
+"1198": {
+"chunk": 22,
+"offset": 304
+}
+},
 "last_amended": "2020-01-24",
+"operative_prior_wording": 6,
 "title": "Securitisation and Reconstruction of Financial Assets and Enforcement of Security Interest Act 2002",
 "type": "Act",
 "year": 2002
@@ -7282,6 +9791,12 @@
 "srp2ch1_1963.htm": {
 "amendments_recorded": 2,
 "chunks": 4,
+"history": {
+"1202": {
+"chunk": 3,
+"offset": 415
+}
+},
 "last_amended": "2018-10-01",
 "title": "Specific Relief Act 1963",
 "type": "Act",
@@ -7314,6 +9829,12 @@
 "tcr_2011.htm": {
 "amendments_recorded": 8,
 "chunks": 19,
+"history": {
+"331": {
+"chunk": 17,
+"offset": 740
+}
+},
 "last_amended": "2012-12-02",
 "title": "The Companies (Cost Accounting Records) Rules, 2011",
 "type": "Rules",
@@ -7347,6 +9868,7 @@
 "amendments_recorded": 1,
 "chunks": 7,
 "last_amended": "2010-09-21",
+"operative_prior_wording": 2,
 "title": "Trade Marks Act 1999",
 "type": "Act",
 "year": 1999
@@ -7354,6 +9876,12 @@
 "tmch11_1999.htm": {
 "amendments_recorded": 3,
 "chunks": 15,
+"history": {
+"1206": {
+"chunk": 13,
+"offset": 1214
+}
+},
 "last_amended": "2017-05-26",
 "title": "Trade Marks Act 1999",
 "type": "Act",
@@ -7371,6 +9899,7 @@
 "amendments_recorded": 8,
 "chunks": 41,
 "last_amended": "2017-05-26",
+"operative_prior_wording": 8,
 "title": "Trade Marks Act 1999",
 "type": "Act",
 "year": 1999
@@ -7378,6 +9907,12 @@
 "tmch1_1999.htm": {
 "amendments_recorded": 2,
 "chunks": 14,
+"history": {
+"1209": {
+"chunk": 13,
+"offset": 206
+}
+},
 "last_amended": "2017-05-26",
 "title": "Trade Marks Act 1999",
 "type": "Act",
@@ -7386,6 +9921,12 @@
 "tmch2_1999.htm": {
 "amendments_recorded": 1,
 "chunks": 18,
+"history": {
+"1210": {
+"chunk": 16,
+"offset": 1222
+}
+},
 "last_amended": "2010-09-21",
 "title": "Trade Marks Act 1999",
 "type": "Act",
@@ -7395,6 +9936,7 @@
 "amendments_recorded": 2,
 "chunks": 11,
 "last_amended": "2010-09-21",
+"operative_prior_wording": 2,
 "title": "Trade Marks Act 1999",
 "type": "Act",
 "year": 1999
@@ -7411,6 +9953,7 @@
 "amendments_recorded": 0,
 "chunks": 12,
 "last_amended": null,
+"operative_prior_wording": 2,
 "title": "Trade Marks Act 1999",
 "type": "Act",
 "year": 1999
@@ -7570,6 +10113,12 @@
 "wcch1_1923.htm": {
 "amendments_recorded": 12,
 "chunks": 10,
+"history": {
+"920": {
+"chunk": 7,
+"offset": 1095
+}
+},
 "last_amended": "1995-09-15",
 "title": "Workmen`s Compensation Act 1923",
 "type": "Act",
@@ -7586,6 +10135,12 @@
 "wcch3_1923.htm": {
 "amendments_recorded": 11,
 "chunks": 16,
+"history": {
+"922": {
+"chunk": 6,
+"offset": 363
+}
+},
 "last_amended": "2017-04-12",
 "title": "Workmen`s Compensation Act 1923",
 "type": "Act",
@@ -7594,6 +10149,12 @@
 "wcch4_1923.htm": {
 "amendments_recorded": 39,
 "chunks": 30,
+"history": {
+"923": {
+"chunk": 7,
+"offset": 300
+}
+},
 "last_amended": "1997-11-03",
 "title": "Workmen`s Compensation Act 1923",
 "type": "Act",
@@ -7618,6 +10179,12 @@
 "wpch2_1974.htm": {
 "amendments_recorded": 0,
 "chunks": 18,
+"history": {
+"928": {
+"chunk": 9,
+"offset": 1320
+}
+},
 "last_amended": null,
 "title": "Water (Prevention and Control of Pollution) Act 1974",
 "type": "Act",
@@ -7626,6 +10193,12 @@
 "wpch3_1974.htm": {
 "amendments_recorded": 0,
 "chunks": 10,
+"history": {
+"929": {
+"chunk": 9,
+"offset": 403
+}
+},
 "last_amended": null,
 "title": "Water (Prevention and Control of Pollution) Act 1974",
 "type": "Act",
@@ -7642,6 +10215,12 @@
 "wpch5_1974.htm": {
 "amendments_recorded": 0,
 "chunks": 32,
+"history": {
+"931": {
+"chunk": 12,
+"offset": 534
+}
+},
 "last_amended": null,
 "title": "Water (Prevention and Control of Pollution) Act 1974",
 "type": "Act",
@@ -7658,6 +10237,12 @@
 "wpch7_1974.htm": {
 "amendments_recorded": 0,
 "chunks": 10,
+"history": {
+"933": {
+"chunk": 2,
+"offset": 909
+}
+},
 "last_amended": null,
 "title": "Water (Prevention and Control of Pollution) Act 1974",
 "type": "Act",
@@ -7666,6 +10251,12 @@
 "wpch8_1974.htm": {
 "amendments_recorded": 0,
 "chunks": 19,
+"history": {
+"934": {
+"chunk": 18,
+"offset": 0
+}
+},
 "last_amended": null,
 "title": "Water (Prevention and Control of Pollution) Act 1974",
 "type": "Act",
@@ -7674,6 +10265,12 @@
 "wpcsch_1_1977.htm": {
 "amendments_recorded": 1,
 "chunks": 2,
+"history": {
+"941": {
+"chunk": 0,
+"offset": 823
+}
+},
 "last_amended": "2003-05-06",
 "title": "Water (Prevention and Control of Pollution) Cess Act 1977",
 "type": "Act",
@@ -7682,6 +10279,12 @@
 "wpcsch_2_1977.htm": {
 "amendments_recorded": 10,
 "chunks": 17,
+"history": {
+"942": {
+"chunk": 1,
+"offset": 774
+}
+},
 "last_amended": "2003-05-06",
 "title": "Water (Prevention and Control of Pollution) Cess Act 1977",
 "type": "Act",

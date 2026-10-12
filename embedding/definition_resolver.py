@@ -198,7 +198,10 @@ def read_window(index, record_id, position=None):
         filter={"source_table": {"$eq": LEGISLATION_TABLE},
                 "record_id": {"$eq": numeric_id if numeric_id is not None else record_id},
                 "chunk_index": {"$gte": first, "$lte": last}})
-    docs = sorted((describe_db_chunk(m.id, m.metadata) for m in (res.matches or [])), key=lambda d: d["chunk_index"])
+    # The footnotes quote superseded definitions ("Prior to substitution it read as: (23) ...
+    # means ..."); only the operative text is read.
+    docs = sorted((doc for doc in (describe_db_chunk(m.id, m.metadata) for m in (res.matches or []))
+                   if not doc.get("amendment_history")), key=lambda d: d["chunk_index"])
     text, spans, previous_body, previous_index = "", [], "", None
     for doc in docs:
         body = doc["chunk_body"]
@@ -432,7 +435,8 @@ def expand_passages(ids):
         bodies = {}
         for match in res.matches or []:
             doc = describe_db_chunk(match.id, match.metadata)
-            bodies[doc["chunk_index"]] = doc["chunk_body"]
+            if not doc.get("amendment_history"):
+                bodies[doc["chunk_index"]] = doc["chunk_body"]
         for position in positions:
             body, following = bodies.get(position), bodies.get(position + 1)
             if not body or not following:

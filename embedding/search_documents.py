@@ -243,6 +243,21 @@ def describe_db_chunk(vector_id, meta):
     sections = meta.get("sections") or header.get("Sections") or None
     currency = (get_legislation_catalogue().get(str(file_name or "").strip().lower()) or {}) if source_table == "Legislation" else {}
 
+    # The footnotes at the end of a legislation file record superseded wording ("Prior to
+    # substitution it read as ..."). That text is cut off: it is not the law in force.
+    amendment_history = False
+    history = (currency.get("history") or {}).get(str(record_id))
+    if history and chunk_index is not None:
+        if chunk_index > history["chunk"]:
+            amendment_history = True
+        elif chunk_index == history["chunk"]:
+            if history["offset"] <= 0:
+                amendment_history = True
+            else:
+                header_part = chunk_text[:len(chunk_text) - len(body)] if chunk_text.endswith(body) else ""
+                body = body[:history["offset"]].rstrip()
+                chunk_text = header_part + body
+
     return {
         "embedding_id": str(vector_id),
         "source_table": source_table,
@@ -263,6 +278,7 @@ def describe_db_chunk(vector_id, meta):
             get_legislation_labels().get(str(file_name or "").strip().lower())),
         # Currency of a legislation file: the year in its title and the latest amendment its
         # text records. (Its doc_date is only the date it was loaded.)
+        "amendment_history": amendment_history,
         "instrument_year": currency.get("year"),
         "last_amended": currency.get("last_amended"),
         "citation": header.get("Citation") or None,
@@ -382,7 +398,9 @@ def search_pinecone_db(query_vec, top_k=15, source_filter=None):
 
     try:
         res = index.query(**query_params)
-        return [as_search_result(describe_db_chunk(match.id, match.metadata), match.score) for match in res.matches]
+        described = [(describe_db_chunk(match.id, match.metadata), match.score) for match in res.matches]
+        # A chunk of a law's amendment history (superseded wording in its footnotes) is not law.
+        return [as_search_result(doc, score) for doc, score in described if not doc.get("amendment_history")]
     except Exception as e:
         sys.stderr.write(f"[Pinecone DB Search Error] {e}\n")
         forget_index_hosts()

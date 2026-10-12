@@ -104,6 +104,7 @@ def keyword_hits(index, name, record_id, query, provisions):
         filter={"source_table": {"$eq": LEGISLATION_TABLE},
                 "record_id": {"$eq": numeric_id if numeric_id is not None else record_id}})
     chunks = [describe_db_chunk(match.id, match.metadata) for match in (res.matches or [])]
+    chunks = [chunk for chunk in chunks if not chunk.get("amendment_history")]
     hits = []
     for _, chunk in rank_chunks(chunks, query, provisions, top_n=KEYWORD_HITS_PER_RECORD):
         result = as_search_result(chunk, KEYWORD_HIT_SCORE)
@@ -141,7 +142,10 @@ def focus_on_instruments(index, instruments, query_texts, seed_results, question
                     filter={"source_table": {"$eq": LEGISLATION_TABLE},
                             "record_id": {"$eq": numeric_id if numeric_id is not None else record_id}})
                 for match in res.matches or []:
-                    result = as_search_result(describe_db_chunk(match.id, match.metadata), match.score)
+                    doc = describe_db_chunk(match.id, match.metadata)
+                    if doc.get("amendment_history"):
+                        continue
+                    result = as_search_result(doc, match.score)
                     result["governing_instrument"] = name
                     results.append(result)
     return results
