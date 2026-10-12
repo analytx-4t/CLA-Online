@@ -120,10 +120,17 @@ function rankingScoreOf(r) {
 function buildContextBlock(results) {
   return (results || []).map((r, idx) => {
     const parts = [`[Source ${idx + 1}]`, `Type: ${sourceTypeLabel(r.source_table, isBookResult(r))}`, `Title: "${displayTitle(r)}"`];
+    if (r.provision_ref) parts.push(`Provision: ${r.provision_ref}`);
     if (r.sections && !/^(general|\d+)$/i.test(String(r.sections).trim())) parts.push(`Sections: ${collapseWhitespace(r.sections)}`);
     if (isBookResult(r) && (r.page_number || r.parent_id)) parts.push(`Page: ${r.page_number || r.parent_id}`);
     if (r.doc_date && !/legis/i.test(String(r.source_table || '')) && !isBookResult(r)) parts.push(`Date: ${String(r.doc_date).slice(0, 10)}`);
-    return `${parts.join(' | ')}\nContent: ${chunkBody(r)}`;
+    const lines = [parts.join(' | ')];
+    // How much the passage counts and whether it is current law (set by legalAuthority.js).
+    if (r.defined_term) lines.push(`Statutory definition of: "${r.defined_term}"`);
+    if (r.authority_label) lines.push(`Authority: ${r.authority_label}`);
+    if (r.currency_note) lines.push(`Currency: ${r.currency_note}`);
+    lines.push(`Content: ${chunkBody(r)}`);
+    return lines.join('\n');
   }).join('\n\n---\n\n');
 }
 
@@ -200,20 +207,61 @@ function supportScore(sentenceTokens, passageTokens) {
   return total > 0 ? matched / total : 0;
 }
 
-// The sentence (or list item) a marker closes.
-function sentenceBefore(text, position) {
-  const before = text.slice(Math.max(0, position - 700), position);
+// A full stop does not end a sentence after a single capital initial ("P. Mohanraj") or after
+// one of these abbreviations ("Ltd. v. SEBI", "No. 12"). Written out in both cases because the
+// pattern is case-sensitive: with the "i" flag, [A-Z] would match every letter and no
+// ordinary sentence would ever be split.
+const NON_TERMINAL_ABBREVIATIONS = ['v', 'vs', 's', 'ss', 'no', 'nos', 'sec', 'reg', 'cl', 'art', 'ltd', 'co', 'pvt', 'p', 'pp',
+  'etc', 'viz', 'ie', 'eg', 'mr', 'dr', 'bom', 'del', 'cal', 'mad', 'ker', 'guj'];
+const NOT_AFTER_ABBREVIATION = `(?<!\\b[A-Z]|\\b(?:${NON_TERMINAL_ABBREVIATIONS
+  .map((word) => [...word].map((ch) => `[${ch}${ch.toUpperCase()}]`).join(''))
+  .join('|')}))`;
+const SENTENCE_BREAK_RE_SOURCE = `${NOT_AFTER_ABBREVIATION}[.?!]["”)]?\\s+(?=[A-Z(“"*=])`;
+
+// Where the sentence (or list item) that a marker closes begins.
+function sentenceStartBefore(text, position) {
+  const windowStart = Math.max(0, position - 700);
+  const before = text.slice(windowStart, position);
   const lineStart = before.lastIndexOf('\n') + 1;
-  let segment = before.slice(lineStart);
+  const segment = before.slice(lineStart);
   const previousMarker = [...segment.matchAll(/\]\s*[.;]?\s+(?=[A-Z(“"*=])/g)].pop();
-  const sentenceBreaks = [...segment.matchAll(/(?<![A-Z]|\b(?:v|vs|s|ss|no|nos|sec|reg|cl|art|ltd|co|pvt|p|pp|etc|viz|ie|eg|mr|dr|bom|del|cal|mad|ker|guj))[.?!]["”)]?\s+(?=[A-Z(“"*=])/gi)];
+  const sentenceBreaks = [...segment.matchAll(new RegExp(SENTENCE_BREAK_RE_SOURCE, 'g'))];
   const lastBreak = sentenceBreaks.pop();
   const cut = Math.max(
     lastBreak ? lastBreak.index + lastBreak[0].length : 0,
     previousMarker ? previousMarker.index + previousMarker[0].length : 0
   );
-  segment = segment.slice(cut);
-  return collapseWhitespace(segment.replace(/^[-*\d.)\s]+/, ''));
+  return windowStart + lineStart + cut;
+}
+
+// The sentence (or list item) a marker closes.
+function sentenceBefore(text, position) {
+  return collapseWhitespace(text.slice(sentenceStartBefore(text, position), position).replace(/^[-*\d.)\s]+/, ''));
+}
+
+/**
+ * Every cited sentence of an answer: where it starts, where its marker run ends, its text
+ * and the passage numbers it cites. Used to check each claim against its sources.
+ */
+function locateCitedSentences(answer) {
+  const text = String(answer || '');
+  const located = [];
+  MARKER_RUN_RE.lastIndex = 0;
+  let match;
+  while ((match = MARKER_RUN_RE.exec(text)) !== null) {
+    const numbers = numbersInMarkerRun(match[0]);
+    if (!numbers.length) continue;
+    const start = sentenceStartBefore(text, match.index);
+    located.push({
+      start,
+      markerStart: match.index,
+      end: match.index + match[0].length,
+      markerRun: match[0],
+      sentence: collapseWhitespace(text.slice(start, match.index).replace(/^[-*\d.)\s]+/, '')),
+      numbers,
+    });
+  }
+  return located;
 }
 
 const REATTRIBUTE_MIN_SCORE = 0.5;   // another passage must cover at least half the sentence
@@ -332,7 +380,7 @@ const META_SENTENCE_PATTERNS = [
 ];
 const DANGLING_FOLLOW_UP = /^(?:that|this|such)\s+(?:material|note|source|content)\b/i;
 
-const SENTENCE_BOUNDARY_RE = /(?<![A-Z]|\b(?:v|vs|s|ss|no|nos|sec|reg|cl|art|ltd|co|pvt|p|pp|etc|viz|ie|eg|mr|dr|bom|del|cal|mad|ker|guj))[.?!]["”)]*(?:\s*\[[^\]]{1,40}\])*(?=\s+[A-Z(“"*=[]|\s*$)/gi;
+const SENTENCE_BOUNDARY_RE = new RegExp(`${NOT_AFTER_ABBREVIATION}[.?!]["”)]*(?:\\s*\\[[^\\]]{1,40}\\])*(?=\\s+[A-Z(“"*=[]|\\s*$)`, 'g');
 
 function splitSentences(text) {
   const sentences = [];
@@ -460,6 +508,13 @@ function buildSource(group, number) {
     category: isBook ? 'Book' : (lead.category || null),
     subject: isBook ? null : (lead.subject && lead.subject !== lead.doc_title ? lead.subject : null),
     doc_date: /legis/i.test(String(lead.source_table || '')) || isBook ? null : (lead.doc_date || null),
+    // Legal metadata of the source (set by legalAuthority.js and the legislation catalogue).
+    provision: lead.provision_ref || null,
+    authority_tier: lead.authority_tier || null,
+    currency_status: lead.currency_status || null,
+    currency_note: lead.currency_note || null,
+    instrument_year: lead.instrument_year || null,
+    last_amended: lead.last_amended || null,
     author: lead.author || null,
     score: Number(group.relevance.toFixed(4)),
   };
@@ -591,5 +646,7 @@ module.exports = {
   isHollowAnswer,
   supportTokens,
   supportScore,
+  splitSentences,
+  locateCitedSentences,
   finalizeAnswer,
 };

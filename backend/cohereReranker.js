@@ -148,34 +148,10 @@ async function cohereRerank(query, documents, topK = 5, options = {}) {
         }
       }
 
-      // Authority order: Law > Case law > Commentary > Notification / Circular > the rest.
-      let tableBonus = 0;
-      const srcTable = String(origDoc.source_table || '').toLowerCase();
-      const category = String(origDoc.category || '').toLowerCase();
-      if (srcTable.includes('legis') || category.includes('statute') || category.includes('primary legislation')) {
-        tableBonus = 0.08;
-      } else if (srcTable.includes('case') || category.includes('precedent')) {
-        tableBonus = 0.05;
-      } else if (srcTable.includes('comm') || category.includes('commentary')) {
-        tableBonus = 0.04;
-      } else if (srcTable.includes('notif') || srcTable.includes('circ') || category.includes('government')) {
-        tableBonus = 0.04;
-      } else if (srcTable.includes('proc')) {
-        tableBonus = 0.03;
-      }
-
-      // Repealed Companies Act, 1956 material ranks below current law unless it also covers 2013.
-      let legacyPenalty = 0;
-      const searchableFullText = (
-        String(origDoc.doc_title || '') + ' ' +
-        String(origDoc.law_title || '') + ' ' +
-        String(origDoc.chunk_text || '')
-      ).toLowerCase();
-      if (/\b(?:1956 act|act,? 1956)\b/.test(searchableFullText) && !searchableFullText.includes('2013')) {
-        legacyPenalty = -0.10;
-      }
-
-      const finalScore = rawScore + sectionBonus + tableBonus + legacyPenalty;
+      // Authority (Act > notification > circular > case law > editorial) and currency
+      // (superseded or pre-dating material) are applied afterwards by legalAuthority.js,
+      // which sees the governing instrument and the date the question is asked as of.
+      const finalScore = rawScore + sectionBonus;
 
       return {
         ...origDoc,

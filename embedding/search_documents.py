@@ -153,6 +153,24 @@ def get_legislation_labels():
     return _LEGISLATION_LABELS
 
 
+_LEGISLATION_CATALOGUE = None
+_CATALOGUE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "legislation_catalogue.json")
+
+
+def get_legislation_catalogue():
+    """file name (lower case) -> {"year", "last_amended", ...}: the currency of each legislation
+    file, read from the amendment notes in its text. Built by build_legislation_catalogue.py.
+    Missing file: legislation is served without those two fields."""
+    global _LEGISLATION_CATALOGUE
+    if _LEGISLATION_CATALOGUE is None:
+        try:
+            with open(_CATALOGUE_PATH, encoding="utf-8") as f:
+                _LEGISLATION_CATALOGUE = json.load(f)
+        except Exception:
+            _LEGISLATION_CATALOGUE = {}
+    return _LEGISLATION_CATALOGUE
+
+
 def split_chunk_header(text):
     """Indexed chunks start with a one-off context header, "[Source | Key: value | ...]\n".
     Returns (fields, body). The header can itself contain "]" (case citations) and line
@@ -223,6 +241,7 @@ def describe_db_chunk(vector_id, meta):
 
     doc_title = clean_title(source_table, doc_title) or f"{source_table} #{record_id}"
     sections = meta.get("sections") or header.get("Sections") or None
+    currency = (get_legislation_catalogue().get(str(file_name or "").strip().lower()) or {}) if source_table == "Legislation" else {}
 
     return {
         "embedding_id": str(vector_id),
@@ -239,6 +258,13 @@ def describe_db_chunk(vector_id, meta):
         "doc_title": doc_title,
         "law_title": law_title or doc_title,
         "instrument_type": instrument_type,
+        # A legislation file that is not in the labels map may still carry another Act's title.
+        "title_verified": source_table != "Legislation" or instrument_type is not None or bool(
+            get_legislation_labels().get(str(file_name or "").strip().lower())),
+        # Currency of a legislation file: the year in its title and the latest amendment its
+        # text records. (Its doc_date is only the date it was loaded.)
+        "instrument_year": currency.get("year"),
+        "last_amended": currency.get("last_amended"),
         "citation": header.get("Citation") or None,
         "court": header.get("Court") or None,
         "judge": header.get("Judge") or None,
@@ -272,7 +298,69 @@ def embed_query(query_text):
         return None
 
 
+def embed_queries(texts):
+    """Embeds several query texts in one API call and caches them, so the per-query
+    embed_query() calls that follow are served from the cache."""
+    pending = []
+    for text in texts:
+        cleaned = str(text or '').strip()[:8000]
+        if cleaned and cleaned not in _embed_cache and cleaned not in pending:
+            pending.append(cleaned)
+    if not pending:
+        return
+    try:
+        result = get_openai_client().embeddings.create(model=EMBEDDING_MODEL, input=pending, dimensions=EMBEDDING_DIMENSIONS)
+        for text, item in zip(pending, result.data):
+            _embed_cache[text] = item.embedding
+    except Exception as e:
+        sys.stderr.write(f"[Embedding Error] Batch embedding failed ({e}); falling back to single calls.\n")
+
+
 # ---------- PINECONE STRUCTURED DB SEARCH ----------
+
+def as_search_result(doc, score, database_source="Pinecone_DB"):
+    """A described chunk in the shape the backend expects from a search."""
+    parent_obj = {
+        "Title": doc["doc_title"],
+        "Category": doc["category"],
+        "Subject": doc["subject"] or doc["doc_title"],
+        "Sections": doc["sections"] or "General",
+        "FileName": doc["file_name"],
+        "DocDate": doc["doc_date"],
+    }
+    child_obj = {
+        "FileName": doc["file_name"],
+        "Sections": doc["sections"] or "General",
+        "Category": doc["category"],
+        "Article_Text": doc["chunk_text"],
+        "Filetext": doc["chunk_text"],
+        "chunk_text": doc["chunk_text"],
+    }
+    result = dict(doc)
+    result.update({
+        "subject": doc["subject"] or doc["doc_title"],
+        "filename": doc["file_name"],
+        "score": float(score),
+        "database_source": database_source,
+        "is_book": False,
+        "original": {"child": child_obj, "parent": parent_obj},
+    })
+    return result
+
+
+def _source_table_filter(source_filter):
+    """Pinecone metadata filter for one table ("Legislation"), every table but one ("!Articles")
+    or a set of tables (["Notifications", "Circular"])."""
+    if isinstance(source_filter, (list, tuple)):
+        tables = [str(t) for t in source_filter if t]
+        return {"source_table": {"$in": tables}} if tables else None
+    if source_filter and isinstance(source_filter, str):
+        if source_filter.startswith("!"):
+            return {"source_table": {"$ne": source_filter[1:]}}
+        if source_filter.lower() not in ["all", ""]:
+            return {"source_table": {"$eq": source_filter}}
+    return None
+
 
 def search_pinecone_db(query_vec, top_k=15, source_filter=None):
     """
@@ -288,45 +376,13 @@ def search_pinecone_db(query_vec, top_k=15, source_filter=None):
         "top_k": top_k,
         "include_metadata": True,
     }
-
-    if source_filter and isinstance(source_filter, str):
-        if source_filter.startswith("!"):
-            ex_table = source_filter[1:]
-            query_params["filter"] = {"source_table": {"$ne": ex_table}}
-        elif source_filter.lower() not in ["all", ""]:
-            query_params["filter"] = {"source_table": {"$eq": source_filter}}
+    table_filter = _source_table_filter(source_filter)
+    if table_filter:
+        query_params["filter"] = table_filter
 
     try:
         res = index.query(**query_params)
-        results = []
-        for match in res.matches:
-            doc = describe_db_chunk(match.id, match.metadata)
-            parent_obj = {
-                "Title": doc["doc_title"],
-                "Category": doc["category"],
-                "Subject": doc["subject"] or doc["doc_title"],
-                "Sections": doc["sections"] or "General",
-                "FileName": doc["file_name"],
-                "DocDate": doc["doc_date"],
-            }
-            child_obj = {
-                "FileName": doc["file_name"],
-                "Sections": doc["sections"] or "General",
-                "Category": doc["category"],
-                "Article_Text": doc["chunk_text"],
-                "Filetext": doc["chunk_text"],
-                "chunk_text": doc["chunk_text"],
-            }
-            doc.update({
-                "subject": doc["subject"] or doc["doc_title"],
-                "filename": doc["file_name"],
-                "score": float(match.score),
-                "database_source": "Pinecone_DB",
-                "is_book": False,
-                "original": {"child": child_obj, "parent": parent_obj},
-            })
-            results.append(doc)
-        return results
+        return [as_search_result(describe_db_chunk(match.id, match.metadata), match.score) for match in res.matches]
     except Exception as e:
         sys.stderr.write(f"[Pinecone DB Search Error] {e}\n")
         forget_index_hosts()
@@ -426,10 +482,48 @@ def search_pinecone_books(query_vec, top_k=8):
 
 # ---------- DUAL RETRIEVAL & PRIORITY BUCKETING ----------
 
-def dual_retrieval(query_text, top_k_db=15, top_k_books=8, source_filter=None, inferred_sections=None, primary_act=None):
+# Candidates handed to the reranker, per kind of source, in order of legal authority:
+# the Act / Rules / Regulations, then notifications and circulars (where amendments live),
+# then case law, then editorial material. Articles and books fill what is left.
+PRIMARY_LAW_TOP_K = 12
+CANDIDATE_POOL_SIZE = 45
+CANDIDATE_POOL_QUOTAS = (
+    ("legislation", 12),
+    ("notification_circular", 10),
+    ("caselaw", 6),
+    ("commentary", 5),
+    ("article", 5),
+    ("procedure_query", 4),
+    ("book", 3),
+)
+
+
+def authority_bucket(chunk):
+    table = str(chunk.get("source_table", "")).lower()
+    if chunk.get("is_book") or "book" in table:
+        return "book"
+    if "legis" in table:
+        return "legislation"
+    if "notif" in table or "circ" in table:
+        return "notification_circular"
+    if "case" in table:
+        return "caselaw"
+    if "comm" in table:
+        return "commentary"
+    if "art" in table:
+        return "article"
+    return "procedure_query"
+
+
+def dual_retrieval(query_text, top_k_db=15, top_k_books=8, source_filter=None, inferred_sections=None, primary_act=None,
+                   primary_query=None):
     """
-    Simultaneously retrieves from both 'cla-online-db' (structured tables) and 'cla-online' (books).
-    Applies multi-query expansion and strict legal prioritization before passing candidates to the reranker.
+    Retrieves from both 'cla-online-db' (structured tables) and 'cla-online' (books).
+
+    The general search runs across every table. On top of it, the legislation table and the
+    notification / circular tables are each searched on their own, so the governing provision
+    and its amendments are always among the candidates even when articles score higher.
+    `primary_query` (the expanded legal query) drives those two searches when it is given.
     """
     raw_sub_queries = re.split(r'(?:\?|\n+|(?:^|\s+)\d+[\.\)]\s*)', str(query_text or ''))
     clean_sub_queries = [q.strip() for q in raw_sub_queries if q and len(q.strip()) > 8]
@@ -437,6 +531,11 @@ def dual_retrieval(query_text, top_k_db=15, top_k_books=8, source_filter=None, i
 
     all_db_chunks = []
     all_books_chunks = []
+
+    sf = source_filter if isinstance(source_filter, str) else ""
+    unrestricted = not sf or sf.lower() in ["all", ""]
+    primary_texts = [t for t in dict.fromkeys([str(primary_query or "").strip()[:2000], str(query_text or "").strip()]) if t]
+    embed_queries(search_queries + (primary_texts if unrestricted else []))
 
     for sub_q in search_queries:
         if not sub_q or not sub_q.strip():
@@ -451,11 +550,19 @@ def dual_retrieval(query_text, top_k_db=15, top_k_books=8, source_filter=None, i
         all_db_chunks.extend(db_hits)
 
         # 2. Search Books & Publications (cla-online)
-        sf = str(source_filter or "").lower()
-        should_search_books = not sf or sf.startswith("!") or any(k in sf for k in ["pinecone", "book", "cla", "all"])
+        should_search_books = unrestricted or sf.startswith("!") or any(k in sf.lower() for k in ["pinecone", "book", "cla"])
         if should_search_books:
             books_hits = search_pinecone_books(q_vec, top_k=top_k_books)
             all_books_chunks.extend(books_hits)
+
+    # 3. Primary law, searched on its own
+    if unrestricted:
+        for text in primary_texts:
+            p_vec = embed_query(text)
+            if p_vec is None:
+                continue
+            all_db_chunks.extend(search_pinecone_db(p_vec, top_k=PRIMARY_LAW_TOP_K, source_filter="Legislation"))
+            all_db_chunks.extend(search_pinecone_db(p_vec, top_k=PRIMARY_LAW_TOP_K, source_filter=["Notifications", "Circular"]))
 
     # Deduplicate chunks by embedding_id or text fingerprint
     seen_ids = set()
@@ -469,39 +576,19 @@ def dual_retrieval(query_text, top_k_db=15, top_k_books=8, source_filter=None, i
     if not unique_results:
         return []
 
-    # Sort results by raw score descending
     unique_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
-    # Categorize into Strict 6-Tier Priority Buckets:
-    # Tier 1: Law (Legislation / Statutes)
-    tier1_law = [d for d in unique_results if "legis" in str(d.get("source_table", "")).lower() or "statute" in str(d.get("category", "")).lower()]
-    # Tier 2: CaseLaw (Judicial Precedents)
-    tier2_caselaw = [d for d in unique_results if "case" in str(d.get("source_table", "")).lower() or "precedent" in str(d.get("category", "")).lower()]
-    # Tier 3: Article (Legal Analysis & Articles)
-    tier3_article = [d for d in unique_results if "art" in str(d.get("source_table", "")).lower() or "article" in str(d.get("category", "")).lower()]
-    # Tier 4: Commentary (Section Commentaries)
-    tier4_commentary = [d for d in unique_results if "comm" in str(d.get("source_table", "")).lower() or "commentary" in str(d.get("category", "")).lower()]
-    # Tier 5: Notification & Circular (Regulatory Notifications & Circulars)
-    tier5_notification = [d for d in unique_results if any(k in str(d.get("source_table", "")).lower() for k in ["notif", "circ"])]
-    # Tier 6: Procedures, Queries & CLA Books (PDFs)
-    tier6_etc = [d for d in unique_results if d not in tier1_law and d not in tier2_caselaw and d not in tier3_article and d not in tier4_commentary and d not in tier5_notification]
+    buckets = {}
+    for chunk in unique_results:
+        buckets.setdefault(authority_bucket(chunk), []).append(chunk)
 
-    # Assemble balanced multi-tier candidate pool prioritizing statutory law, case precedents, and books
-    balanced_pool = (
-        tier1_law[:8] +
-        tier2_caselaw[:6] +
-        tier3_article[:5] +
-        tier4_commentary[:4] +
-        tier5_notification[:4] +
-        tier6_etc[:6]
-    )
+    pool = []
+    for bucket_name, quota in CANDIDATE_POOL_QUOTAS:
+        pool.extend(buckets.get(bucket_name, [])[:quota])
 
-    # Fill up to 30 candidates if room allows
-    if len(balanced_pool) < 30:
-        remaining = [d for d in unique_results if d not in balanced_pool]
-        balanced_pool.extend(remaining[:30 - len(balanced_pool)])
-
-    return balanced_pool[:30]
+    # The quotas are also the ceiling: slots left empty by one kind of source are not handed
+    # to articles or books, which would otherwise crowd the reranker with secondary material.
+    return pool[:CANDIDATE_POOL_SIZE]
 
 
 # ---------- CITATION & SOURCE DETAILS RESOLUTION ----------
@@ -706,6 +793,12 @@ def handle_json_input():
             print(json.dumps({"error": "Source not found in the index."}))
         else:
             print(json.dumps({"results": details}, default=str))
+    elif action == "resolve_definitions":
+        from definition_resolver import resolve_definitions
+        print(json.dumps({"results": resolve_definitions(payload.get("terms"), payload.get("primary_act"))}, default=str))
+    elif action == "expand_passages":
+        from definition_resolver import expand_passages
+        print(json.dumps({"results": expand_passages(payload.get("ids"))}, default=str))
     else:
         query = payload.get("query", "")
         top_k = payload.get("top_k", 10)
@@ -719,8 +812,29 @@ def handle_json_input():
             top_k_books=8,
             source_filter=source_filter,
             inferred_sections=inferred_sections,
-            primary_act=primary_act
+            primary_act=primary_act,
+            primary_query=payload.get("primary_query")
         )
+        # Same process as the search: opening the index and the first embedding call cost
+        # several seconds per process.
+        from definition_resolver import stitch_primary_passages, with_definitions
+        from instrument_retrieval import named_instruments, with_governing_instruments
+        if not source_filter:
+            results = with_governing_instruments(
+                results, get_pinecone_db_index(), primary_act, payload.get("keywords"),
+                [query, payload.get("primary_query")],
+                question=payload.get("question"), inferred_sections=inferred_sections)
+        try:
+            results = stitch_primary_passages(results)
+        except Exception as e:
+            sys.stderr.write(f"[Stitch] Provisions left as indexed ({e}).\n")
+        defined_terms = payload.get("defined_terms") or []
+        if defined_terms:
+            try:
+                results = with_definitions(results, defined_terms, primary_act,
+                                           named_instruments(None, payload.get("keywords")))
+            except Exception as e:
+                sys.stderr.write(f"[Definitions] Not resolved ({e}).\n")
         print(json.dumps({"results": results}, default=str))
 
 
@@ -746,4 +860,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # The helper modules import this file by name. Without this alias they would load a second
+    # copy of it, with its own index connection and its own (empty) embedding cache.
+    sys.modules.setdefault("search_documents", sys.modules["__main__"])
     main()

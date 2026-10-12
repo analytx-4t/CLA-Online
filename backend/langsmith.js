@@ -65,6 +65,9 @@ const traceQueryExpansion = traceable(
     const latencyMs = Date.now() - startTime;
 
     return {
+      // Everything the expansion produced: retrieval needs the primary Act, the inferred
+      // sections, the currency mode and the defined terms as well as the expanded query.
+      ...result,
       originalQuestion,
       expandedQuery: result.expandedQuery,
       keywords: result.keywords,

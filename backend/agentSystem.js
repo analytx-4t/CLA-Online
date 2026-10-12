@@ -309,6 +309,20 @@ function cleanParsedValue(value) {
   if (!value) return '';
   return value.replace(/[\*`\#]/g, '').trim();
 }
+
+const MAX_DEFINED_TERMS = 5;
+
+// "insider -> connected person -> unpublished price sensitive information" (or a comma /
+// semicolon list) into the ordered terms whose statutory definitions retrieval reads.
+function parseDefinedTerms(value) {
+  const cleaned = cleanParsedValue(value);
+  if (!cleaned || /^none\b/i.test(cleaned)) return [];
+  const terms = cleaned
+    .split(/\s*(?:->|→|=>|;|,|\|)\s*/)
+    .map((term) => term.replace(/\([^)]*\)/g, '').replace(/["“”'‘’]/g, '').trim())
+    .filter((term) => term && term.length <= 80 && !/^none$/i.test(term));
+  return [...new Set(terms.map((term) => term.toLowerCase()))].slice(0, MAX_DEFINED_TERMS);
+}
 /**
  * Runs only the Query Expansion Agent.
  *
@@ -378,6 +392,7 @@ async function expandLegalQuery(userMessage) {
     let actFilter = null;
     let currencyRequirement = '';
     let suggestedFilters = '';
+    let definedTerms = [];
     let clarifyingQuestion = 'NONE';
 
     const expansionLines = expansionText.split(/\r?\n/);
@@ -486,6 +501,15 @@ async function expandLegalQuery(userMessage) {
         continue;
       }
 
+      const dtMatch = cleanLine.match(
+        /^\*?DEFINED_TERMS\*?\s*:\s*(.*)$/i
+      );
+
+      if (dtMatch) {
+        definedTerms = parseDefinedTerms(dtMatch[1]);
+        continue;
+      }
+
       const cqMatch = cleanLine.match(
         /^\*?CLARIFYING_QUESTION\*?\s*:\s*(.*)$/i
       );
@@ -508,6 +532,7 @@ async function expandLegalQuery(userMessage) {
       actFilter: actFilter || primaryAct || null,
       currencyRequirement: currencyRequirement || 'as_of: today; mode = CURRENT',
       suggestedFilters,
+      definedTerms,
       clarifyingQuestion:
         clarifyingQuestion || 'NONE'
     };
@@ -1057,5 +1082,6 @@ module.exports = {
   runAgentFlow,
   loadAgentPrompts,
   assembleExpansionPrompt,
+  parseDefinedTerms,
   expandLegalQuery
 };

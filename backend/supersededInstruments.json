@@ -1,0 +1,53 @@
+{
+  "_comment": "Instruments replaced by one with a DIFFERENT name. Same-name replacements (e.g. SEBI (Prohibition of Insider Trading) Regulations 1992 -> 2015) are found automatically from embedding/legislation_labels.json and need no entry here. 'mention' is a case-insensitive regular expression for how the old instrument is written in text; 'unless' (optional) is a regular expression that, when it also matches, means the passage covers the current law too.",
+  "instruments": [
+    {
+      "title": "Foreign Exchange Regulation Act, 1973",
+      "successor": "Foreign Exchange Management Act, 1999",
+      "mention": "foreign exchange regulation act,?\\s*1973|\\bFERA\\b",
+      "unless": "foreign exchange management act|\\bFEMA\\b"
+    },
+    {
+      "title": "Foreign Exchange Management (Transfer or Issue of Security by a Person Resident Outside India) Regulations, 2017",
+      "successor": "Foreign Exchange Management (Non-debt Instruments) Rules, 2019",
+      "mention": "transfer or issue of security by a person resident outside india\\)?\\s*regulations,?\\s*(?:2000|2017)|FEMA\\s*20\\s*(?:\\(R\\))?(?:\\s*/\\s*20\\d\\d)?",
+      "unless": "non-?debt instruments?\\)?\\s*rules"
+    },
+    {
+      "title": "Foreign Exchange Management (Acquisition and Transfer of Immovable Property in India) Regulations, 2018",
+      "successor": "Foreign Exchange Management (Non-debt Instruments) Rules, 2019",
+      "mention": "acquisition and transfer of immovable property in india\\)?\\s*regulations,?\\s*(?:2000|2018)",
+      "unless": "non-?debt instruments?\\)?\\s*rules"
+    },
+    {
+      "title": "SEBI (Disclosure and Investor Protection) Guidelines, 2000",
+      "successor": "SEBI (Issue of Capital and Disclosure Requirements) Regulations, 2018",
+      "mention": "disclosure and investor protection\\)?\\s*guidelines|\\bDIP guidelines\\b",
+      "unless": "issue of capital and disclosure requirements"
+    },
+    {
+      "title": "Listing Agreement (Clause 49 and other clauses)",
+      "successor": "SEBI (Listing Obligations and Disclosure Requirements) Regulations, 2015",
+      "mention": "clause\\s*(?:49|36|35|41)\\s*of\\s*the\\s*(?:equity\\s*)?listing agreement",
+      "unless": "listing obligations and disclosure requirements|\\bLODR\\b"
+    },
+    {
+      "title": "Sick Industrial Companies (Special Provisions) Act, 1985",
+      "successor": "Insolvency and Bankruptcy Code, 2016",
+      "mention": "sick industrial companies \\(special provisions\\) act|\\bSICA\\b|\\bBIFR\\b",
+      "unless": "insolvency and bankruptcy code|\\bIBC\\b"
+    },
+    {
+      "title": "Monopolies and Restrictive Trade Practices Act, 1969",
+      "successor": "Competition Act, 2002",
+      "mention": "monopolies and restrictive trade practices act|\\bMRTP\\b",
+      "unless": "competition act,?\\s*2002"
+    },
+    {
+      "title": "Company Law Board",
+      "successor": "National Company Law Tribunal",
+      "mention": "company law board|\\bCLB\\b",
+      "unless": "national company law tribunal|\\bNCLT\\b"
+    }
+  ]
+}

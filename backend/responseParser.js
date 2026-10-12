@@ -72,7 +72,8 @@ function parseAnswerAndSuggestions(rawAnswer) {
   let answer = cleanResponseText(rawAnswer);
   let suggestions = [];
 
-  const markerRegex = /(?:\*\*|__)?\s*---SUGGESTIONS---\s*(?:\*\*|__)?/i;
+  // The model sometimes spaces the tag ("--- SUGGESTIONS ---"); every spelling ends the answer.
+  const markerRegex = /(?:\*\*|__)?\s*-{2,}\s*SUGGESTIONS\s*-{2,}\s*(?:\*\*|__)?/i;
   const match = markerRegex.exec(answer);
 
   if (match) {

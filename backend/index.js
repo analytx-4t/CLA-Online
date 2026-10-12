@@ -31,7 +31,10 @@ const { handleAdminRoutes } = require('./adminRoutes');
 const { startDbSyncScheduler } = require('./dbSync/service');
 const { getEvaluationToggle } = require('./settingsStore');
 const { cohereRerank } = require('./cohereReranker');
-const { buildContextBlock, finalizeAnswer } = require('./citations');
+const { buildContextBlock, finalizeAnswer, normalizeAnswerStructure } = require('./citations');
+const { rankByAuthority, selectContext, describeRequest, definedTermsAskedAbout, splitInstruments } = require('./legalAuthority');
+const { verifyAnswer } = require('./answerVerifier');
+const { condenseIfLong } = require('./answerCondenser');
 const { renderCitationPage, renderCitationNotFound } = require('./citationPage');
 const { checkBookPdf, presignBookPdf } = require('./bookPdf');
 const { normalizeLegalQuery } = require('./legalQueryNormalizer');
@@ -638,7 +641,7 @@ function getPythonExecutable() {
   return 'python3';
 }
 
-function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null, inferredSections = [], primaryAct = null) {
+function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null, inferredSections = [], primaryAct = null, options = {}) {
   return new Promise((resolve, reject) => {
     // Validate embedding configuration before retrieval
     validateEmbeddingConfiguration();
@@ -670,6 +673,10 @@ function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null, in
       if (code !== 0) {
         return reject(new Error(`Python process exited with code ${code}. Stderr: ${stderr}`));
       }
+      // The search degrades instead of failing (e.g. definitions not resolved); say so.
+      if (stderr.trim()) {
+        console.warn(`[Python Search] ${stderr.trim().split(/\r?\n/).slice(-6).join(' | ').slice(0, 1200)}`);
+      }
       try {
         const result = JSON.parse(stdout);
         if (result.error) {
@@ -687,7 +694,15 @@ function runPythonSearch(query, topK = 5, hybrid = true, sourceFilter = null, in
       hybrid: hybrid,
       source_filter: sourceFilter,
       inferred_sections: inferredSections,
-      primary_act: primaryAct
+      primary_act: primaryAct,
+      // The expanded legal query drives the legislation and notification searches.
+      primary_query: options.primaryQuery || null,
+      // Defined terms whose statutory definitions are read from the governing instrument.
+      defined_terms: Array.isArray(options.definedTerms) ? options.definedTerms : [],
+      // Instrument titles among the keywords are searched on their own, with their amendments.
+      keywords: Array.isArray(options.keywords) ? options.keywords : [],
+      // The question as asked, for the keyword scan inside the governing instruments.
+      question: options.question || null
     });
 
     child.stdin.write(inputPayload);
@@ -850,99 +865,98 @@ function heuristicRerankSearchResults(query, results, topK = 5) {
   return (relevantResults.length > 0 ? relevantResults : ranked).slice(0, topK);
 }
 
-async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = null, expansionKeywords = [], inferredSections = [], primaryAct = null) {
-  const normRetrieval = normalizeLegalQuery(retrievalQuery);
-  const targetQuestion = normalizeLegalQuery(originalQuestion || retrievalQuery);
+const RERANK_KEYWORD_COUNT = 6;
 
-  // For keyword (SQL LIKE) fallback, use a focused string: original question + top keywords
-  // This avoids the bloated expanded paragraph being tokenized into noise by the Python fallback
-  const keywordFocusedQuery = [
-    originalQuestion || originalQuestion,
-    ...expansionKeywords.slice(0, 8)
-  ].filter(Boolean).join(' ');
+// File names of the book passages whose PDF can actually be opened. A book the reader cannot
+// open is not offered to the answer model, so it can never be cited.
+async function findUsableBooks(chunks) {
+  const fileNames = [...new Set(chunks.filter((c) => c.is_book).map((c) => String(c.file_name || '')))].filter(Boolean);
+  const checks = await Promise.all(fileNames.map(async (fileName) => {
+    try {
+      return (await checkBookPdf(fileName)).available ? fileName : null;
+    } catch (error) {
+      console.warn(`[Prioritized Search] Book availability check failed for ${fileName}: ${error.message}`);
+      return null;
+    }
+  }));
+  return new Set(checks.filter(Boolean));
+}
+
+/**
+ * Retrieval for one question.
+ *
+ * 1. Candidates: a search across every table, plus the legislation and the notification /
+ *    circular tables searched on their own, plus the statutory definitions of the defined
+ *    terms the question turns on (read whole from the governing instrument).
+ * 2. Rerank by relevance to the question.
+ * 3. Rank by authority and currency, drop what is not current law, and cap each kind of
+ *    source so primary law leads and articles and books only support.
+ *
+ * @param {Object} options { expandedQuery, definedTerms, currencyMode }
+ */
+async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = null, analysisKeywords = [], inferredSections = [], namedPrimaryAct = null, options = {}) {
+  const targetQuestion = normalizeLegalQuery(originalQuestion || retrievalQuery);
+  // "X Regulations, 2015 read with the Y Act, 1992": X governs, Y is searched as a related instrument.
+  const [primaryAct = null, ...relatedInstruments] = splitInstruments(namedPrimaryAct);
+  const expansionKeywords = [...relatedInstruments, ...(analysisKeywords || [])];
+
+  // The general search uses the question plus the leading keywords: the full expanded
+  // paragraph is too diffuse for one embedding. The expanded paragraph is used for the
+  // primary-law searches, where naming the instrument and provision is what matters.
+  const keywordFocusedQuery = [originalQuestion, ...(analysisKeywords || []).slice(0, 8)].filter(Boolean).join(' ');
   const normKeywordQuery = normalizeLegalQuery(keywordFocusedQuery || retrievalQuery);
 
-  console.log(`[Prioritized Search] Keyword-focused query: "${normKeywordQuery.slice(0, 200)}..."`)
+  console.log(`[Prioritized Search] Keyword-focused query: "${normKeywordQuery.slice(0, 200)}..."`);
 
-  // Step 1: Sequential candidate retrieval (avoids ODBC connection contention)
-  // Legislation max 35 candidates, Other tables max 60 candidates
   let candidateChunks = [];
-
   try {
-    const rawRes = await runPythonSearch(normKeywordQuery, 60, true, null, inferredSections, primaryAct).catch(err => {
-      console.error('[Prioritized Search] Retrieval failed:', err.message);
-      return [];
+    const rawRes = await runPythonSearch(normKeywordQuery, 60, true, null, inferredSections, primaryAct, {
+      primaryQuery: options.expandedQuery || (retrievalQuery !== normKeywordQuery ? retrievalQuery : null),
+      definedTerms: definedTermsAskedAbout(options.definedTerms || [], originalQuestion || retrievalQuery),
+      keywords: expansionKeywords,
+      question: targetQuestion,
     });
     candidateChunks = Array.isArray(rawRes) ? rawRes : [];
   } catch (err) {
     console.error('[Prioritized Search] Candidate retrieval failed:', err.message);
   }
 
-  // Step 2: Rerank candidate chunks using Cohere / Heuristic Reranker
-  const rerankedResults = candidateChunks.length > 0
-    ? await rerankSearchResults(targetQuestion, candidateChunks, 60)
+  const pinnedDefinitions = candidateChunks.filter((c) => c.pinned);
+  const searchedChunks = candidateChunks.filter((c) => !c.pinned);
+
+  // The reranker judges each passage against the question. A short question ("we filed the
+  // form late") says little about the regime it belongs to, so the governing instrument and
+  // the leading legal terms from the query analysis are added: with them the governing
+  // provision outranks a general article on the topic.
+  const rerankHints = [primaryAct, ...(analysisKeywords || []).slice(0, RERANK_KEYWORD_COUNT)].filter(Boolean);
+  const rerankQuery = rerankHints.length ? `${targetQuestion} (${rerankHints.join('; ')})` : targetQuestion;
+  const rerankedResults = searchedChunks.length > 0
+    ? await rerankSearchResults(rerankQuery, searchedChunks, 60)
     : [];
+  const hasCohereScores = rerankedResults.some((r) => Number.isFinite(r.cohere_relevance_score));
 
-  // Step 3: Relevance filter. Only passages the reranker judges on point reach the answer
-  // model, so only relevant sources can ever be cited. Caps keep one table or one long
-  // document from crowding out the rest.
-  const TOP_CHUNKS_PER_TABLE = 5;
-  const TOP_CHUNKS_PER_DOCUMENT = 3;
-  const MAX_CONTEXT_CHUNKS = 16;
-  const MIN_CONTEXT_CHUNKS = 4;
-
-  // Cohere's raw score is the relevance signal when the reranker ran; the heuristic fallback
-  // only produces backend_relevance_score.
-  const hasCohereScores = rerankedResults.some(r => Number.isFinite(r.cohere_relevance_score));
-  const relevanceOf = (r) => (hasCohereScores ? (r.cohere_relevance_score || 0) : (r.backend_relevance_score || 0));
-  const topRelevance = rerankedResults.reduce((max, r) => Math.max(max, relevanceOf(r)), 0);
-  const minRelevance = hasCohereScores
-    ? Math.max(0.12, topRelevance * 0.4)
-    : Math.max(0.20, topRelevance * 0.35);
-
-  // When even the best passage scores this low, nothing retrieved is on point: answer
-  // "could not find authority" instead of building an answer on unrelated material.
-  // (Measured on real questions: answerable ones top out at 0.8 or more, questions the
-  // database does not cover at 0.27 or less.)
-  const NO_AUTHORITY_RELEVANCE = 0.30;
-  const nothingOnPoint = hasCohereScores && topRelevance < NO_AUTHORITY_RELEVANCE;
-
-  let filteredRerankedResults = nothingOnPoint ? [] : rerankedResults.filter(r => relevanceOf(r) >= minRelevance);
-  if (!nothingOnPoint && filteredRerankedResults.length < MIN_CONTEXT_CHUNKS) {
-    // A very strong single hit must not starve the answer of supporting context.
-    filteredRerankedResults = [...rerankedResults]
-      .sort((a, b) => relevanceOf(b) - relevanceOf(a))
-      .slice(0, Math.min(MIN_CONTEXT_CHUNKS, rerankedResults.length));
-  }
-
-  const applyCaps = (results) => {
-    const perTable = {};
-    const perDocument = {};
-    const kept = [];
-    const ordered = [...results].sort((a, b) => (b.backend_relevance_score || 0) - (a.backend_relevance_score || 0));
-    for (const r of ordered) {
-      if (kept.length >= MAX_CONTEXT_CHUNKS) break;
-      const tableKey = (r.source_table || 'unknown').trim().toLowerCase();
-      const documentKey = r.is_book
-        ? `${tableKey}|${r.file_name}|${r.page_number || r.parent_id}`
-        : `${tableKey}|${r.record_id}`;
-      if ((perTable[tableKey] || 0) >= TOP_CHUNKS_PER_TABLE) continue;
-      if ((perDocument[documentKey] || 0) >= TOP_CHUNKS_PER_DOCUMENT) continue;
-      perTable[tableKey] = (perTable[tableKey] || 0) + 1;
-      perDocument[documentKey] = (perDocument[documentKey] || 0) + 1;
-      kept.push(r);
-    }
-    return kept;
+  const authorityContext = {
+    primaryAct,
+    mode: options.currencyMode || '',
+    question: originalQuestion || retrievalQuery,
   };
+  const ranked = rankByAuthority([...pinnedDefinitions, ...rerankedResults], authorityContext);
+  const usableBooks = await findUsableBooks(ranked);
+  const { context, stats } = selectContext(ranked, {
+    usableBooks,
+    relevanceIsCalibrated: hasCohereScores,
+    historical: describeRequest(authorityContext).historical,
+  });
 
-  const combinedResults = applyCaps(filteredRerankedResults);
-  console.log(`[Prioritized Search] Relevance filter kept ${filteredRerankedResults.length}/${rerankedResults.length} chunks (min relevance ${minRelevance.toFixed(2)}, top ${topRelevance.toFixed(2)}); ${combinedResults.length} sent to the answer model.`);
+  console.log(`[Prioritized Search] ${candidateChunks.length} candidates -> ${context.length} passages for the answer. ${JSON.stringify(stats)}`);
 
+  const combinedResults = context;
   // Attach object properties to array for backwards compatibility
   combinedResults.results = combinedResults;
   combinedResults.legislationResults = combinedResults.filter(r => (r.source_table || '').toLowerCase().includes('legis'));
   combinedResults.otherResults = combinedResults.filter(r => !(r.source_table || '').toLowerCase().includes('legis'));
   combinedResults.candidateCount = candidateChunks.length;
+  combinedResults.selectionStats = stats;
 
   return combinedResults;
 }
@@ -1623,11 +1637,16 @@ async function startServer() {
               topK: 9,
               performSearch: async () => {
                 return await performPrioritizedLegalSearch(
-                  retrievalQuery, 
-                  question, 
+                  retrievalQuery,
+                  activeQuery,
                   expansionKeywords,
                   queryExpansion.inferredSections || [],
-                  queryExpansion.primaryAct || null
+                  queryExpansion.primaryAct || null,
+                  {
+                    expandedQuery,
+                    definedTerms: queryExpansion.definedTerms || [],
+                    currencyMode: queryExpansion.currencyRequirement || '',
+                  }
                 );
               },
               requestContext: req.requestContext,
@@ -1748,11 +1767,15 @@ OUTPUT RULES FOR THIS CONVERSATION (these override anything above that conflicts
 The user message holds the question and a Search Context of numbered passages, each starting with "[Source N]". Those passages are the only material you may answer from.
 
 1. CITATIONS. End every sentence or list item that states law, a holding, a procedural step or a fact taken from the Search Context with the number of the passage it came from, in square brackets, e.g. "...by special resolution [3]." Use the number N from that passage's "[Source N]" label. Cite only the passage that actually states the point; when two passages state it, write [3][7]. Never cite a passage only because it is on the same topic, never invent a number, and never write a range or a long run of numbers. A sentence that merely links or sums up points already cited needs no marker. Do not put a source's title or file name in place of the marker, and do not write a "Sources" or "Sources Used" list: the interface shows the numbered sources under your answer.
+1A. AUTHORITY AND CURRENCY. Each passage has a Type and usually an "Authority:" line; some have a "Currency:" line. State what the law is from primary law (the Act, Rules or Regulations, then notifications and circulars) and cite that passage. A passage headed "Statutory definition of:" is the complete definition with its provision number: quote or closely follow it. Commentary, articles, books, expert queries and regulator papers are not law: use them only to explain, never as the citation for what a provision says, and never take a number, threshold, time limit or list from them. Where passages conflict, the newer effective primary text wins. Never state as current law anything from a passage whose Currency line says it concerns a replaced instrument or pre-dates the governing one, and do not add how the law used to read unless the question asks.
+1B. ANSWER FIRST, THEN STOP. The first sentence of the Overview answers the question or states the governing provision with its number. Synthesise by legal point; never go through the passages one by one or report what an article "says". Do not add obligations, compliance steps, penalties, rationale or history that the question did not ask for. Before each sub-heading ask whether the question asked for it; if it did not, leave it out (asked when a duty arises, do not go on to how it is discharged). A single-issue question takes about 150 to 350 words and never more than 400. Summarise a long statutory list by the kinds of item in it, naming only the items the question turns on, unless the question asks for the list itself.
+1C. DEFINITIONS. For "who is / what is / is X a ..." questions: give the statutory definition first with its provision number; then, in the order the definition uses them, explain each defined term inside it that is needed to apply it, each with its own provision number (for example insider -> connected person, including persons deemed connected -> unpublished price sensitive information). Where a definition deems a class of persons or things to fall within the term, always say so and say what kind of persons they are, even when you do not list them all. Define a term before discussing restrictions on it. For a status question ("is X a ...?") state the definition's limbs and go into a defined term only as far as the status turns on it: do not set out every deemed category or listed item. Only the limbs written in a definition are categories of the defined term: a class created elsewhere for compliance purposes (such as persons designated under a code of conduct) is a compliance category whose members fall within the definition only if they meet one of its limbs. Never call such a class a type, category or sub-set of the defined term. For any other kind of question (a threshold, a time limit, a procedure, a consequence) do not add a section of definitions: use a defined term's meaning only in the sentence that needs it.
 2. STRUCTURE. Use exactly three main headings, each on its own line in exactly this form: "## Overview", "## Analysis", "## Conclusion". Every sub-heading inside the Analysis goes on its own line as "### Sub-heading text". Never use bold text as a heading and never add any other "##" heading.
 3. STANDALONE ANSWER. Write a finished piece of legal analysis for the reader. Never describe how it was produced: do not mention "the database", "the sources provided", "the retrieved material", "the context", source agents, or what was or was not found, and do not write about gaps, missing material or what "could not be confirmed". Where the passages do not support a point, leave that point out without comment and answer the rest fully. Only if the passages do not address the core of the question at all, reply with exactly this one sentence and nothing else: "I could not find authority on this in the CLAOnline database. Please try rephrasing or narrowing your question."
 4. OPENING. Begin the Overview with the legal position itself. No preamble such as "Based on...".
 5. HIGHLIGHT. Wrap one to three key rules or holdings in double equal signs, e.g. ==Section 135 requires qualifying companies to spend 2% of average net profits on CSR==.
 6. CLOSING. End the answer with this line: "This is legal research, not legal advice. Please verify against the primary source."
+6A. LENGTH LIMIT. From the Overview heading to the end of the Conclusion: at most 400 words when the question raises one issue, at most 650 when it has two or more parts or asks for a procedure. Before you finish, count; if you are over, cut repeated points and long lists first.
 7. FOLLOW-UPS. After that line, add the exact tag '---SUGGESTIONS---' followed by 3 follow-up questions the user might ask next, one per line.
 Example:
 ---SUGGESTIONS---
@@ -1917,9 +1940,50 @@ What is the penalty for violating this provision?`;
 
             suggestions = parsedResponse.suggestions;
 
+            // Citation and currency check: each cited sentence is compared with the passage it
+            // cites. A wrong citation is corrected; a sentence no current passage supports is
+            // removed before the answer is shown.
+            const checkerModel = (request) => getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini').generate(request);
+            // Length: a draft over the word limit for its kind of question is shortened first,
+            // so the citation check below runs on the text the reader will actually get.
+            const condensed = await condenseIfLong({
+              answer: normalizeAnswerStructure(parsedResponse.answer),
+              question: activeQuery,
+              generate: checkerModel,
+            });
+            console.log(`[RAG Endpoint] Length: ${JSON.stringify(condensed.stats)}`);
+
+            const verificationStartedAt = Date.now();
+            const verification = await verifyAnswer({
+              answer: condensed.answer,
+              results,
+              question: activeQuery,
+              generate: checkerModel,
+            });
+            const verificationTimeMs = Date.now() - verificationStartedAt;
+            console.log(`[RAG Endpoint] Citation and currency check (${verificationTimeMs} ms): ${JSON.stringify(verification.stats)}`);
+
+            serverLogs.push({
+              step: 5,
+              agent: 'Citation & Currency Verifier',
+              title: 'Step 5: Citation Support & Legal Currency Check',
+              status: verification.stats.error ? 'failed' : 'completed',
+              timeMs: verificationTimeMs,
+              provider: 'openai',
+              model: settings.OPENAI_MODEL || 'gpt-4.1-mini',
+              agentRole: 'Second-model check of every cited sentence against the passage it cites',
+              agentMandate: 'Confirms that each cited passage actually states the proposition attributed to it, that statements of what a provision says cite the primary text, and that nothing is presented as current law on the strength of superseded or pre-dating material. Corrects wrong citations and removes unsupported or outdated sentences.',
+              agentInput: 'Draft answer with [Source N] markers + the numbered passages with their authority and currency labels',
+              agentOutput: 'Verdict per cited sentence (SUPPORTED / WRONG_SOURCE / UNSUPPORTED / NOT_CURRENT) and the corrected answer',
+              summary: verification.stats.error
+                ? `Check could not be completed (${verification.stats.error}); the draft was used as written.`
+                : `Checked ${verification.stats.claims} cited sentences: ${verification.stats.supported} confirmed, ${verification.stats.reattributed} citation(s) corrected, ${verification.stats.removed} sentence(s) removed.`,
+              details: verification.stats,
+            });
+
             // Keep only the sources the answer cites, rank them by relevance, and renumber
             // the inline markers to match: [1] in the text is source 1 in the list.
-            const finalized = finalizeAnswer(parsedResponse.answer, results);
+            const finalized = finalizeAnswer(verification.answer, results);
             answerText = finalized.answer;
             const citedSources = finalized.sources;
 
@@ -2175,7 +2239,26 @@ What is the penalty for violating this provision?`;
                 law_title: r.law_title,
                 doc_date: r.doc_date,
                 score: r.score || r.rrf_score,
+                // Legal metadata each passage was ranked and labelled with.
+                file_name: r.file_name || null,
+                is_book: Boolean(r.is_book),
+                provision_ref: r.provision_ref || null,
+                defined_term: r.defined_term || null,
+                pinned: Boolean(r.pinned),
+                authority_tier: r.authority_tier || null,
+                authority_rank: r.authority_rank || null,
+                currency_status: r.currency_status || null,
+                currency_note: r.currency_note || null,
+                title_verified: r.title_verified !== false,
+                is_amendment: Boolean(r.is_amendment),
+                instrument_year: r.instrument_year || null,
+                last_amended: r.last_amended || null,
+                relevance: Number.isFinite(r.relevance) ? r.relevance : null,
               })),
+              // What retrieval dropped (stale, unverified, inaccessible) and what the check changed.
+              retrieval: results.selectionStats || null,
+              verification: verification.stats,
+              length: condensed.stats,
               evaluation: evaluation
             }));
           } catch (err) {
@@ -2585,8 +2668,13 @@ What is the penalty for violating this provision?`;
                   parseAnswerAndSuggestions(answerText);
 
                 suggestions = parsedResponse.suggestions;
-                // Same citation step as /api/ask: cited sources only, ranked, numbered [1], [2] ...
-                const finalized = finalizeAnswer(parsedResponse.answer, results);
+                // Same checks as /api/ask: each cited sentence against its passage, then cited
+                // sources only, ranked, numbered [1], [2] ...
+                const checkerModel = (request) => getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini').generate(request);
+                const condensed = await condenseIfLong({ answer: normalizeAnswerStructure(parsedResponse.answer), question: activeSessionQuery, generate: checkerModel });
+                const verification = await verifyAnswer({ answer: condensed.answer, results, question: activeSessionQuery, generate: checkerModel });
+                console.log(`[Chat RAG] Citation and currency check: ${JSON.stringify(verification.stats)}`);
+                const finalized = finalizeAnswer(verification.answer, results);
                 answerText = finalized.answer;
                 uniqueSources = finalized.sources;
               }

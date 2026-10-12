@@ -399,6 +399,44 @@ Run state, history and logs live in `embedding/sync_state/` (not in git). Deleti
 
 ---
 
+## Part 5: Retrieval Authority, Legal Currency and Answer Verification
+
+Released October 2026 in response to client feedback (outdated law in answers, articles ranked above primary law, unsupported citations, long answers, definitions not resolved). Deploying it is the normal quick redeployment in Part 1: `git pull`, then `pm2 restart cla-backend`. There are no new Node or Python packages and no new `.env` variables.
+
+What runs for each question now:
+
+| Stage | File | What it does |
+| :--- | :--- | :--- |
+| Search | `embedding/search_documents.py`, `instrument_retrieval.py`, `keyword_scan.py` | Searches every table, then the legislation and the notification / circular tables on their own, then inside the instruments the query analysis named (by meaning and by keyword), and fetches their most recent amendment notifications. |
+| Definitions | `embedding/definition_resolver.py` | For "who is / what is" questions, reads the statutory definition and the defined terms it uses whole from the instrument, with provision numbers. |
+| Ranking | `backend/legalAuthority.js` | Orders passages Act / Rules / Regulations, notifications, circulars, case law, commentary, articles, books. Drops superseded instruments, amendments to them, articles that pre-date the governing instrument, legislation with an unverified title and books whose PDF cannot be opened. |
+| Length | `backend/answerCondenser.js` | Shortens a draft over 400 words (650 for a two-part or procedural question). |
+| Verification | `backend/answerVerifier.js` | Checks every cited sentence, and every uncited statement of law, against the passages; corrects citations and removes unsupported or outdated sentences. |
+
+Two data files are part of the release and are read at run time:
+
+- `embedding/legislation_catalogue.json`: the latest amendment date recorded in each legislation file. Rebuild it after a legislation refresh (read-only scan of the index, about three minutes):
+  ```bash
+  cd /var/www/cla-online
+  ./embedding/venv/bin/python embedding/build_legislation_catalogue.py
+  pm2 restart cla-backend
+  ```
+- `backend/supersededInstruments.json`: instruments replaced by one with a different name (e.g. FEMA 20 by the Non-debt Instruments Rules). Same-name replacements (Insider Trading Regulations 1992 by 2015) are detected automatically from `embedding/legislation_labels.json`. Add an entry here when the client reports an old instrument being treated as current, then restart the backend.
+
+Checking a deployment (each needs the backend running; set `BASE_URL` to it):
+
+```bash
+cd /var/www/cla-online/backend
+BASE_URL=http://localhost:3000 REPEAT=2 OUT=/tmp/answers.json node tests/clientFeedback.check.js   # every client point, on real answers
+BASE_URL=http://localhost:3000 node tests/sourceLinks.check.js /tmp/answers.json                 # every cited source and book opens
+node tests/answerVerifier.live.check.js                                                         # the verifier catches planted errors
+../embedding/venv/bin/python ../embedding/check_definition_references.py                         # provision numbers of pinned definitions
+```
+
+> These checks ask real questions, so they call the LLM providers and write evaluation records like any chat traffic.
+
+---
+
 ## Troubleshooting Cheat Sheet
 
 | Symptom | Cause | Solution |

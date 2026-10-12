@@ -126,7 +126,7 @@ CRITICAL DIRECTIVES:
 1. DO NOT ANSWER THE QUESTION. DO NOT EXPLAIN THE LAW TO THE USER. DO NOT WRITE AN ANSWER OR SUMMARY.
 2. ZERO EXAGGERATION & STRICT INTENT LOCK: Do NOT invent unmentioned facts, unstated party roles, or hypothetical monetary figures. Maintain 100% fidelity to the user's original legal intent.
 3. REASONED LEGAL ANCHORS: Show your legal reasoning as you build each anchor. State WHY an anchor points to a specific Act/section/concept so the retrieval engine understands the legal basis, not just surface keywords.
-4. STRICT OUTPUT FORMAT: Output ONLY the 8 requested keys exactly as formatted below.
+4. STRICT OUTPUT FORMAT: Output ONLY the 9 requested keys exactly as formatted below.
 
 ENTERPRISE ADVOCATE-LEVEL QUERY EXPANSION PROTOCOLS:
 
@@ -168,19 +168,28 @@ Extract a comprehensive, comma-separated list of exact search tokens, variants, 
 - Landmark Case Names & Citations (e.g., "Tata Consultancy Services v Cyrus Investments", "Rahul Vijaybhai Kansara v Naran Lala", "Union of India v Alliage Engineering", "P Mohanraj v Shah Brothers")
 - Core Legal Phrasing / Headnote Terms / Maxims (e.g., "oppression and mismanagement", "quasi-partnership", "registration of charge", "digital signature default", "bonus shares non-resident", "land border beneficial owner", "dishonour of cheque", "moratorium", "lex specialis").
 
+STEP 5A — DEFINED TERMS THE ANSWER TURNS ON (DEFINED_TERMS):
+When the question asks who or what something is ("Who is an insider?", "What is UPSI?", "Is X a related party?", "Does Y have control?"), or its answer depends on whether a person, entity or transaction falls inside a term that the governing instrument defines, list those defined terms. Their statutory definitions are then read from the instrument itself, so the answer states the law's own words.
+- First the root term the question turns on, worded as the instrument words it (e.g. insider; related party; control; person resident outside India).
+- Then, in dependency order, each further DEFINED term that the root definition itself uses and that must be read to apply it (e.g. insider -> connected person -> unpublished price sensitive information; related party -> relative -> key managerial personnel).
+- Write each term in full as the instrument does ("unpublished price sensitive information", not "UPSI").
+- List only terms defined in the definitions clause of the PRIMARY_ACT. Do not list ordinary words, provision numbers, or compliance categories that the instrument uses but does not define there (e.g. "designated persons" under a code of conduct).
+- Maximum 5 terms. If no defined term decides the question, write NONE. A question about a threshold, time limit, procedure, filing or consequence is not a definition question: write NONE for it unless it also asks who or what something is.
+
 STEP 6 — RICH CANONICAL EXPANDED QUERY PARAGRAPH (EXPANDED_QUERY):
 Construct a dense, semantically rich, meaning-preserving legal query paragraph combining the reframed advocate analysis, statutory provisions, rules, notifications, circulars, press notes, form names, and landmark judicial decisions so that vector and hybrid retrieval engines retrieve exact governing chunks from the database.
 
 STRICT OUTPUT FORMAT REQUIREMENT:
-DO NOT ADD ANY INTRODUCTORY OR CONCLUDING PREAMBLE. OUTPUT ONLY THE 8 KEYS EXACTLY AS SHOWN:
+DO NOT ADD ANY INTRODUCTORY OR CONCLUDING PREAMBLE. OUTPUT ONLY THE 9 KEYS EXACTLY AS SHOWN:
 
 EXPANDED_QUERY: <rich, canonical, statutory-enriched, advocate-reasoned query paragraph for vector and hybrid retrieval>
 KEYWORDS: <comma-separated list of exact section numbers, Act names, statutory acronyms, press notes, forms, forums, landmark cases, and legal headnote terms>
-INFERRED_SECTIONS: <comma-separated list of relevant section numbers inferred from query context, e.g. Section 77, Section 78, Section 241, Section 242, or NONE>
+INFERRED_SECTIONS: <the operative provision(s) of the PRIMARY_ACT that state the rule the question asks about, each written with its kind, e.g. Section 188, Regulation 3, Regulation 4, Rule 21. Name the provision that answers the question (the charging, prohibiting or enabling provision), not only the definitions section; or NONE>
 PRIMARY_ACT: <canonical title of primary governing Act, e.g. Companies Act 2013, Insolvency and Bankruptcy Code 2016, FEMA 1999, NI Act 1881, or NONE>
 ACT_FILTER: <canonical title and year of governing Act, e.g. Companies Act 2013, or NONE>
 CURRENCY_REQUIREMENT: <as_of: today; mode = CURRENT / POINT_IN_TIME / COMPARISON / LEGACY_GOVERNS>
 SUGGESTED_FILTERS: <comma-separated key-value filters such as Act: Companies Act 2013, Regulator: MCA, Jurisdiction: NCLAT, or NONE>
+DEFINED_TERMS: <root defined term -> defined term used inside its definition -> ... (max 5, in dependency order, from the PRIMARY_ACT); or NONE>
 CLARIFYING_QUESTION: <one short clarifying question ONLY if missing critical constraint makes legal lookup impossible; else NONE>
 ```
 
