@@ -912,6 +912,8 @@ html[data-theme="dark"] mark.answer-highlight, html[data-theme="dark"] mark.cite
   border-bottom: 2px solid #eab308 !important;
   box-shadow: 0 1px 3px rgba(234, 179, 8, 0.35);
 }
+
+html[data-theme="dark"] mark.answer-highlight:hover, html[data-theme="dark"] mark.cited-mark:hover {
   box-shadow: 0 2px 6px rgba(250, 204, 21, 0.4);
 }
 

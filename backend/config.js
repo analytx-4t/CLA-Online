@@ -25,6 +25,17 @@ const settings = {
   PROMPT_FILE: process.env.PROMPT_FILE || 'CLAOnline_Agent_Prompts_FINAL.md',
   QUERY_EXPANSION_ONTOLOGY_FILE: process.env.QUERY_EXPANSION_ONTOLOGY_FILE || 'CLA_Query_Expansion_Ontology.md',
 
+  // Reasoning Agent: runs after query expansion and writes the answer (see backend/reasoningAgent.js).
+  REASONING_AGENT_ENABLED: !/^(0|false|no|off)$/i.test(process.env.REASONING_AGENT_ENABLED || 'true'),
+  REASONING_AGENT_PROVIDER: process.env.REASONING_AGENT_PROVIDER || 'openai',
+  REASONING_AGENT_MODEL: process.env.REASONING_AGENT_MODEL || 'gpt-6-luna',
+  REASONING_AGENT_EFFORT: process.env.REASONING_AGENT_EFFORT || 'medium',
+  REASONING_AGENT_PROMPT_FILE: process.env.REASONING_AGENT_PROMPT_FILE || 'CLA_Reasoning_Layer_System_Prompt.txt',
+  REASONING_AGENT_MAX_TOOL_ROUNDS: parseInt(process.env.REASONING_AGENT_MAX_TOOL_ROUNDS || '5', 10),
+  REASONING_AGENT_MAX_SEARCHES: parseInt(process.env.REASONING_AGENT_MAX_SEARCHES || '20', 10),
+  REASONING_AGENT_TIME_BUDGET_MS: parseInt(process.env.REASONING_AGENT_TIME_BUDGET_MS || '150000', 10),
+  REASONING_AGENT_MAX_OUTPUT_TOKENS: parseInt(process.env.REASONING_AGENT_MAX_OUTPUT_TOKENS || '16000', 10),
+
   // Pinecone Configuration
   PINECONE_API_KEY: process.env.PINECONE_API_KEY || '',
   PINECONE_INDEX_NAME: process.env.PINECONE_INDEX_NAME || 'cla-online',

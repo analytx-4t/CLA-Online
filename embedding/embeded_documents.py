@@ -32,9 +32,8 @@ load_dotenv()
 
 # ---------- CONFIGURATION ----------
 
-NEON_DB_URI = os.getenv("NEON_DB_URI") or os.getenv("DATABASE_URL") or (
-    "postgresql://neondb_owner:npg_V2epn6DfNqmJ@ep-wandering-fog-ayy57526-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-)
+# The connection string comes from the environment only; it is never kept in the code.
+NEON_DB_URI = os.getenv("NEON_DB_URI") or os.getenv("DATABASE_URL")
 
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
@@ -434,6 +433,8 @@ def process_source(conn, source_name, query):
 
 
 def main():
+    if not NEON_DB_URI:
+        raise SystemExit("Set NEON_DB_URI (or DATABASE_URL) in the environment before running this script.")
     conn = psycopg2.connect(NEON_DB_URI)
     try:
         for source_name in ACTIVE_SOURCES:

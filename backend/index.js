@@ -10,17 +10,12 @@ const { ObjectId } = require('mongodb');
 const { connectDB, closeDB } = require('./mongoClient');
 const { getProviderHealth, settings, getEmbeddingConfig } = require('./config');
 const { getLLMProvider } = require('./llm/factory');
-const { traceLLMGeneration, traceRequest, traceRequestStage } = require('./langsmith');
 const {
-  traceUserRequest,
+  traceLLMGeneration,
   traceGuardrails,
   traceQueryExpansion,
-  traceEmbedding,
   traceRetrieval,
-  traceReranking,
   tracePromptConstruction,
-  traceRAGEvaluation,
-  traceMongoPersistence,
   traceError,
 } = require('./langsmith');
 const { runFullEvaluation } = require('./llm/judge');
@@ -34,6 +29,7 @@ const { cohereRerank } = require('./cohereReranker');
 const { buildContextBlock, finalizeAnswer, normalizeAnswerStructure } = require('./citations');
 const { rankByAuthority, selectContext, describeRequest, definedTermsAskedAbout, splitInstruments } = require('./legalAuthority');
 const { verifyAnswer } = require('./answerVerifier');
+const { runReasoningAgent, splitAtSources } = require('./reasoningAgent');
 const { condenseIfLong } = require('./answerCondenser');
 const { renderCitationPage, renderCitationNotFound } = require('./citationPage');
 const { checkBookPdf, presignBookPdf } = require('./bookPdf');
@@ -123,7 +119,23 @@ function updateRequestProgress(requestId, patch = {}) {
   };
 
   requestProgressStore.set(normalizedRequestId, nextState);
+  sweepRequestProgress();
   return nextState;
+}
+
+// Progress entries are only read while the chat polls a running answer. They are dropped once
+// they have not changed for this long, so the store does not grow with every question asked.
+const PROGRESS_RETENTION_MS = 30 * 60 * 1000;
+const PROGRESS_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let lastProgressSweepAt = 0;
+
+function sweepRequestProgress(now = Date.now()) {
+  if (now - lastProgressSweepAt < PROGRESS_SWEEP_INTERVAL_MS) return;
+  lastProgressSweepAt = now;
+  for (const [requestId, state] of requestProgressStore) {
+    const updatedAt = Date.parse(state.updatedAt || state.startedAt || '') || 0;
+    if (now - updatedAt > PROGRESS_RETENTION_MS) clearRequestProgress(requestId);
+  }
 }
 
 function getRequestProgress(requestId) {
@@ -407,32 +419,6 @@ function buildEvaluationResultDocument({
     judgeFallbackModel: evaluationData.judgeFallbackModel ?? null,
     guardrailCategory: metadata?.guardrailCategory ?? null,
   };
-  const scoredFaithfulness = evaluationData.faithfulness ?? null;
-  const scoredAnswerRelevancy = evaluationData.answer_relevancy ?? evaluationData.answerRelevancy ?? null;
-  const scoredContextPrecision = evaluationData.context_precision ?? evaluationData.contextPrecision ?? null;
-  const scoredContextRecall = evaluationData.context_recall ?? evaluationData.contextRecall ?? null;
-  const scoredAnswerCorrectness = evaluationData.answer_correctness ?? evaluationData.answerCorrectness ?? null;
-
-  const allScoresPresent = [
-    scoredFaithfulness,
-    scoredAnswerRelevancy,
-    scoredContextPrecision,
-    scoredContextRecall,
-    scoredAnswerCorrectness,
-  ].every((score) => Number.isFinite(score));
-
-  const calculatedOverallScore = allScoresPresent
-    ? Number(
-      (
-        scoredFaithfulness +
-        scoredAnswerRelevancy +
-        scoredContextPrecision +
-        scoredContextRecall +
-        scoredAnswerCorrectness
-      ) / 5
-    ).toFixed(4)
-    : null;
-
   return {
     requestId: requestContext?.requestId || null,
     sessionId: requestContext?.sessionId || null,
@@ -959,6 +945,74 @@ async function performPrioritizedLegalSearch(retrievalQuery, originalQuestion = 
   combinedResults.selectionStats = stats;
 
   return combinedResults;
+}
+
+const PYTHON_ACTION_TIMEOUT_MS = 90000;
+
+// Runs one JSON action of embedding/search_documents.py and resolves with its "results".
+function runPythonAction(payload, { timeoutMs = PYTHON_ACTION_TIMEOUT_MS } = {}) {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.resolve(__dirname, '../embedding/search_documents.py');
+    if (!fs.existsSync(scriptPath)) {
+      return reject(new Error(`search_documents.py not found at ${scriptPath}`));
+    }
+
+    const child = spawn(getPythonExecutable(), [scriptPath, '--json']);
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(reject, new Error(`Python action "${payload.action}" timed out after ${Math.round(timeoutMs / 1000)} s`));
+    }, timeoutMs);
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+    child.on('error', (err) => finish(reject, err));
+    child.on('close', (code) => {
+      if (code !== 0) {
+        return finish(reject, new Error(`Python process exited with code ${code}. Stderr: ${stderr.slice(-1200)}`));
+      }
+      if (stderr.trim()) {
+        console.warn(`[Python ${payload.action}] ${stderr.trim().split(/\r?\n/).slice(-6).join(' | ').slice(0, 1200)}`);
+      }
+      try {
+        const result = JSON.parse(stdout);
+        if (result.error) return finish(reject, new Error(result.error));
+        finish(resolve, result.results);
+      } catch (err) {
+        finish(reject, new Error(`Failed to parse Python output: ${err.message}. Raw output: ${stdout.slice(0, 300)}`));
+      }
+    });
+
+    child.stdin.write(JSON.stringify(payload));
+    child.stdin.end();
+  });
+}
+
+/**
+ * The Reasoning Agent's searches (see reasoningAgent.js): one Python process per batch of tool
+ * calls, one list of passages per search. The passages get the same authority and currency
+ * labels as the first retrieval pass, and the same passages are left out: stale secondary
+ * material, legislation whose title is unverified, amendment-history footnotes and books whose
+ * PDF cannot be opened.
+ */
+async function runReasoningToolSearches(requests, authorityContext) {
+  const batches = await runPythonAction({ action: 'tool_search', searches: requests });
+  const lists = Array.isArray(batches) ? batches : [];
+  const usableBooks = await findUsableBooks(lists.flat());
+  return requests.map((_, i) => rankByAuthority(lists[i] || [], authorityContext).filter((r) => (
+    !r.excluded_as_stale
+    && !r.excluded_as_unverified
+    && !r.excluded_as_history
+    && !(r.is_book && !usableBooks.has(String(r.file_name || '')))
+  )));
 }
 
 function runPythonCitation(sourceTable, recordId, parentId = null, fileName = null, focusIndices = []) {
@@ -1533,6 +1587,7 @@ async function startServer() {
             return;
           }
           let results;
+          let queryExpansionResult = null;
           let retrievalStartedAt = null;
           let retrievalTimeMs = null;
 
@@ -1566,6 +1621,7 @@ async function startServer() {
               },
             });
             const expansionTimeMs = Date.now() - expansionStartedAt;
+            queryExpansionResult = queryExpansion;
 
             const expandedQuery =
               queryExpansion.expandedQuery || activeQuery;
@@ -1581,8 +1637,8 @@ async function startServer() {
               title: 'Step 2: Query Expansion & Legal Understanding',
               status: 'completed',
               timeMs: expansionTimeMs,
-              provider: settings.DEFAULT_LLM_PROVIDER || 'deepseek',
-              model: settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro',
+              provider: queryExpansion.provider || 'deepseek',
+              model: queryExpansion.model || settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro',
               agentRole: 'Legal NLP & Semantic Enrichment Specialist',
               agentMandate: 'Transforms the raw user question into a canonical, statutory-enriched query paragraph optimized for hybrid (Dense Vector + BM25) retrieval. Maps informal or misspelled terms to exact statutory titles (e.g. "company act" → "Companies Act, 2013"), bridges section numbers to their topic names (e.g. Section 135 ↔ CSR), and extracts structured metadata filters (Act, Regulator, Court). Never answers the question — solely enriches it for the retrieval engine.',
               agentInput: 'Classified user question (route = LEGAL) from Safety Guardrail Agent',
@@ -1735,6 +1791,89 @@ async function startServer() {
             return;
           }
 
+          // ------------------------------------------------------------------
+          // Reasoning Agent (backend/reasoningAgent.js)
+          // ------------------------------------------------------------------
+          // Works on the client's Reasoning Layer System Prompt: reasons through the question,
+          // searches further with its two tools (starting from the first retrieval pass above)
+          // and writes the answer. If it fails, the single-pass answer writer below answers
+          // from the first retrieval pass, so the user always gets a reply.
+          let reasoning = null;
+          if (settings.REASONING_AGENT_ENABLED) {
+            updateRequestProgress(progressRequestId, {
+              stageIndex: 3,
+              currentStage: 'reviewing',
+              message: 'Reasoning through the law',
+              status: 'in_progress',
+            });
+            const reasoningStartedAt = Date.now();
+            let reasoningError = null;
+            try {
+              const authorityContext = {
+                primaryAct: splitInstruments(queryExpansionResult?.primaryAct)[0] || null,
+                mode: queryExpansionResult?.currencyRequirement || '',
+                question: activeQuery,
+              };
+              reasoning = await runReasoningAgent({
+                question,
+                standaloneQuestion: activeQuery,
+                expansion: queryExpansionResult || {},
+                initialPassages: Array.isArray(results) ? results : [],
+                history: chatSessionHistory,
+                attachmentContext,
+                requestContext: req.requestContext,
+                search: (requests) => runReasoningToolSearches(requests, authorityContext),
+                onProgress: (message) => updateRequestProgress(progressRequestId, {
+                  stageIndex: 3,
+                  currentStage: 'reviewing',
+                  message,
+                  status: 'in_progress',
+                }),
+              });
+            } catch (error) {
+              reasoningError = error;
+              console.error('[Reasoning Agent] Failed; answering with the single-pass writer instead:', error?.message || error);
+            }
+            const reasoningTimeMs = Date.now() - reasoningStartedAt;
+            const reasoningTrace = reasoning?.trace || null;
+            if (reasoningTrace) {
+              console.log(`[Reasoning Agent] ${reasoningTrace.provider}/${reasoningTrace.model}: ${reasoningTrace.rounds} turns, ${reasoningTrace.searches.length} searches, ${reasoningTrace.passages} passages, ${reasoningTimeMs} ms, usage ${JSON.stringify(reasoningTrace.usage)}`);
+            }
+
+            serverLogs.push({
+              step: 4,
+              agent: 'Reasoning Agent',
+              title: 'Step 4: Legal Reasoning, Further Research & Answer',
+              status: reasoning ? 'completed' : 'failed',
+              timeMs: reasoningTimeMs,
+              provider: reasoningTrace?.provider || settings.REASONING_AGENT_PROVIDER,
+              model: reasoningTrace?.model || settings.REASONING_AGENT_MODEL,
+              agentRole: 'Reasoning layer: senior-associate legal research method (Reasoning Layer System Prompt)',
+              agentMandate: 'Classifies and frames the question, fixes the relevant date, maps every route, finds and reads the anchor provision and its definitions, searches the primary database and the books for what the first pass lacks (replacing instruments, amendments, subordinate law, appellate decisions), weighs authority and currency, applies the law to the facts element by element and writes the answer in the Part C format with pinpoint citations.',
+              agentInput: 'User question + Query Expansion analysis + first retrieval pass (ranked by authority and currency)',
+              agentOutput: 'Structured legal answer with [N] citations, a Sources list with weight tags, and follow-up questions',
+              summary: reasoning
+                ? `Reasoned through the question in ${reasoningTrace.rounds} turn(s) with ${reasoningTrace.searches.length} further search(es); ${reasoningTrace.passages} passages reviewed.`
+                : `Reasoning Agent unavailable (${reasoningError?.message || 'unknown error'}); the answer was written by the single-pass answer writer from the first retrieval pass.`,
+              details: {
+                searches: reasoningTrace?.searches || [],
+                rounds: reasoningTrace?.rounds || 0,
+                passagesReviewed: reasoningTrace?.passages || 0,
+                usage: reasoningTrace?.usage || null,
+                reasoningEffort: settings.REASONING_AGENT_EFFORT,
+                error: reasoningError?.message || null,
+              },
+            });
+
+            if (reasoning) {
+              // From here on the passages the agent saw are the numbered sources: [N] in its
+              // answer is reasoning.passages[N - 1].
+              const selectionStats = results?.selectionStats || null;
+              results = reasoning.passages;
+              results.selectionStats = selectionStats;
+            }
+          }
+
           try {
             if ((!results || results.length === 0) && !attachmentContext) {
               console.log('[RAG Endpoint] No documents matched the query and no attachment context available.');
@@ -1788,10 +1927,6 @@ What is the penalty for violating this provision?`;
             const summarizerPromptForContext = baseSummarizerPrompt.replace(/\[SHARED LEGAL CONTEXT\]\s*/g, '').replace(/\[COMMON RULES\]\s*/g, '');
             const systemPrompt = `${summarizerPromptForContext}${attachmentPromptRules}${formattingRules}`;
 
-            // Answer synthesis: DeepSeek v4 Pro primary
-            const llm = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
-
-
             const userContentParts = [`Question: ${question}`];
             if (contextBlock) {
               userContentParts.push(`Search Context:\n${contextBlock}`);
@@ -1800,8 +1935,8 @@ What is the penalty for violating this provision?`;
               userContentParts.push(`ATTACHED DOCUMENT CONTEXT:\n${attachmentContext}`);
             }
 
-            // Trace prompt construction
-            await tracePromptConstruction({
+            // Trace prompt construction (single-pass writer only; the Reasoning Agent is traced per call)
+            if (!reasoning) await tracePromptConstruction({
               question: question,
               systemPrompt: systemPrompt,
               context: contextBlock || '(no retrieved context)',
@@ -1822,8 +1957,15 @@ What is the penalty for violating this provision?`;
 
             const userContent = userContentParts.join('\n\n');
 
+            if (reasoning) {
+              answerText = reasoning.answer;
+              llmResponse = { provider: reasoning.trace.provider, model: reasoning.trace.model };
+              llmTimeMs = reasoning.trace.timeMs;
+              console.log(`[RAG Endpoint] Answer written by the Reasoning Agent (${reasoning.trace.provider}/${reasoning.trace.model}).`);
+            }
+
             const endpointFallbackTiers = [
-              { provider: 'deepseek', model: settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro' },
+              { provider: 'deepseek', model: settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro' },
             ];
 
             const uniqueTiers = [];
@@ -1849,7 +1991,8 @@ What is the penalty for violating this provision?`;
             }
             llmMessages.push({ role: 'user', content: userContent });
 
-            for (const tier of uniqueTiers) {
+            // The single-pass writer runs only when the Reasoning Agent did not answer.
+            for (const tier of (reasoning ? [] : uniqueTiers)) {
               try {
                 llmStartedAt = Date.now();
                 const currentLlm = getLLMProvider(tier.provider, tier.model);
@@ -1936,30 +2079,43 @@ What is the penalty for violating this provision?`;
             });
 
             const parsedResponse =
-              parseAnswerAndSuggestions(answerText);
+              parseAnswerAndSuggestions(answerText, { keepSourcesSection: Boolean(reasoning) });
 
             suggestions = parsedResponse.suggestions;
 
             // Citation and currency check: each cited sentence is compared with the passage it
             // cites. A wrong citation is corrected; a sentence no current passage supports is
             // removed before the answer is shown.
-            const checkerModel = (request) => getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini').generate(request);
+            const checkerModel = (request) => getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro').generate(request);
             // Length: a draft over the word limit for its kind of question is shortened first,
             // so the citation check below runs on the text the reader will actually get.
-            const condensed = await condenseIfLong({
-              answer: normalizeAnswerStructure(parsedResponse.answer),
-              question: activeQuery,
-              generate: checkerModel,
-            });
+            // A Reasoning Agent answer follows the Part C format of its own prompt, whose length
+            // is set by the question (route maps, requirement sweeps), so it is not shortened.
+            const condensed = reasoning
+              ? { answer: normalizeAnswerStructure(parsedResponse.answer, { keepSourcesSection: true }), stats: { condensed: false, reason: 'reasoning-agent-answer' } }
+              : await condenseIfLong({
+                answer: normalizeAnswerStructure(parsedResponse.answer),
+                question: activeQuery,
+                generate: checkerModel,
+              });
             console.log(`[RAG Endpoint] Length: ${JSON.stringify(condensed.stats)}`);
+
+            // The Sources list of a Reasoning Agent answer restates citations and adds no law,
+            // so only the analysis above it goes through the sentence-by-sentence check.
+            const { body: answerBody, tail: answerSourcesTail } = reasoning
+              ? splitAtSources(condensed.answer)
+              : { body: condensed.answer, tail: '' };
 
             const verificationStartedAt = Date.now();
             const verification = await verifyAnswer({
-              answer: condensed.answer,
+              answer: answerBody,
               results,
               question: activeQuery,
               generate: checkerModel,
             });
+            if (answerSourcesTail) {
+              verification.answer = `${verification.answer.trimEnd()}\n\n${answerSourcesTail}`;
+            }
             const verificationTimeMs = Date.now() - verificationStartedAt;
             console.log(`[RAG Endpoint] Citation and currency check (${verificationTimeMs} ms): ${JSON.stringify(verification.stats)}`);
 
@@ -1969,8 +2125,8 @@ What is the penalty for violating this provision?`;
               title: 'Step 5: Citation Support & Legal Currency Check',
               status: verification.stats.error ? 'failed' : 'completed',
               timeMs: verificationTimeMs,
-              provider: 'openai',
-              model: settings.OPENAI_MODEL || 'gpt-4.1-mini',
+              provider: 'deepseek',
+              model: settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro',
               agentRole: 'Second-model check of every cited sentence against the passage it cites',
               agentMandate: 'Confirms that each cited passage actually states the proposition attributed to it, that statements of what a provision says cite the primary text, and that nothing is presented as current law on the strength of superseded or pre-dating material. Corrects wrong citations and removes unsupported or outdated sentences.',
               agentInput: 'Draft answer with [Source N] markers + the numbered passages with their authority and currency labels',
@@ -1983,7 +2139,7 @@ What is the penalty for violating this provision?`;
 
             // Keep only the sources the answer cites, rank them by relevance, and renumber
             // the inline markers to match: [1] in the text is source 1 in the list.
-            const finalized = finalizeAnswer(verification.answer, results);
+            const finalized = finalizeAnswer(verification.answer, results, { keepSourcesSection: Boolean(reasoning) });
             answerText = finalized.answer;
             const citedSources = finalized.sources;
 
@@ -1991,29 +2147,32 @@ What is the penalty for violating this provision?`;
               `[RAG Endpoint] Extracted ${suggestions.length} suggestions. Citations: ${JSON.stringify(finalized.stats)} from ${results.length} retrieved chunks.`
             );
 
-            serverLogs.push({
-              step: 4,
-              agent: 'CLA Legal Advisor Agent',
-              title: 'Step 4: CLA Answer Generation & Citation',
-              status: 'completed',
-              timeMs: llmTimeMs,
-              provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
-              model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
-              agentRole: 'Content Summarizer & Legal Answer Writer (Content_Summarizer_Agent)',
-              agentMandate: 'Synthesizes the final legal answer STRICTLY from the retrieved document chunks — never from its own training knowledge. Reads ALL retrieved chunks and combines relevant information into one coherent answer written in legal-memo style. Respects the authority hierarchy (Primary Legislation > Notification > Circular > Judicial decisions by court rank > Secondary/editorial). Cites inline using [Source N] (max 1–2 citations per bracket). Also generates 3–4 follow-up questions via the Follow_Up_Question_Agent.',
-              agentInput: 'Top-3-per-table reranked document chunks + user question + Content_Summarizer_Agent system prompt',
-              agentOutput: 'Structured legal answer with inline citations + 3 suggested follow-up questions',
-              summary: 'Synthesized a clear, grounded legal answer with inline numerical citations [1], [2] based strictly on the retrieved document context.',
-              details: {
+            // Logged only when the single-pass writer wrote the answer; the Reasoning Agent logs its own step.
+            if (!reasoning) {
+              serverLogs.push({
+                step: 4,
+                agent: 'CLA Legal Advisor Agent',
+                title: 'Step 4: CLA Answer Generation & Citation',
+                status: 'completed',
+                timeMs: llmTimeMs,
                 provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
                 model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
-                sourcesUsed: results.length,
-                suggestionsGenerated: suggestions.length,
-                answerLength: answerText.length,
-                systemPrompt: systemPrompt,
-                userPrompt: userContent,
-              },
-            });
+                agentRole: 'Content Summarizer & Legal Answer Writer (Content_Summarizer_Agent)',
+                agentMandate: 'Synthesizes the final legal answer STRICTLY from the retrieved document chunks — never from its own training knowledge. Reads ALL retrieved chunks and combines relevant information into one coherent answer written in legal-memo style. Respects the authority hierarchy (Primary Legislation > Notification > Circular > Judicial decisions by court rank > Secondary/editorial). Cites inline using [Source N] (max 1–2 citations per bracket). Also generates 3–4 follow-up questions via the Follow_Up_Question_Agent.',
+                agentInput: 'Top-3-per-table reranked document chunks + user question + Content_Summarizer_Agent system prompt',
+                agentOutput: 'Structured legal answer with inline citations + 3 suggested follow-up questions',
+                summary: 'Synthesized a clear, grounded legal answer with inline numerical citations [1], [2] based strictly on the retrieved document context.',
+                details: {
+                  provider: llmResponse?.provider || settings.DEFAULT_LLM_PROVIDER,
+                  model: llmResponse?.model || settings.DEFAULT_LLM_MODEL,
+                  sourcesUsed: results.length,
+                  suggestionsGenerated: suggestions.length,
+                  answerLength: answerText.length,
+                  systemPrompt: systemPrompt,
+                  userPrompt: userContent,
+                },
+              });
+            }
 
             const ragasContexts = results
               .map(r => r.chunk_text || r.content || r.text || '')
@@ -2157,7 +2316,6 @@ What is the penalty for violating this provision?`;
 
                 if (goldenRecord) {
                   const goldenRunDocument = {
-                    datasetVersion: goldenRecord.version || null,
                     questionId: goldenRecord.id || null,
                     question: goldenRecord.question || question,
                     chatbotAnswer: answerText,
@@ -2670,7 +2828,7 @@ What is the penalty for violating this provision?`;
                 suggestions = parsedResponse.suggestions;
                 // Same checks as /api/ask: each cited sentence against its passage, then cited
                 // sources only, ranked, numbered [1], [2] ...
-                const checkerModel = (request) => getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini').generate(request);
+                const checkerModel = (request) => getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro').generate(request);
                 const condensed = await condenseIfLong({ answer: normalizeAnswerStructure(parsedResponse.answer), question: activeSessionQuery, generate: checkerModel });
                 const verification = await verifyAnswer({ answer: condensed.answer, results, question: activeSessionQuery, generate: checkerModel });
                 console.log(`[Chat RAG] Citation and currency check: ${JSON.stringify(verification.stats)}`);

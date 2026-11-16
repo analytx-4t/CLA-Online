@@ -1,11 +1,20 @@
-# Backend notes
+# Backend
 
-The backend is a lightweight Node.js service. It now includes a centralized config module and an LLM provider abstraction for OpenAI, DeepSeek, Gemini, and Groq.
+Node.js service for CLAOnline: the chat API, the answer pipeline and the admin API. It is
+started from the repository root with `npm start` (`backend/start.js`).
 
-## Environment configuration
+See the repository [README](../README.md) for the answer pipeline, the Reasoning Agent, the
+configuration (`.env.example`), the API and the tests.
 
-Copy .env.example to .env and fill in the provider API keys and model values locally.
+Main modules:
 
-## Provider health
-
-The backend exposes provider configuration health through the config module. It never returns API keys.
+| Module | Role |
+|---|---|
+| `index.js` | HTTP server, routing, the `/api/ask` pipeline |
+| `agentSystem.js` | Prompt loading and the Query Expansion Agent |
+| `reasoningAgent.js` | Reasoning Agent (GPT-6 Luna, Reasoning Layer System Prompt, search tools) |
+| `legalAuthority.js` | Authority tier and currency of each retrieved passage |
+| `answerVerifier.js` | Citation and currency check of the draft answer |
+| `citations.js` | Numbered context, citation markers, cited-only source list |
+| `llm/` | Portkey client (`portkey.js`), provider classes, factory, LLM judge |
+| `tests/` | Unit tests (`*.test.js`, offline) and live checks (`*.check.js`) |

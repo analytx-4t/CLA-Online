@@ -68,7 +68,14 @@ function normalizeFollowUpQuestions(payload) {
   return [];
 }
 
-function parseAnswerAndSuggestions(rawAnswer) {
+/**
+ * Splits a model answer into the answer text and its follow-up suggestions.
+ *
+ * @param {string} rawAnswer
+ * @param {Object} [options] { keepSourcesSection }: keep the answer's own Sources section (a
+ *   Reasoning Agent answer lists its sources with pinpoints and weight tags as part of its format).
+ */
+function parseAnswerAndSuggestions(rawAnswer, { keepSourcesSection = false } = {}) {
   let answer = cleanResponseText(rawAnswer);
   let suggestions = [];
 
@@ -97,7 +104,9 @@ function parseAnswerAndSuggestions(rawAnswer) {
   // (The UI frontend renders the interactive Source Citations panel automatically)
   // Only a line that is just the heading ("Sources", "**Sources Used:**") starts that
   // section; a sentence that merely begins with the word "Sources" is part of the answer.
-  answer = answer.replace(/\n+[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?[ \t]*Sources(?:[ \t]+Used)?[ \t]*:?[ \t]*(?:\*\*|__)?[ \t]*:?[ \t]*(?:\n[\s\S]*)?$/i, '').trim();
+  if (!keepSourcesSection) {
+    answer = answer.replace(/\n+[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?[ \t]*Sources(?:[ \t]+Used)?[ \t]*:?[ \t]*(?:\*\*|__)?[ \t]*:?[ \t]*(?:\n[\s\S]*)?$/i, '').trim();
+  }
 
   return {
     answer,

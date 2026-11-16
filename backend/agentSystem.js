@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const { connectDB } = require('./mongoClient');
 const { getLLMProvider } = require('./llm/factory');
 
 // Helper to load and parse prompts dynamically from the markdown file
@@ -281,14 +280,14 @@ function resolveAndSanitizeCitations(finalAnswer, sources = []) {
   return cleanAnswer;
 }
 
-// Helper to handle LLM generation with automatic DeepSeek v4 Pro fallback on OpenAI/quota errors
+// Calls the provider; on an error, tries DeepSeek v4 Pro once, then retries with backoff.
 async function generateWithRetry(provider, options, maxRetries = 3) {
   let delay = 1500;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       return await provider.generate(options);
     } catch (error) {
-      console.warn(`[LLM Provider Warning] Primary provider error (${error.message}). Executing DeepSeek v4 Pro fallback...`);
+      console.warn(`[LLM Provider Warning] Provider error (${error.message}). Trying DeepSeek v4 Pro...`);
       try {
         const deepseekFallback = getLLMProvider('deepseek', 'deepseek-v4-pro');
         return await deepseekFallback.generate(options);
@@ -334,8 +333,8 @@ async function expandLegalQuery(userMessage) {
   const prompts = loadAgentPrompts();
   const { settings } = require('./config');
 
-  // Query Expansion uses OpenAI primary with DeepSeek v4 Pro fallback
-  const expansionProvider = getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini');
+  // Query expansion runs on DeepSeek v4 Pro (generateWithRetry retries it on failure).
+  const expansionProvider = getLLMProvider('deepseek', settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro');
 
   console.log(
     `[Query Expansion] Expanding legal query: "${userMessage}"`
@@ -369,17 +368,7 @@ async function expandLegalQuery(userMessage) {
     ).trim();
 
     console.log(
-      '[Query Expansion] Raw provider response:',
-      JSON.stringify(expansionResponse, null, 2)
-    );
-
-    console.log(
-      '[Query Expansion] Extracted output:\n',
-      expansionText
-    );
-
-    console.log(
-      '[Query Expansion] Raw output:\n',
+      `[Query Expansion] Output (${expansionResponse?.provider || 'unknown'} / ${expansionResponse?.model || 'unknown'}):\n`,
       expansionText
     );
 
@@ -523,6 +512,8 @@ async function expandLegalQuery(userMessage) {
     }
 
     const result = {
+      provider: expansionResponse?.provider || 'deepseek',
+      model: expansionResponse?.model || settings.DEEPSEEK_PRO_MODEL || 'deepseek-v4-pro',
       originalQuery: userMessage,
       expandedQuery:
         expandedQuery || userMessage,
@@ -714,11 +705,10 @@ async function runAgentFlow(userMessage, options = {}) {
     };
   }
 
-  // Step 2: Query Expansion (OpenAI Primary, DeepSeek Fallback)
+  // Step 2: Query Expansion (DeepSeek v4 Pro)
   console.log('Running Query_Expansion_Agent...');
   const expansionPrompt = assembleExpansionPrompt(prompts);
-  const openaiExpansionProvider = getLLMProvider('openai', settings.OPENAI_MODEL || 'gpt-4.1-mini');
-  const expansionResponse = await generateWithRetry(openaiExpansionProvider, {
+  const expansionResponse = await generateWithRetry(defaultProvider, {
     messages: [{ role: 'user', content: userMessage }],
     systemPrompt: expansionPrompt,
     temperature: 0.2,

@@ -1,4 +1,4 @@
-const { connectDB, closeDB } = require('./backend/mongoClient');
+const { connectDB, closeDB } = require('../mongoClient');
 
 async function main() {
   try {

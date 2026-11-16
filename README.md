@@ -1,366 +1,178 @@
-# Multi-Provider LLM Chatbot Application
+# CLAOnline Legal Research Assistant
 
-A full-stack chatbot application that supports multiple Large Language Model (LLM) providers including OpenAI, DeepSeek, Gemini, and Groq, with MongoDB for session persistence and chat history management.
+CLAOnline answers questions on Indian corporate and commercial law (Companies Act, IBC, LLP, SEBI,
+FEMA, Competition, MSMED, Negotiable Instruments, Arbitration, SEZ) for practitioners. Every
+statement of law in an answer is drawn from the CLA legal database and cited to the passage it
+comes from; the reader can open each cited source with the supporting text highlighted.
 
-## Features
+The system has three parts:
 
-- **Multi-Provider LLM Support**: Seamlessly switch between OpenAI, DeepSeek, Gemini, and Groq
-- **Chat Session Management**: Create, manage, and delete chat sessions
-- **Session Persistence**: MongoDB-backed storage for chat history and metadata
-- **Provider Health Monitoring**: Check which LLM providers are configured
-- **Frontend Dashboard**: User-friendly interface for chat interactions
-- **Extensible Architecture**: Easy to add new LLM providers
+| Part | Location | Stack |
+|---|---|---|
+| Chat application and API | `backend/`, `frontend/` | Node.js 20 (native `http` server), static HTML/CSS/JS |
+| Retrieval and data pipeline | `embedding/` | Python 3, Pinecone, OpenAI embeddings |
+| Admin dashboard | `admin-dashboard/` | React + Vite + Tailwind |
 
-## Architecture
+## How a question is answered
+
+`POST /api/ask` (backend/index.js) runs these steps:
 
 ```
-project_3/
-├── backend/                      # Node.js backend server
-│   ├── index.js                  # Main server entry point
-│   ├── config.js                 # Environment configuration
-│   ├── mongoClient.js            # MongoDB connection management
-│   ├── llm/                      # LLM provider abstraction
-│   │   ├── base.js               # Base provider class & errors
-│   │   ├── factory.js            # Provider factory with caching
-│   │   └── providers/            # Individual provider implementations
-│   │       ├── openai_provider.js
-│   │       ├── deepseek_provider.js
-│   │       ├── gemini_provider.js
-│   │       └── groq_provider.js
-│   └── tests/                    # Backend tests
-│       └── llm_provider.test.js
-├── frontend/                     # Frontend application
-│   ├── HTML/
-│   │   ├── chatbot_interface.html
-│   │   └── dashboard.html
-│   ├── CSS/
-│   │   └── chatbot_interface.css
-│   ├── javascript/
-│   │   └── chatbot_interface.js
-│   └── assets/
-│       ├── README.md
-│       └── Images/
-├── .env                          # Environment variables (create from .env.example)
-├── .env.example                  # Environment configuration template
-├── package.json                  # Node.js dependencies
-├── requirements.txt              # Python dependencies (if needed)
-└── README.md                     # This file
+question
+  │
+  ├─ 1. Guardrails ............... backend/guardrails.js, guardrails/      (scope, jailbreak, PII)
+  ├─ 2. Follow-up contextualiser .. backend/contextualizer.js             (makes follow-ups standalone)
+  ├─ 3. Query Expansion Agent ..... backend/agentSystem.js                (ontology-guided legal analysis:
+  │                                                                         instruments, sections, defined terms)
+  ├─ 4. First retrieval pass ...... embedding/search_documents.py         (Pinecone: structured DB + books)
+  │                                  backend/legalAuthority.js             (authority & currency ranking)
+  ├─ 5. Reasoning Agent ........... backend/reasoningAgent.js             (GPT-6 Luna on the Reasoning Layer
+  │                                                                         System Prompt; searches further with
+  │                                                                         its two tools; writes the answer)
+  ├─ 6. Citation & currency check . backend/answerVerifier.js             (second model checks each cited
+  │                                                                         sentence against its passage)
+  └─ 7. Sources ................... backend/citations.js                 (cited-only, renumbered source list)
 ```
 
-## Backend
+The answer is returned with its numbered sources, follow-up suggestions and an evaluation record.
+An online LLM-judge evaluation (`backend/llm/judge.js`, prompts in `eval_agent.md`) can score each
+answer; it is switched on and off from the admin dashboard.
 
-The backend is a lightweight Node.js HTTP server built with native modules (no Express.js).
+### Reasoning Agent
 
-### Technology Stack
+The Reasoning Agent is the reasoning layer of the pipeline. It runs on the client-validated
+**Reasoning Layer System Prompt**, kept verbatim in `CLA_Reasoning_Layer_System_Prompt.txt`
+(`{{current_date}}` is filled with today's date in India at run time).
 
-- **Runtime**: Node.js
-- **Database**: MongoDB (via MongoDB Node.js Driver)
-- **LLM SDKs**:
-  - OpenAI SDK
-  - Groq SDK
-  - Google Generative AI SDK
-- **Configuration**: dotenv for environment management
+- **Model:** `gpt-6-luna`, called through the same Portkey OpenAI provider as the rest of the
+  application (`PORTKEY_OPENAI_PROVIDER`), on the OpenAI Responses API: it is the API on which
+  this model accepts function tools together with a reasoning effort (`REASONING_AGENT_EFFORT`).
+- **Tools:** the two tools the prompt names: `Pinecone_Vector_Store_DB` (structured legal database,
+  one content type per search: Legislation, Notification, Circular, Notice, Caselaws, Commentary,
+  Article, Query, Procedure) and `Pinecone_Vector_Store_DB1` (CLA books). Tool results carry the
+  same authority and currency labels as the first retrieval pass.
+- **Starting point:** the first retrieval pass and the Query Expansion analysis are given to the
+  agent in its opening message, so its own searches go to what that pass lacks (definitions,
+  replacing instruments, amendments, remaining sub-paragraphs, appellate decisions).
+- **Budgets:** turns with tool use, number of searches and time per question are configurable
+  (`REASONING_AGENT_MAX_TOOL_ROUNDS`, `REASONING_AGENT_MAX_SEARCHES`, `REASONING_AGENT_TIME_BUDGET_MS`).
+  Time for the final answer is always reserved within the budget.
+- **Output:** the Part C answer format of the prompt (position, short answer, assumptions and pivot
+  facts, route map, analysis, parallel regimes, consequences, currency, Sources with weight tags),
+  with `[N]` citation markers that link to the source viewer.
+- **Resilience:** if the agent fails (provider error, timeout, truncated output), the single-pass
+  answer writer (DeepSeek v4 Pro, `Content_Summarizer_Agent` prompt) answers from the first
+  retrieval pass, so the user always gets an answer. The admin request log records which path ran.
 
-### Core Features
+`REASONING_AGENT_ENABLED=false` switches the agent off without a code change.
 
-#### 1. LLM Provider System
+### Models
 
-The backend implements a provider abstraction pattern supporting multiple AI providers:
+All model calls go through Portkey (`backend/llm/portkey.js`); `backend/llm/factory.js` returns
+the provider client asked for.
 
-**Supported Providers:**
-- **OpenAI**: GPT-4.1-mini and other OpenAI models
-- **DeepSeek**: DeepSeek-v4-pro and DeepSeek-v4-flash
-- **Gemini**: Google's Gemini models
-- **Groq**: Llama and Mistral models via Groq
+| Step | Provider / model |
+|---|---|
+| Query expansion, single-pass writer, citation check, judge | DeepSeek v4 Pro |
+| Reasoning Agent | OpenAI `gpt-6-luna` (Responses API) |
+| Embeddings | OpenAI `text-embedding-3-small` (1536 dimensions) |
+| Reranking | Cohere Rerank, with a local heuristic fallback |
+| Guardrail classifier | Groq Llama 3.3 70B |
 
-**Key Components:**
-- `BaseLLMProvider`: Abstract base class defining the provider interface
-- `factory.js`: Factory pattern implementation with provider caching
-- Individual provider classes: Each handles authentication, request formatting, and response parsing
-- Custom error hierarchy: Configuration, Authentication, Rate Limit, and Unavailability errors
+## Repository layout
 
-#### 2. Chat Session Management
-
-**Endpoints:**
-- `POST /api/chat/sessions` - Create a new chat session
-- `DELETE /api/chat/sessions/:id` - Delete a chat session and all associated messages
-- `GET /api/chat/sessions` - (Planned) List all sessions for a user
-- `POST /api/chat/sessions/:id/messages` - (Planned) Add messages to a session
-- `GET /api/chat/sessions/:id/messages` - (Planned) Retrieve chat history
-
-**Features:**
-- Session ownership verification via user headers
-- Automatic session ID generation
-- Metadata tracking (created_at, updated_at, message_count, status)
-- Cascading deletes for data integrity
-
-#### 3. Provider Health Monitoring
-
-- `GET /health` - Server health check
-- `GET /api/llm/health` - Returns which LLM providers are configured (without exposing API keys)
-
-### Configuration
-
-Create a `.env` file in the root directory with the following variables:
-
-```env
-# Server Configuration
-PORT=3000
-
-# MongoDB Configuration
-MONGODB_URI=your_mongodb_connection_string
-
-# OpenAI Configuration
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4.1-mini
-
-# DeepSeek Configuration
-DEEPSEEK_API_KEY=your_deepseek_api_key
-DEEPSEEK_PRO_MODEL=deepseek-v4-pro
-DEEPSEEK_FLASH_MODEL=deepseek-v4-flash
-
-# Gemini Configuration
-GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=your_gemini_model_name
-
-# Groq Configuration
-GROQ_API_KEY=your_groq_api_key
-GROQ_LLAMA_MODEL=llama-3.3-70b-versatile
-GROQ_MISTRAL_MODEL=mistral-9b-22b
-
-# Default LLM Configuration
-DEFAULT_LLM_PROVIDER=openai
-DEFAULT_LLM_MODEL=gpt-4.1-mini
+```
+backend/
+  index.js              HTTP server, routing and the /api/ask pipeline
+  agentSystem.js        prompt loading, Query Expansion Agent
+  reasoningAgent.js     Reasoning Agent (tools, passage register, budgets)
+  legalAuthority.js     authority tiers and currency of retrieved passages
+  answerVerifier.js     citation and currency check
+  answerCondenser.js    length control for single-pass answers
+  citations.js          context block, citation markers, source list
+  citationPage.js       source viewer page
+  guardrails.js         guardrail client (Python service in guardrails/)
+  contextualizer.js     follow-up question rewriting
+  adminRoutes.js        admin dashboard API
+  dbSync/               nightly CLA API -> Pinecone sync (scheduler and routes)
+  llm/                  Portkey client, provider classes, factory, LLM judge
+  tests/                unit tests (*.test.js) and live checks (*.check.js)
+embedding/
+  search_documents.py   search actions used by the backend (search, tool_search, citations)
+  definition_resolver.py, instrument_retrieval.py, keyword_scan.py   retrieval helpers
+  sync_from_api.py      CLA content API -> Pinecone sync
+frontend/               chat interface (static)
+admin-dashboard/        admin dashboard (React)
+guardrails/             guardrail classifier service (Python)
+evaluation/             offline evaluation scripts
+CLAOnline_Agent_Prompts_FINAL.md          agent prompts (expansion, writer, follow-ups)
+CLA_Query_Expansion_Ontology.md           ontology used by the Query Expansion Agent
+CLA_Reasoning_Layer_System_Prompt.txt     Reasoning Agent system prompt (client-validated)
+eval_agent.md                             LLM-judge metric prompts
 ```
 
-### Installation
+## Configuration
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd project_3
-   ```
+Copy `.env.example` to `.env` in the repository root and fill in the values. The file lists every
+variable the application reads, grouped by purpose (Portkey and models, Reasoning Agent, Pinecone
+and embeddings, MongoDB, observability, CLA content API sync). Secrets are read only from the
+environment and are never committed.
 
-2. **Install Node.js dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your API keys and MongoDB connection string
-   ```
-
-4. **Start the server**
-   ```bash
-   npm start
-   ```
-
-   Or run in development mode (if configured):
-   ```bash
-   npm run dev
-   ```
-
-5. **Verify the server is running**
-   ```bash
-   curl http://localhost:3000/health
-   ```
-
-### Testing
-
-Run the backend test suite:
+## Running locally
 
 ```bash
-npm test
+npm ci                                   # Node dependencies (repo root)
+python3 -m venv embedding/venv
+embedding/venv/bin/pip install -r embedding/requirements.txt
+cp .env.example .env                     # then fill in the values
+npm start                                # http://localhost:3000
 ```
 
-### API Endpoints
+The admin dashboard is built separately (`cd admin-dashboard && npm ci && npm run build`).
 
-#### Health Check
-```
-GET /health
-Response: { "status": "ok" }
-```
+## Tests
 
-#### LLM Health Status
-```
-GET /api/llm/health
-Response: {
-  "openai": { "configured": true },
-  "deepseek": { "configured": true },
-  "gemini": { "configured": false },
-  "groq": { "configured": true }
-}
+Unit tests use the Node test runner and make no network calls:
+
+```bash
+node --test backend/tests/reasoningAgent.test.js backend/tests/llmRouting.test.js \
+  backend/tests/citations.test.js backend/tests/answerVerifier.test.js \
+  backend/tests/legalAuthority.test.js backend/tests/figuresAndLength.test.js \
+  backend/tests/agentSystem.test.js backend/tests/response_parsing.test.js
 ```
 
-#### Generate LLM Response
-```
-POST /api/llm/generate
-Headers: {
-  "Content-Type": "application/json",
-  "x-user-id": "user123"  // optional, defaults to 'unknown-user'
-}
-Body: {
-  "provider": "openai",
-  "model": "gpt-4.1-mini",
-  "systemPrompt": "You are a helpful assistant.",
-  "messages": [
-    { "role": "user", "content": "Hello!" }
-  ],
-  "temperature": 0.7,
-  "maxTokens": 256
-}
-Response: {
-  "content": "Hello! How can I help you?",
-  "provider": "openai",
-  "model": "gpt-4.1-mini",
-  "usage": {
-    "input_tokens": 10,
-    "output_tokens": 15,
-    "total_tokens": 25
-  }
-}
-```
+Files ending in `.check.js` are live checks against a running server and real providers, e.g.
+`BASE_URL=https://claonline.analytx4t.com node backend/tests/clientFeedback.check.js`. They write
+evaluation records to the configured database.
 
-#### Create Chat Session
-```
-POST /api/chat/sessions
-Headers: {
-  "x-user-id": "user123"
-}
-Body: {
-  "title": "My First Chat",
-  "session_id": "optional-custom-id"
-}
-Response: {
-  "session": {
-    "session_id": "uuid-here",
-    "user_id": "user123",
-    "title": "My First Chat",
-    "created_at": "2025-10-21T...",
-    "updated_at": "2025-10-21T...",
-    "message_count": 0,
-    "status": "active"
-  }
-}
-```
+## API
 
-#### Delete Chat Session
-```
-DELETE /api/chat/sessions/:sessionId
-Headers: {
-  "x-user-id": "user123"
-}
-Response: {
-  "success": true,
-  "session_id": "session-id"
-}
-```
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/ask` | Answer a question (body: `question`, optional `attachments`, `requestId`) |
+| GET | `/api/ask/progress/:requestId` | Progress of a running answer |
+| GET | `/api/citation` | Source viewer page for a cited passage |
+| GET | `/api/view-pdf`, `/api/pdf` | Book PDF at a page |
+| GET | `/api/legislation-titles` | Display titles of legislation |
+| POST | `/api/attachments/upload` | Upload a document to ask about |
+| GET, POST | `/api/chat/sessions` | List / create chat sessions |
+| GET, POST | `/api/chat/sessions/:id/messages` | Read / add messages of a session |
+| GET | `/api/chat/sessions/:id/export` | Export a session |
+| DELETE | `/api/chat/sessions/:id` | Delete a session |
+| GET | `/api/chat/sessions/search` | Search sessions |
+| POST | `/api/chat/feedback` | Answer feedback |
+| GET | `/api/llm/health`, `/health` | Provider configuration, server health |
+| * | `/api/admin/*` | Admin dashboard API (requests, evaluations, feedback, settings, DB sync) |
 
-## Frontend
+## Deployment
 
-The frontend consists of static HTML, CSS, and JavaScript files.
+Production runs on a single EC2 host behind nginx, with the backend under pm2. Deployment steps
+are in `REDEPLOYMENT.md`.
 
-### Structure
+## Operational notes
 
-- **HTML/chatbot_interface.html** - Main chatbot interface
-- **CSS/chatbot_interface.css** - Styling for the chatbot
-- **javascript/chatbot_interface.js** - Chatbot logic and API interactions
-- **assets/** - Images and other static assets
-
-### Features
-
-- Interactive chat interface
-- Multi-provider selection
-- Session management
-- Real-time message display
-
-## Development
-
-### Project Structure
-
-The backend follows a modular architecture:
-
-1. **Entry Point** (`index.js`): HTTP server with routing
-2. **Configuration** (`config.js`): Centralized settings management
-3. **Database** (`mongoClient.js`): MongoDB connection pooling
-4. **LLM Layer** (`llm/`): Provider abstraction and implementations
-5. **Tests** (`tests/`): Unit tests for providers
-
-### Design Patterns
-
-- **Factory Pattern**: LLM provider instantiation
-- **Strategy Pattern**: Interchangeable LLM providers
-- **Singleton Pattern**: Database connection management
-- **Caching**: Provider instance caching for performance
-
-### Adding a New LLM Provider
-
-1. Create a new provider file in `backend/llm/providers/` (e.g., `newprovider_provider.js`)
-2. Extend `BaseLLMProvider` and implement the `generate()` method
-3. Add provider credentials to `config.js` in the `settings` object
-4. Add a case in `getProviderConfig()` function
-5. Import and register in `llm/factory.js`
-
-Example:
-```javascript
-// backend/llm/providers/newprovider_provider.js
-const { BaseLLMProvider } = require('../base');
-const { settings, getProviderConfig } = require('../../config');
-
-class NewProviderProvider extends BaseLLMProvider {
-  constructor({ model } = {}) {
-    super({ providerName: 'newprovider', defaultModel: model || settings.NEWPROVIDER_MODEL });
-    this.config = getProviderConfig('newprovider');
-    this.model = model || this.defaultModel;
-  }
-
-  async generate(request = {}) {
-    // Implementation here
-  }
-}
-
-module.exports = NewProviderProvider;
-```
-
-## Dependencies
-
-### Node.js Dependencies
-- `dotenv` - Environment variable management
-- `mongodb` - MongoDB driver
-- `openai` - OpenAI SDK
-- `groq-sdk` - Groq API client
-- `@google/generative-ai` - Google Gemini SDK
-
-### Python Dependencies
-- `flask` - Python web framework (if needed for additional services)
-- `gunicorn` - WSGI server (if needed for additional services)
-
-## Environment Variables
-
-All sensitive configuration is managed through environment variables. See the Configuration section above for a complete list.
-
-## Known Limitations
-
-- No authentication middleware (user ID extracted from headers)
-- No input validation schema
-- No rate limiting
-- Limited error middleware (inline error handling)
-- Some endpoints are planned but not yet implemented (message CRUD, session listing)
-
-## License
-
-[Your License Here]
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `npm test`
-5. Submit a pull request
-
-## Support
-
-For issues and questions, please use the issue tracker.
+- **Pinecone read volume.** The Pinecone plan has a monthly read (egress) cap. Each Reasoning
+  Agent search reads about 16 chunks (about 30 KB); the search budget bounds the reads per
+  question. Avoid full-index scans against production indexes.
+- **Credentials.** Keys belong in `.env` only. Rotate any credential that has ever been
+  committed to the repository history.

@@ -609,6 +609,54 @@ def dual_retrieval(query_text, top_k_db=15, top_k_books=8, source_filter=None, i
     return pool[:CANDIDATE_POOL_SIZE]
 
 
+# ---------- REASONING AGENT TOOL SEARCHES ----------
+
+# The Reasoning Agent searches one instrument or issue at a time, so each of its searches is a
+# single vector query with no instrument scan or definition window. That keeps the Pinecone
+# read volume of a search to a handful of chunks.
+TOOL_SEARCH_DEFAULT_TOP_K = 6
+TOOL_SEARCH_MAX_TOP_K = 10
+TOOL_SEARCH_MAX_BATCH = 12
+# Up to half of the nearest legislation chunks can be amendment-history footnotes, which are
+# dropped, so a database search reads this many candidates (about 1.8 KB each) to fill top_k.
+TOOL_SEARCH_DB_FETCH_K = 16
+
+
+def run_tool_searches(searches):
+    """Runs a batch of Reasoning Agent searches in one process.
+
+    Each search is {"tool": "db" | "books", "query": str, "tables": [source_table, ...] | None,
+    "top_k": int}. Returns one list of results per search, in the same order. A search that fails
+    returns an empty list, so one bad query never fails the batch."""
+    searches = [s for s in (searches or []) if isinstance(s, dict)][:TOOL_SEARCH_MAX_BATCH]
+    queries = [str(s.get("query") or "").strip()[:2000] for s in searches]
+    embed_queries([q for q in queries if q])
+
+    batches = []
+    for search, query in zip(searches, queries):
+        if not query:
+            batches.append([])
+            continue
+        top_k = max(1, min(int(search.get("top_k") or TOOL_SEARCH_DEFAULT_TOP_K), TOOL_SEARCH_MAX_TOP_K))
+        vector = embed_query(query)
+        if vector is None:
+            batches.append([])
+            continue
+        if search.get("tool") == "books":
+            batches.append(search_pinecone_books(vector, top_k=top_k))
+            continue
+        tables = [str(t) for t in (search.get("tables") or []) if t]
+        fetch_k = max(top_k, TOOL_SEARCH_DB_FETCH_K)
+        hits = search_pinecone_db(vector, top_k=fetch_k, source_filter=tables or None)[:top_k]
+        try:
+            from definition_resolver import stitch_primary_passages
+            hits = stitch_primary_passages(hits)
+        except Exception as e:
+            sys.stderr.write(f"[Tool Search] Provisions left as indexed ({e}).\n")
+        batches.append(hits)
+    return batches
+
+
 # ---------- CITATION & SOURCE DETAILS RESOLUTION ----------
 
 # Filter-only lookups still need a query vector; any non-zero one will do.
@@ -817,6 +865,8 @@ def handle_json_input():
     elif action == "expand_passages":
         from definition_resolver import expand_passages
         print(json.dumps({"results": expand_passages(payload.get("ids"))}, default=str))
+    elif action == "tool_search":
+        print(json.dumps({"results": run_tool_searches(payload.get("searches"))}, default=str))
     else:
         query = payload.get("query", "")
         top_k = payload.get("top_k", 10)

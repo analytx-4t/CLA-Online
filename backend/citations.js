@@ -118,20 +118,26 @@ function rankingScoreOf(r) {
  * The numbered context the model answers from. Source N is results[N - 1].
  */
 function buildContextBlock(results) {
-  return (results || []).map((r, idx) => {
-    const parts = [`[Source ${idx + 1}]`, `Type: ${sourceTypeLabel(r.source_table, isBookResult(r))}`, `Title: "${displayTitle(r)}"`];
-    if (r.provision_ref) parts.push(`Provision: ${r.provision_ref}`);
-    if (r.sections && !/^(general|\d+)$/i.test(String(r.sections).trim())) parts.push(`Sections: ${collapseWhitespace(r.sections)}`);
-    if (isBookResult(r) && (r.page_number || r.parent_id)) parts.push(`Page: ${r.page_number || r.parent_id}`);
-    if (r.doc_date && !/legis/i.test(String(r.source_table || '')) && !isBookResult(r)) parts.push(`Date: ${String(r.doc_date).slice(0, 10)}`);
-    const lines = [parts.join(' | ')];
-    // How much the passage counts and whether it is current law (set by legalAuthority.js).
-    if (r.defined_term) lines.push(`Statutory definition of: "${r.defined_term}"`);
-    if (r.authority_label) lines.push(`Authority: ${r.authority_label}`);
-    if (r.currency_note) lines.push(`Currency: ${r.currency_note}`);
-    lines.push(`Content: ${chunkBody(r)}`);
-    return lines.join('\n');
-  }).join('\n\n---\n\n');
+  return (results || []).map((r, idx) => formatContextPassage(r, idx + 1)).join('\n\n---\n\n');
+}
+
+/**
+ * One passage of the context, labelled "[Source <number>]", with its type, title, authority
+ * and currency lines and its text.
+ */
+function formatContextPassage(r, number) {
+  const parts = [`[Source ${number}]`, `Type: ${sourceTypeLabel(r.source_table, isBookResult(r))}`, `Title: "${displayTitle(r)}"`];
+  if (r.provision_ref) parts.push(`Provision: ${r.provision_ref}`);
+  if (r.sections && !/^(general|\d+)$/i.test(String(r.sections).trim())) parts.push(`Sections: ${collapseWhitespace(r.sections)}`);
+  if (isBookResult(r) && (r.page_number || r.parent_id)) parts.push(`Page: ${r.page_number || r.parent_id}`);
+  if (r.doc_date && !/legis/i.test(String(r.source_table || '')) && !isBookResult(r)) parts.push(`Date: ${String(r.doc_date).slice(0, 10)}`);
+  const lines = [parts.join(' | ')];
+  // How much the passage counts and whether it is current law (set by legalAuthority.js).
+  if (r.defined_term) lines.push(`Statutory definition of: "${r.defined_term}"`);
+  if (r.authority_label) lines.push(`Authority: ${r.authority_label}`);
+  if (r.currency_note) lines.push(`Currency: ${r.currency_note}`);
+  lines.push(`Content: ${chunkBody(r)}`);
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -320,9 +326,11 @@ function isStandaloneHeadingLine(line) {
 /**
  * Main headings (Overview / Analysis / Conclusion) become "## Heading"; any other standalone
  * heading becomes "### Heading", so the chat can style the two levels differently.
- * A trailing "Sources Used" list is dropped: the chat renders the source list itself.
+ * A trailing "Sources Used" list is dropped: the chat renders the source list itself. With
+ * `keepSourcesSection` (Reasoning Agent answers, whose format includes a Sources section with
+ * pinpoint citations and weight tags) it is kept as a "### Sources" sub-heading.
  */
-function normalizeAnswerStructure(answer) {
+function normalizeAnswerStructure(answer, { keepSourcesSection = false } = {}) {
   const lines = String(answer || '').replace(/\r\n?/g, '\n').split('\n');
   const out = [];
   let skippingSources = false;
@@ -333,7 +341,7 @@ function normalizeAnswerStructure(answer) {
     const main = MAIN_HEADINGS.find((h) => h.toLowerCase() === bare.toLowerCase());
     const looksLikeHeading = isStandaloneHeadingLine(line) || (main && trimmed.length <= bare.length + 8);
 
-    if (/^sources?(?:\s+used|\s+relied\s+on|\s+cited)?$/i.test(bare) && (looksLikeHeading || trimmed.length <= bare.length + 8)) {
+    if (!keepSourcesSection && /^sources?(?:\s+used|\s+relied\s+on|\s+cited)?$/i.test(bare) && (looksLikeHeading || trimmed.length <= bare.length + 8)) {
       skippingSources = true;
       continue;
     }
@@ -377,6 +385,7 @@ const META_SENTENCE_PATTERNS = [
   /\bthe\s+(?:material|passages?|excerpts?|extracts?)\s+(?:describes?|addresses?|covers?|sets?\s+out|deals?\s+with|do(?:es)?\s+not)\b/i,
   /\b(?:do|does|did)\s+not\s+(?:address|set\s+out|contain|cover|deal\s+with|state|specify|answer)\b[^.]*\b(?:you\s+have\s+raised|your\s+question|the\s+question\s+(?:asked|raised))\b/i,
   /\b(?:cannot|can\s+not|could\s+not)\s+be\s+answered\s+from\b/i,
+  /\bthe\s+available\s+(?:\w+\s+)?(?:material|materials|text|texts|passages?|sources?|extracts?|excerpts?)\b/i,
 ];
 const DANGLING_FOLLOW_UP = /^(?:that|this|such)\s+(?:material|note|source|content)\b/i;
 
@@ -525,11 +534,12 @@ function buildSource(group, number) {
  *
  * @param {string} answerText  Model answer with [Source N] / [N] markers (N = position in results).
  * @param {Array}  results     The retrieved chunks exactly as numbered in the context block.
+ * @param {Object} [options]   { keepSourcesSection }: see normalizeAnswerStructure().
  * @returns {{answer: string, sources: Array, stats: Object}}
  */
-function finalizeAnswer(answerText, results = []) {
+function finalizeAnswer(answerText, results = [], { keepSourcesSection = false } = {}) {
   const chunks = Array.isArray(results) ? results : [];
-  let answer = normalizeAnswerStructure(String(answerText || ''));
+  let answer = normalizeAnswerStructure(String(answerText || ''), { keepSourcesSection });
 
   if (!answer.trim() || (isNoAnswer(answer) && answer.length < 400)) {
     return { answer: answer.trim() || NO_ANSWER_TEXT, sources: [], stats: { cited: 0, noAnswer: true } };
@@ -641,6 +651,8 @@ module.exports = {
   chunkBody,
   truncateAtSentence,
   buildContextBlock,
+  formatContextPassage,
+  isBookResult,
   normalizeAnswerStructure,
   stripMetaCommentary,
   isHollowAnswer,

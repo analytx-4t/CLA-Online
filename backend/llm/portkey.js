@@ -76,9 +76,9 @@ async function persistPortkeyExecutionLog({
   }
 }
 
-// Newer OpenAI reasoning models (gpt-5, the o-series) have two API
-// incompatibilities with every other model on every other provider,
-// both confirmed live:
+// Newer OpenAI reasoning models (gpt-5 and later, including gpt-6-luna, and
+// the o-series) have two API incompatibilities with every other model on
+// every other provider, both confirmed live:
 //   1. They reject the legacy `max_tokens` param outright — "Unsupported
 //      parameter: 'max_tokens' is not supported with this model. Use
 //      'max_completion_tokens' instead."
@@ -88,8 +88,12 @@ async function persistPortkeyExecutionLog({
 function isOpenAIReasoningModel(model) {
   if (!model) return false;
   const normalized = String(model).toLowerCase();
-  return /^gpt-5/.test(normalized) || /^o[1-9](-|$)/.test(normalized);
+  const gptGeneration = normalized.match(/^gpt-(\d+)/);
+  return Boolean(gptGeneration && Number(gptGeneration[1]) >= 5) || /^o[1-9](-|$)/.test(normalized);
 }
+
+const REASONING_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+const DEFAULT_RESPONSES_REASONING_EFFORT = 'medium';
 
 const providerSlugs = {
   openai: process.env.PORTKEY_OPENAI_PROVIDER,
@@ -271,6 +275,135 @@ async function createChatCompletion({
   throw new Error(`Provider ${targetProvider} (${targetModel}) returned an empty response.`);
 }
 
+// Text of the last user turn of a Responses API input, for the execution log.
+function lastUserText(input) {
+  for (let i = (input || []).length - 1; i >= 0; i -= 1) {
+    const item = input[i];
+    if (item?.role === 'user') return typeof item.content === 'string' ? item.content : JSON.stringify(item.content);
+    if (item?.type === 'function_call_output') return String(item.output || '');
+  }
+  return '';
+}
+
+/**
+ * One call to the OpenAI Responses API through Portkey (the same Portkey OpenAI provider as the
+ * chat completions above).
+ *
+ * Reasoning models such as gpt-6-luna accept function tools together with a reasoning effort
+ * only on this API: on /v1/chat/completions they reject that combination ("Function tools with
+ * reasoning_effort are not supported ... use /v1/responses"). Nothing is stored on OpenAI's
+ * side (store: false); the encrypted reasoning items are returned instead, so the caller can
+ * pass them back on the next turn of a tool-using conversation.
+ */
+async function executeResponseDirect({
+  provider = 'openai',
+  model,
+  instructions = '',
+  input = [],
+  tools,
+  toolChoice,
+  reasoningEffort,
+  maxOutputTokens = 4000,
+  metadata = {},
+  traceId,
+  requestContext,
+}) {
+  if (provider !== 'openai') {
+    throw new Error(`The Responses API is used for OpenAI models only (got provider "${provider}").`);
+  }
+  const lf = await getLogfire();
+  const portkeyModel = getPortkeyModel(provider, model);
+  const { metadata: requestContextMetadata, traceId: requestContextTraceId } = buildPortkeyRequestContextOptions(
+    requestContext,
+    metadata,
+    traceId
+  );
+  const requestMetadata = requestContext ? {
+    requestId: requestContext.requestId,
+    sessionId: requestContext.sessionId,
+    messageId: requestContext.messageId,
+  } : {};
+  const reasoningModel = isOpenAIReasoningModel(model);
+  const effort = REASONING_EFFORTS.has(reasoningEffort) ? reasoningEffort : DEFAULT_RESPONSES_REASONING_EFFORT;
+  const startTime = Date.now();
+
+  return lf.span(
+    'Portkey response',
+    {
+      provider,
+      model,
+      portkey_model: portkeyModel,
+      routing_mode: 'direct',
+      input_items: input.length,
+      tool_count: Array.isArray(tools) ? tools.length : 0,
+      reasoning_effort: reasoningModel ? effort : null,
+      max_output_tokens: maxOutputTokens,
+      ...requestMetadata,
+    },
+    {},
+    async () => {
+      const response = await tracePortkeyLLMCall(
+        {
+          provider,
+          model,
+          maxTokens: maxOutputTokens,
+          messages: input,
+          metadata,
+          requestContext,
+          call: async () => portkey.responses.create(
+            {
+              model: portkeyModel,
+              instructions,
+              input,
+              ...(Array.isArray(tools) && tools.length ? { tools } : {}),
+              ...(Array.isArray(tools) && tools.length && toolChoice ? { tool_choice: toolChoice } : {}),
+              ...(reasoningModel ? { reasoning: { effort }, include: ['reasoning.encrypted_content'] } : {}),
+              max_output_tokens: maxOutputTokens,
+              store: false,
+            },
+            {
+              ...(requestContextTraceId ? { traceId: requestContextTraceId } : {}),
+              metadata: buildPortkeyMetadata(requestContextMetadata),
+            }
+          ),
+        },
+        { metadata: requestMetadata }
+      );
+
+      lf.info('Portkey response succeeded', {
+        provider,
+        model,
+        status: response?.status,
+        input_tokens: response?.usage?.input_tokens ?? 0,
+        output_tokens: response?.usage?.output_tokens ?? 0,
+        reasoning_tokens: response?.usage?.output_tokens_details?.reasoning_tokens ?? 0,
+        ...requestMetadata,
+      });
+
+      persistPortkeyExecutionLog({
+        provider,
+        model,
+        portkeyModel,
+        // The execution log is shaped for chat completions.
+        response: {
+          usage: {
+            prompt_tokens: response?.usage?.input_tokens ?? 0,
+            completion_tokens: response?.usage?.output_tokens ?? 0,
+            total_tokens: response?.usage?.total_tokens ?? 0,
+          },
+          choices: [{ message: { content: typeof response?.output_text === 'string' ? response.output_text : '' } }],
+        },
+        startTime,
+        systemPrompt: instructions,
+        userPrompt: lastUserText(input),
+        requestContext,
+      }).catch(() => {});
+
+      return response;
+    }
+  );
+}
+
 async function createFallbackChatCompletion({
   messages = [],
   systemPrompt = '',
@@ -297,7 +430,9 @@ async function createFallbackChatCompletion({
 module.exports = {
   portkey,
   getPortkeyModel,
+  isOpenAIReasoningModel,
   executeChatCompletionDirect,
+  executeResponseDirect,
   createChatCompletion,
   createFallbackChatCompletion,
 };

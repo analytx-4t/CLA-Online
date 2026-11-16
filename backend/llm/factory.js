@@ -5,21 +5,34 @@ const GeminiProvider = require('./providers/gemini_provider');
 const GroqProvider = require('./providers/groq_provider');
 const { settings } = require('../config');
 
+const PROVIDERS = {
+  openai: OpenAIProvider,
+  deepseek: DeepSeekProvider,
+  gemini: GeminiProvider,
+  groq: GroqProvider,
+};
+
 const providerCache = new Map();
 
+/**
+ * Returns the provider client for `provider`, routed through Portkey.
+ *
+ * `model` is the model to request; when it is omitted each provider uses its own configured
+ * default (OPENAI_MODEL, DEEPSEEK_PRO_MODEL, ...).
+ */
 function getLLMProvider(provider = settings.DEFAULT_LLM_PROVIDER, model = null) {
-  const targetModel = model || settings.DEFAULT_LLM_MODEL || 'deepseek-v4-pro';
-  const cacheKey = `deepseek:${targetModel}`;
-
-  if (providerCache.has(cacheKey)) {
-    return providerCache.get(cacheKey);
+  const providerName = String(provider || settings.DEFAULT_LLM_PROVIDER || 'deepseek').toLowerCase();
+  const ProviderClass = PROVIDERS[providerName];
+  if (!ProviderClass) {
+    throw new Error(`Unsupported LLM provider: ${provider}`);
   }
 
-  const instance = new DeepSeekProvider({ model: targetModel });
-  providerCache.set(cacheKey, instance);
-  return instance;
+  const cacheKey = `${providerName}:${model || 'default'}`;
+  if (!providerCache.has(cacheKey)) {
+    providerCache.set(cacheKey, new ProviderClass({ model: model || undefined }));
+  }
+  return providerCache.get(cacheKey);
 }
-
 
 module.exports = {
   getLLMProvider,
